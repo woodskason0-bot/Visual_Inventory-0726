@@ -1,0 +1,73 @@
+﻿@model IEnumerable<InventoryDevTwo.Models.Order>
+@{
+    ViewData["Title"] = "Order History";
+}
+
+<div class="container mt-4">
+    <h2 class="fw-bold mb-4"><i class="bi bi-box-seam me-2 text-primary"></i>Order History</h2>
+
+    <div class="bg-white p-4 border rounded shadow-sm">
+        <table class="table table-hover table-striped align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>Order ID</th>
+                    <th>Created At</th>
+                    <th>Requested By</th>
+                    <th>Status</th>
+                    <th>Received By</th>
+                    <th>Completed At</th>
+                    <th>Items Count</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in Model)
+                {
+                    <tr>
+                        <td class="fw-bold">@order.Id</td>
+                        <td class="text-muted small">@order.CreatedAt.ToLocalTime()</td>
+                        <td class="small">@(string.IsNullOrEmpty(order.RequestedBy) ? "—" : order.RequestedBy)</td>
+                        <td>
+                            @if (order.Status == "Completed")
+                            {
+                                <span class="badge bg-success">@order.Status</span>
+                            }
+                            else if (order.Status == "Pending")
+                            {
+
+                                <span class="badge bg-warning text-dark">@order.Status</span>
+                            }
+                            else
+                            {
+
+                                <span class="badge bg-danger">@order.Status</span>
+                            }
+                        </td>
+                        <td class="small">@(string.IsNullOrEmpty(order.FulfilledBy) ? "—" : order.FulfilledBy)</td>
+                        <td class="text-muted small">@(order.FulfilledAt.HasValue ? order.FulfilledAt.Value.ToLocalTime().ToString() : "—")</td>
+                        <td>@(order.Items?.Count ?? 0)</td>
+                        <td>
+                            <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.Id" class="btn btn-sm btn-info text-white fw-bold">View</a>
+                            @if (order.Status == "Pending")
+                            {
+                                <form asp-controller="Home" asp-action="PickUpOrderConfirmed" method="post" class="d-inline ms-2">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="orderId" value="@order.Id" />
+                                    <button type="submit" class="btn btn-sm btn-success fw-bold">Pick Up</button>
+                                </form>
+                                <form asp-controller="Home" asp-action="CancelPersisted" method="post" class="d-inline ms-2">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="orderId" value="@order.Id" />
+                                    <button type="submit" class="btn btn-sm btn-danger fw-bold">Cancel</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+<div class="container mt-3">
+    <a asp-action="Index" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Back to Dashboard</a>
+</div>

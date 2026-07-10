@@ -1,0 +1,177 @@
+﻿@model IEnumerable<InventoryDevTwo.Models.TransactionLog>
+@{
+    ViewData["Title"] = "System Logs";
+    var orders = ViewBag.Orders as IEnumerable<InventoryDevTwo.Models.Order>;
+}
+
+<style>
+    /* Dark theme for the logs page, matched to the rest of VIS */
+    .logs-wrap { max-width: 1200px; margin: 1.5rem auto; }
+
+    .logs-card {
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 0 8px 8px 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    }
+
+    /* Tabs */
+    .logs-wrap .nav-tabs { border-bottom: none; }
+    .logs-wrap .nav-tabs .nav-link {
+        color: var(--vis-text-muted);
+        background: transparent;
+        border: 1px solid transparent;
+        border-bottom: none;
+        margin-right: 4px;
+    }
+    .logs-wrap .nav-tabs .nav-link:hover { color: #fff; }
+    .logs-wrap .nav-tabs .nav-link.active {
+        color: #fff;
+        background-color: var(--vis-card);
+        border-color: var(--vis-card-border);
+        border-bottom: 2px solid var(--vis-red);
+    }
+
+    /* Tables */
+    .logs-card table { color: var(--vis-text); margin-bottom: 0; }
+    .logs-card thead th {
+        background-color: #14151A;
+        color: #CBD5E1;
+        border-color: var(--vis-card-border) !important;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.4px;
+    }
+    .logs-card tbody td {
+        border-color: var(--vis-card-border) !important;
+        vertical-align: middle;
+    }
+    .logs-card tbody tr:nth-of-type(odd) { background-color: rgba(255,255,255,0.02); }
+    .logs-card tbody tr:hover { background-color: rgba(216,43,51,0.07); }
+    .logs-card .text-dim { color: #94A3B8 !important; }
+</style>
+
+<div class="logs-wrap px-3">
+    <h2 class="fw-bold mb-4 text-white"><i class="bi bi-journal-text me-2" style="color: var(--vis-red);"></i>System Logs &amp; Audit Trail</h2>
+
+    <ul class="nav nav-tabs fw-bold" id="logTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="transactions-tab" data-bs-toggle="tab" data-bs-target="#transactions" type="button" role="tab">Inventory Transactions</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders" type="button" role="tab">Order History</button>
+        </li>
+    </ul>
+
+    <div class="tab-content logs-card p-4" id="logTabsContent">
+
+        <!-- TAB 1: TRANSACTIONS -->
+        <div class="tab-pane fade show active" id="transactions" role="tabpanel">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Date &amp; Time</th>
+                        <th>Action</th>
+                        <th>Item ID</th>
+                        <th>Qty Change</th>
+                        <th>Details</th>
+                        <th>User</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Model != null)
+                    {
+                        foreach (var log in Model)
+                        {
+                            <tr>
+                                <td class="text-dim small">@log.Timestamp.ToLocalTime()</td>
+                                <td><span class="badge bg-secondary">@log.ActionType</span></td>
+                                <td class="fw-bold">@log.ItemId</td>
+                                <td>
+                                    @if (log.QuantityChange > 0)
+                                    {
+                                        <span class="text-success fw-bold">+@log.QuantityChange</span>
+                                    }
+                                    else if (log.QuantityChange < 0)
+                                    {
+                                        <span class="text-danger fw-bold">@log.QuantityChange</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-dim">-</span>
+                                    }
+                                </td>
+                                <td class="small">@log.Details</td>
+                                <td class="small text-dim">@log.User</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- TAB 2: ORDERS -->
+        <div class="tab-pane fade" id="orders" role="tabpanel">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Created At</th>
+                        <th>Requested By</th>
+                        <th>Status</th>
+                        <th>Received By</th>
+                        <th>Completed At</th>
+                        <th>Items Count</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (orders != null)
+                    {
+                        foreach (var order in orders)
+                        {
+                            <tr>
+                                <td class="fw-bold">@order.Id</td>
+                                <td class="text-dim small">@order.CreatedAt.ToLocalTime()</td>
+                                <td class="small">@(string.IsNullOrEmpty(order.RequestedBy) ? "—" : order.RequestedBy)</td>
+                                <td>
+                                    @if (order.Status == "Completed")
+                                    {
+                                        <span class="badge bg-success">@order.Status</span>
+                                    }
+                                    else if (order.Status == "Pending")
+                                    {
+                                        <span class="badge bg-warning text-dark">@order.Status</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger">@order.Status</span>
+                                    }
+                                </td>
+                                <td class="small">@(string.IsNullOrEmpty(order.FulfilledBy) ? "—" : order.FulfilledBy)</td>
+                                <td class="text-dim small">@(order.FulfilledAt.HasValue ? order.FulfilledAt.Value.ToLocalTime().ToString() : "—")</td>
+                                <td>@(order.Items?.Count ?? 0)</td>
+                                <td>
+                                    <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.Id" class="btn btn-sm btn-info text-white fw-bold">View</a>
+                                    @if (order.Status == "Pending")
+                                    {
+                                        <form asp-controller="Home" asp-action="PickUpOrderConfirmed" method="post" class="d-inline ms-2">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="orderId" value="@order.Id" />
+                                            <button type="submit" class="btn btn-sm btn-success fw-bold">Pick Up</button>
+                                        </form>
+                                        <form asp-controller="Home" asp-action="CancelPersisted" method="post" class="d-inline ms-2">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="orderId" value="@order.Id" />
+                                            <button type="submit" class="btn btn-sm btn-danger fw-bold">Cancel</button>
+                                        </form>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

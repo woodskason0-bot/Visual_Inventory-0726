@@ -1,0 +1,70 @@
+@model InventoryDevTwo.Models.Order
+
+@{
+    ViewData["Title"] = "Order Details";
+    var inventoryLookup = ViewBag.InventoryLookup as System.Collections.Generic.Dictionary<string, InventoryDevTwo.Models.InventoryItem>;
+
+    // Build a compact friendly breadcrumb of all five location levels. Parent/
+    // Major/Sub are stored as codes; LocationCodec.Decode turns them back into
+    // names (unknown codes pass through unchanged). "0"/blank levels are dropped.
+    // Rack/Row are free-form numbers the team assigns, shown as-is.
+    bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+    string Friendly(string? code) => InventoryDevTwo.Services.LocationCodec.Decode(code);
+    string FmtLocation(InventoryDevTwo.Models.InventoryItem? inv)
+    {
+        if (inv == null) return "-";
+        var crumbs = new System.Collections.Generic.List<string>();
+        if (Real(inv.Parent)) crumbs.Add(Friendly(inv.Parent));
+        if (Real(inv.Major)) crumbs.Add(Friendly(inv.Major));
+        if (Real(inv.Sub)) crumbs.Add(Friendly(inv.Sub));
+        string path = string.Join(" › ", crumbs);
+
+        string rackRow = "";
+        if (Real(inv.Rack) || Real(inv.Row))
+            rackRow = $"Rack: {(Real(inv.Rack) ? inv.Rack.Trim() : "-")} / Row: {(Real(inv.Row) ? inv.Row.Trim() : "-")}";
+
+        if (path == "" && rackRow == "") return "-";
+        if (path == "") return rackRow;
+        if (rackRow == "") return path;
+        return $"{path}  ·  {rackRow}";
+    }
+}
+
+<h2>Order @Model.Id</h2>
+<p>Created: @Model.CreatedAt.ToLocalTime() @(string.IsNullOrEmpty(Model.RequestedBy) ? "" : $"by {Model.RequestedBy}")</p>
+<p>Status: @Model.Status</p>
+@if (Model.FulfilledAt.HasValue || !string.IsNullOrEmpty(Model.FulfilledBy))
+{
+    <p>Received: @(Model.FulfilledAt.HasValue ? Model.FulfilledAt.Value.ToLocalTime().ToString() : "—") @(string.IsNullOrEmpty(Model.FulfilledBy) ? "" : $"by {Model.FulfilledBy}")</p>
+}
+
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>Item ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Location</th>
+            <th class="text-end">Quantity</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var it in Model.Items)
+    {
+        var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
+        <tr>
+            <td>@it.ItemId</td>
+            <td>@(inv?.ItemName ?? "Unknown item")</td>
+            <td>@(string.IsNullOrWhiteSpace(inv?.Description) ? "-" : inv.Description)</td>
+            <td>
+                @(
+                    (inv != null) ? FmtLocation(inv) : "-"
+                )
+            </td>
+            <td class="text-end">@it.Quantity</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+<p><a asp-action="Orders" class="btn btn-sm btn-secondary">Back to Orders</a></p>

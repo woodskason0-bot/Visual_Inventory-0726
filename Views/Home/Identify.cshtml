@@ -1,0 +1,55 @@
+﻿@{
+    ViewData["Title"] = "Sign In";
+    var returnUrl = ViewBag.ReturnUrl as string;
+    var error = ViewBag.Error as string;
+    var entered = ViewBag.Entered as string;
+    var users = ViewBag.Users as IEnumerable<InventoryDevTwo.Models.User>
+                ?? System.Linq.Enumerable.Empty<InventoryDevTwo.Models.User>();
+}
+
+<div class="d-flex justify-content-center align-items-start" style="min-height: 70vh; padding-top: 8vh;">
+    <div class="grid-card p-4 p-md-5" style="width: 100%; max-width: 440px;">
+        <div class="text-center mb-4">
+            <i class="bi bi-person-badge" style="font-size: 2.4rem; color: var(--vis-red);"></i>
+            <h3 class="text-white fw-bold mt-2 mb-1">Who's at the keyboard?</h3>
+            <p class="text-light-gray small mb-0">
+                Enter your name so stock changes are logged to you.
+                This identifies you for the audit trail &mdash; it is not a password.
+            </p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-danger py-2 small fw-bold" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>@error
+            </div>
+        }
+
+        <form asp-controller="Home" asp-action="Identify" method="post">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="returnUrl" value="@returnUrl" />
+
+            <label class="form-label small fw-bold text-light-gray">Name (First.Last)</label>
+            <input type="text" name="name" value="@entered" list="userList"
+                   class="form-control form-control-lg text-white fw-bold mb-1"
+                   style="background-color: #14151A; border-color: #3D4351;"
+                   placeholder="Start typing or pick your name" autocomplete="off" autofocus required
+                   pattern="^[A-Za-z'-]+\.[A-Za-z'-]+$"
+                   title="Enter your name as First.Last, e.g. Jane.Doe" />
+            <datalist id="userList">
+                @foreach (var u in users)
+                {
+                    <option value="@u.UserName">@u.DisplayName</option>
+                }
+            </datalist>
+            <div class="form-text text-light-gray mb-3" style="font-size: 11px;">
+                Pick your name, or type <strong>First.Last</strong>. Not on the list? Use the closest
+                engineer's name or ask Kason to add you.
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">
+                <i class="bi bi-box-arrow-in-right me-1"></i>Continue
+            </button>
+        </form>
+    </div>
+</div>

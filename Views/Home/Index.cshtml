@@ -1,0 +1,2693 @@
+@using InventoryDevTwo.Services
+@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
+@functions {
+    string GetHoloTitle(InventoryDevTwo.Models.SearchResult result)
+    {
+        if (result.Mode == "Omni") return $"Omni Search: \"{ViewBag.OmniSearch}\"";
+        if (result.Mode == "Filter") return "Filter Search";
+        return result.Mode == "Ledger" ? "Order Cart" : "Holo Viewer";
+    }
+
+    // Friendly one-line location for a variant: decode coded P/M/S, drop 0/blank
+    // levels, append Rack/Row when real. Falls back to the raw FDA string.
+    string FriendlyVarLoc(InventoryDevTwo.Models.ItemVariant v)
+    {
+        bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+        var crumbs = new System.Collections.Generic.List<string>();
+        if (Real(v.Parent)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Parent));
+        if (Real(v.Major)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Major));
+        if (Real(v.Sub)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Sub));
+        string path = string.Join(" › ", crumbs);
+        string rr = "";
+        if (Real(v.Rack) || Real(v.Row))
+            rr = $"R{(Real(v.Rack) ? v.Rack.Trim() : "-")}/{(Real(v.Row) ? v.Row.Trim() : "-")}";
+        if (path == "" && rr == "") return string.IsNullOrWhiteSpace(v.FdaString) ? "-" : v.FdaString;
+        return rr == "" ? path : (path == "" ? rr : $"{path} · {rr}");
+    }
+
+    // Truncate an item name to a max number of NON-space characters, then add an ellipsis.
+    string TruncName(string name, int maxNonSpace)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        int nonSpace = 0;
+        var sb = new System.Text.StringBuilder();
+        foreach (char c in name)
+        {
+            if (!char.IsWhiteSpace(c))
+            {
+                if (nonSpace == maxNonSpace) return sb.ToString().TrimEnd() + "...";
+                nonSpace++;
+            }
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
+}
+
+@{
+    ViewData["Title"] = "Command Center";
+    var result = ViewBag.SearchResult as InventoryDevTwo.Models.SearchResult;
+    bool showHolo = result != null && result.Mode != "None";
+    var headerDraftIds = ViewBag.DraftItemIds as System.Collections.Generic.HashSet<string>;
+    var hasDraft = headerDraftIds != null && headerDraftIds.Any();
+
+    var invSvc = ViewBag.InventoryService as InventoryDevTwo.Services.InventoryService;
+    var allItems = invSvc?.GetAll() ?? new List<InventoryDevTwo.Models.InventoryItem>();
+
+    var lowStockItems = allItems.Where(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold).OrderBy(i => i.Quantity).ToList();
+    var recentActivity = ViewBag.RecentActivity as List<InventoryDevTwo.Models.TransactionLog> ?? new List<InventoryDevTwo.Models.TransactionLog>();
+
+    // A location segment only "counts" if it's present and not the 0 placeholder.
+    // Used for the map drill-down so 0-filled levels (e.g. PATS.0.0.0.0) never show.
+    Func<string, bool> realSeg = s => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+
+    // One rule per zone, keyed by code. Parent stores the code and the
+    // FdaString always begins with it, so a single matcher covers both.
+    Func<string, object> zone = code =>
+    {
+        var items = allItems.Where(i => i.Parent == code
+            || (i.FdaString != null && i.FdaString.StartsWith(code))).ToList();
+        return new
+        {
+            TotalRows = items.Count,
+            HasAlert = items.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold),
+            // Majors exclude 0/blank. Each Major carries its real (non-0) Subs so the
+            // menu can drill one level deeper: Parent -> Major -> Sub (hard stop; Row/Rack
+            // are never their own click level).
+            Majors = items.Where(i => realSeg(i.Major))
+                          .GroupBy(i => i.Major)
+                          .ToDictionary(g => g.Key, g => new {
+                              Rows = g.Count(),
+                              HasAlert = g.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold),
+                              Subs = g.Where(i => realSeg(i.Sub))
+                                      .GroupBy(i => i.Sub)
+                                      .ToDictionary(sg => sg.Key, sg => new {
+                                          Rows = sg.Count(),
+                                          HasAlert = sg.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold)
+                                      })
+                          })
+        };
+    };
+
+    var mapData = new Dictionary<string, object>
+    {
+        { "RD Lab", zone("RLB") },
+        { "External Yard", zone("ETRD") },
+        { "New Test Cells", zone("NWES") },
+        { "Plant Test Cells", zone("PATS") }
+    };
+    var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
+
+    // Coded location hierarchy (Parent -> Major -> [Subs]) built from the REAL stored
+    // values, so the Location Transfer cascade always matches what's in the DB (codes,
+    // e.g. ETRD -> CNEA -> CNE6) and can seed an item's current location cleanly.
+    var locHierarchy = allItems
+        .Where(i => realSeg(i.Parent))
+        .GroupBy(i => i.Parent)
+        .ToDictionary(pg => pg.Key, pg => pg
+            .Where(i => realSeg(i.Major))
+            .GroupBy(i => i.Major)
+            .ToDictionary(mg => mg.Key, mg => mg
+                .Where(i => realSeg(i.Sub))
+                .Select(i => i.Sub).Distinct().OrderBy(s => s).ToList()));
+    var locHierarchyJson = System.Text.Json.JsonSerializer.Serialize(locHierarchy);
+    // Code -> friendly map so the client map drill can show names, not codes.
+    var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(InventoryDevTwo.Services.LocationCodec.DecodeMap);
+}
+
+<style>
+    /* 1. GRID COLUMN ADJUSTMENT (Sidebars expanded to 380px) */
+    .overlay-grid, .selection-grid {
+        position: fixed;
+        top: var(--vis-header-bottom, 110px);
+        bottom: 12px;
+        left: 12px;
+        right: 12px;
+        display: grid;
+        /* Widened outer tracks to 380px */
+        grid-template-columns: 380px repeat(4, 1fr) 380px;
+        grid-template-rows: min-content 1fr 1fr 1fr;
+        gap: 16px;
+        z-index: 100;
+    }
+
+        /* Force specific cell coordinates to persist even if external styles compete */
+        .overlay-grid .r1 {
+            grid-row-start: 1 !important;
+        }
+
+        .overlay-grid .r2 {
+            grid-row-start: 2 !important;
+        }
+
+        .overlay-grid .r3 {
+            grid-row-start: 3 !important;
+        }
+
+        .overlay-grid .r4 {
+            grid-row-start: 4 !important;
+        }
+
+        .overlay-grid .c1 {
+            grid-column-start: 1 !important;
+        }
+
+        .overlay-grid .c2 {
+            grid-column-start: 2 !important;
+        }
+
+        .overlay-grid .c3 {
+            grid-column-start: 3 !important;
+        }
+
+        .overlay-grid .c4 {
+            grid-column-start: 4 !important;
+        }
+
+        .overlay-grid .c5 {
+            grid-column-start: 5 !important;
+        }
+
+        .overlay-grid .c6 {
+            grid-column-start: 6 !important;
+        }
+
+    /* Completely hide the background diagnostic guide grid */
+    .selection-grid {
+        display: none !important;
+    }
+
+    .selection-cell {
+        border: 1px dashed rgba(245, 166, 35, 0.15) !important;
+        background: rgba(245, 166, 35, 0.01);
+        color: rgba(255, 255, 255, 0.15);
+        font-size: 13px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* 2. HOLO VIEW MODAL & BACKDROP CORRECTIONS */
+    .holo-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(10, 11, 14, 0.85);
+        backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+    }
+
+    /* Bootstrap modals must sit ABOVE the holo overlay (z-index 2000),
+       otherwise modals opened from inside the cart view are hidden behind it. */
+    .modal {
+        z-index: 2200 !important;
+    }
+
+    .modal-backdrop {
+        z-index: 2150 !important;
+    }
+
+    .holo-viewer {
+        display: grid;
+        grid-template-columns: 1fr 280px !important;
+        grid-template-rows: auto 1fr;
+        width: 80vw !important;
+        max-width: 1200px;
+        height: 80vh !important;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+    }
+
+    .holo-header {
+        grid-column: 1 / span 2 !important;
+        grid-row: 1 !important;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 24px;
+        background: var(--vis-card);
+        border-bottom: 2px solid var(--vis-card-border);
+    }
+
+    .holo-body {
+        grid-column: 1 !important;
+        grid-row: 2 !important;
+        overflow-y: auto !important; /* Enable list scrolling inside modal container */
+        padding: 24px;
+        background: var(--vis-bg);
+    }
+
+    .holo-actions {
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        padding: 24px;
+        background: var(--vis-card);
+        border-left: 1px solid var(--vis-card-border);
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* 3. MAP OVERLAYS (PORTED TO CORRESPOND TO MAP CONTAINER HEIGHT) */
+    .map-stats-bar {
+        position: absolute;
+        bottom: 45px;
+        left: 15px;
+        right: 15px;
+        background: rgba(28, 30, 36, 0.95);
+        backdrop-filter: blur(5px);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        padding: 12px 20px;
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        z-index: 110;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.6);
+    }
+
+    .map-live-bar {
+        position: absolute;
+        bottom: 12px;
+        left: 20px;
+        right: 20px;
+        font-size: 13px;
+        color: #E2E8F0;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 110;
+    }
+
+    /* 4. MODAL HIGH CONTRAST DARK OVERRIDES */
+    .modal-content label {
+        color: #E2E8F0 !important; /* Highly visible silver-white */
+        font-weight: 600 !important;
+    }
+
+    /* Ensures both Bootstrap modal subtexts and the Export Wizard card description are visible */
+    .modal-content .text-light-gray,
+    .modal-content .text-muted,
+    .grid-card .text-muted {
+        color: #94A3B8 !important; /* Brightened visible slate-gray */
+    }
+
+    .modal-content input,
+    .modal-content select,
+    .modal-content select option {
+        background-color: #14151A !important;
+        color: #FFFFFF !important;
+        border-color: #3D4351 !important;
+    }
+
+    /* Utility text overrides */
+    .text-light-gray {
+        color: #CBD5E1 !important;
+    }
+
+    .text-bright-white {
+        color: #FFFFFF !important;
+    }
+    /* =========================================================
+                   MAP INTERACTIVE ZONE & CASCADING MENU STYLES
+                   ========================================================= */
+
+    /* 1. The main absolute wrapper for each map coordinate zone */
+    .map-zone {
+        position: absolute;
+        z-index: 120;
+        pointer-events: auto; /* Re-enables clicks over the transparent overlay */
+        box-sizing: border-box;
+        border: 2px solid var(--vis-yellow);
+        border-radius: 4px;
+        background: rgba(245, 166, 35, 0.10);
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35), 0 0 12px rgba(245,166,35,0.15);
+        transition: background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+        .map-zone:hover {
+            background: rgba(245, 166, 35, 0.22);
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35), 0 0 18px rgba(245,166,35,0.35);
+        }
+
+        /* Zones holding a low-stock item glow red instead of yellow */
+        .map-zone.alert-zone {
+            border-color: var(--vis-red);
+            background: rgba(216, 43, 51, 0.12);
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35), 0 0 14px rgba(216,43,51,0.30);
+        }
+
+            .map-zone.alert-zone:hover {
+                background: rgba(216, 43, 51, 0.22);
+            }
+
+        /* Elevates the active popup container to float above adjacent map tags */
+        .map-zone.active-zone {
+            z-index: 1500 !important;
+        }
+
+    /* 2. The interactive pulsing map pin */
+    .zone-marker {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: var(--vis-yellow);
+        background: rgba(17, 18, 22, 0.85);
+        backdrop-filter: blur(3px);
+        border: 1px solid var(--vis-yellow);
+        padding: 4px 8px;
+        border-radius: 6px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    }
+
+        .zone-marker:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(245, 166, 35, 0.6);
+            z-index: 130;
+        }
+
+    .marker-icon {
+        font-size: 18px;
+        line-height: 1;
+    }
+
+    .marker-count {
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+        margin-top: 2px;
+    }
+
+    /* Pulsing animation for zones with active alerts */
+    .alert-pulse {
+        border-color: var(--vis-red) !important;
+        color: var(--vis-red) !important;
+        animation: pulse-border 2s infinite;
+    }
+
+    @@keyframes pulse-border {
+        0% {
+            box-shadow: 0 0 0 0 rgba(216, 43, 51, 0.4);
+        }
+
+        70% {
+            box-shadow: 0 0 0 10px rgba(216, 43, 51, 0);
+        }
+
+        100% {
+            box-shadow: 0 0 0 0 rgba(216, 43, 51, 0);
+        }
+    }
+
+    /* 3. The Cascading Location Dropdown Menu (Hidden by default) */
+    .zone-menu {
+        display: none; /* Keep hidden until clicked */
+        position: absolute;
+        min-width: 220px;
+        background: rgba(28, 30, 36, 0.98);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        padding: 8px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+        /* Display flex when toggled active via JS */
+        .zone-menu.show {
+            display: flex !important;
+        }
+
+    .zone-menu-header {
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--vis-yellow);
+        text-transform: uppercase;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--vis-card-border);
+        margin-bottom: 4px;
+        letter-spacing: 0.5px;
+    }
+
+    /* Buttons inside the dropdown menus */
+    .zone-menu-btn {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 8px 12px;
+        background: #14151A;
+        border: 1px solid #2D3139;
+        color: #E2E8F0;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        text-align: left;
+        transition: all 0.2s ease;
+    }
+
+        .zone-menu-btn:hover {
+            background: #2A2D35;
+            border-color: #3D4351;
+            color: #FFFFFF;
+        }
+
+        .zone-menu-btn .badge {
+            font-size: 10px;
+            background-color: #3A3F4B !important;
+            color: #CBD5E1 !important;
+        }
+
+    /* Cascading menu placement offsets calculated by JS positioning classes */
+    .zone-menu.menu-down {
+        top: 100%;
+        margin-top: 8px;
+    }
+
+    .zone-menu.menu-up {
+        bottom: 100%;
+        margin-bottom: 8px;
+    }
+
+    .zone-menu.menu-left {
+        right: 0;
+    }
+
+    .zone-menu.menu-right {
+        left: 0;
+    }
+
+    .zone-menu.menu-center {
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    /* Map drill: a Major that has real (non-0) Subs becomes an expandable group.
+       The nested list lives inside .zone-menu (z-index 1000, under holo overlay 2000),
+       so no new stacking context is introduced. */
+    .zone-major-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .zone-submenu {
+        display: none;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0 0 2px 8px;
+        padding-left: 10px;
+        border-left: 2px solid var(--vis-yellow);
+    }
+
+        .zone-major-group.open > .zone-submenu {
+            display: flex;
+        }
+
+    .zone-subbtn {
+        background: #0F1014;
+        font-weight: 500;
+    }
+
+    .zone-chev {
+        font-size: 10px;
+        transition: transform 0.18s ease;
+        margin-left: 6px;
+    }
+
+        .zone-major-group.open .zone-chev {
+            transform: rotate(180deg);
+        }
+
+    /* Activity Feed Vertical Timeline Structure */
+    .activity-feed {
+        border-left: 2px solid var(--vis-card-border);
+        margin-left: 10px;
+        padding-left: 15px;
+        position: relative;
+    }
+
+    .activity-item {
+        position: relative;
+        margin-bottom: 12px;
+    }
+
+    .activity-dot {
+        position: absolute;
+        left: -21px; /* Center dot over the timeline line perfectly */
+        top: 4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+
+    /* Glowing Red Dot Tracking along its glide path */
+    .glowing-tracker-dot {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        background-color: var(--vis-red);
+        border-radius: 50%;
+        box-shadow: 0 0 10px var(--vis-red), 0 0 20px var(--vis-red);
+        z-index: 115;
+        pointer-events: none;
+        transition: left 2s ease-in-out, top 2s ease-in-out; /* Smooth transition */
+    }
+</style>
+
+<!-- HTTP Warning -->
+<div id="http-warning" class="alert alert-warning floating-alert" style="display:none; top: 80px;">
+    <strong>Warning:</strong> You are using HTTP. Form submissions will fail! Please switch to HTTPS.
+</div>
+
+<!-- 2. BACKGROUND GUIDE GRID (RE-ENABLED) -->
+<div class="selection-grid" id="placement-grid">
+    @for (int i = 1; i <= 24; i++)
+    {
+        <div class="selection-cell">@i</div>
+    }
+</div>
+
+<!-- 3. MAIN UI OVERLAY GRID -->
+<div class="overlay-grid">
+
+    <!-- Cells 1 & 2: Filters -->
+    <div class="grid-item r1 c1 col-span-2 grid-card">
+        <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
+        <form asp-action="Index" method="get" class="d-flex flex-column h-100">
+            <div class="filter-grid mb-2">
+                <input name="filterName" placeholder="Name" class="form-control" value="@ViewBag.FilterName" />
+                <input name="filterType" placeholder="Type" class="form-control" value="@ViewBag.FilterType" />
+                <input name="filterBrand" placeholder="Brand" class="form-control" value="@ViewBag.FilterBrand" />
+                <input name="filterNotes" placeholder="FDA Term" class="form-control" value="@ViewBag.FilterNotes" />
+            </div>
+            <div class="d-flex gap-2 mt-auto">
+                <button type="submit" class="btn btn-primary w-100 fw-bold">Apply Filters</button>
+                <a href="/Home/Index" class="btn btn-outline-secondary text-white fw-bold">Clear</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Cell 3: Omni Search -->
+    <div class="grid-item r1 c3 grid-card">
+        <label class="text-bright-white fw-bold mb-2">Omni Search</label>
+        <form asp-action="Index" method="get" class="d-flex flex-column h-100">
+            <input name="omniSearch" placeholder="Search ID / Brand / Location..." class="form-control mb-2" value="@ViewBag.OmniSearch" />
+            <button type="submit" class="btn btn-outline-primary w-100 mb-1 fw-bold">GO TO →</button>
+            <div class="mt-auto small text-light-gray">Items: @allItems.Count()</div>
+        </form>
+    </div>
+
+    <!-- Cell 4: Export -->
+    <div class="grid-item r1 c4 grid-card">
+        <div class="d-flex flex-column h-100">
+            <div class="mb-1">
+                <label class="text-bright-white fw-bold d-block" style="font-size: 14px;">Export Wizard</label>
+                <small class="d-block text-muted" style="font-size: 10px; line-height: 1.2;">
+                    Options: Group, Team, Type, Brand, Location
+                </small>
+            </div>
+            <div class="mt-auto">
+                <button type="button" class="btn btn-sm btn-dark w-100 py-2 fw-bold" data-bs-toggle="modal" data-bs-target="#exportWizardModal">
+                    <i class="bi bi-file-earmark-arrow-down"></i> CSV
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cell 5: Advanced Transactions / Modify Stock -->
+    <div class="grid-item r1 c5 grid-card">
+        <div class="d-flex flex-column h-100">
+            <div class="mb-2">
+                <label class="text-bright-white fw-bold d-block">Modify Stock</label>
+                <small class="d-block text-light-gray" style="line-height: 1.3;">Add, Scrap, Adjust, Transfer</small>
+            </div>
+            <div class="mt-auto">
+                @if (CurrentUser.Level >= AccessLevels.Standard)
+                {
+                    <button type="button" class="btn btn-outline-primary w-100 py-2 fw-bold" data-bs-toggle="modal" data-bs-target="#modifyStockModal">
+                        <i class="bi bi-tools-fill"></i> Transactions
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-outline-secondary w-100 py-2 fw-bold" disabled title="Requires Standard access">
+                        <i class="bi bi-lock-fill"></i> View Only
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Cell 6: Pickup (Big Yellow Box) -->
+    <div class="grid-item r1 c6">
+        <a asp-controller="Home" asp-action="PickupQueue" class="grid-card pickup-box h-100 w-100 text-center text-decoration-none fw-bold text-white">
+            <div>
+                <i class="bi bi-box-seam me-2"></i> Pick Up Orders
+            </div>
+        </a>
+    </div>
+
+    <!-- Sidebar Left: Orders & Live Alerts -->
+    <div class="grid-item r2 c1 row-span-3 d-flex flex-column gap-2">
+        @* Pickup requests live on the Tasks Available board ("Go Get These"),
+           not in this sidebar. This column holds the cart/orders buttons. *@
+        @if (CurrentUser.Level >= AccessLevels.Engineer)
+        {
+            <form asp-action="Index" method="get">
+                <input type="hidden" name="mode" value="Ledger" />
+                <button type="submit" class="btn btn-info w-100 py-3 fw-bold text-white">
+                    <i class="bi bi-cart3 me-2"></i> VIEW CART
+                </button>
+            </form>
+        }
+
+        <a asp-controller="Home" asp-action="Orders" class="btn btn-outline-info w-100 py-2 mb-2 fw-bold text-white">
+            <i class="bi bi-clock-history me-2"></i> VIEW ORDERS
+        </a>
+
+        <!-- LIVE STOCK ALERTS FEED (CLEAN IN-FEED SCROLL VIEW) -->
+        <div class="flex-grow-1 border rounded d-flex flex-column overflow-hidden vis-feed-panel" style="border-color: var(--vis-yellow) !important; background-color: #1A1C20; max-height: 280px;">
+            <div class="fw-bold small p-2 px-3 d-flex justify-content-between align-items-center" style="background-color: var(--vis-yellow); color: #000;">
+                <span><i class="bi bi-exclamation-triangle-fill me-1"></i> Stock Alerts</span>
+                <div>
+                    <button type="button" class="btn btn-sm text-dark p-0 me-2" data-bs-toggle="modal" data-bs-target="#modifyAlertsModal" title="Modify Alert Rules">
+                        <i class="bi bi-gear-fill fs-6"></i>
+                    </button>
+                    <span class="badge bg-danger text-white fs-6 fw-bold">@lowStockItems.Count</span>
+                </div>
+            </div>
+
+            <div class="p-2 overflow-auto" style="flex-grow: 1; font-size: 11px;">
+                @if (lowStockItems.Any())
+                {
+                    foreach (var item in lowStockItems)
+                    {
+                        <a href="/Home/Index?omniSearch=@item.ItemId" class="d-block text-decoration-none p-2 mb-1 rounded vis-alert-row" style="background: rgba(255,255,255,0.03); color: #E2E8F0; transition: background 0.2s; border: 1px solid #2A2D35;">
+                            <div class="d-flex justify-content-between mb-1">
+                                <span class="fw-bold text-white text-truncate" style="max-width: 120px;">@item.ItemName</span>
+                                <span class="text-warning fw-bold">Qty: @item.Quantity</span>
+                            </div>
+                            <div style="font-size: 10px; color: var(--vis-text-muted);">Loc: @item.Parent / @item.Major</div>
+                        </a>
+                    }
+                }
+                else
+                {
+                    <div class="text-muted text-center p-4">
+                        <i class="bi bi-shield-check d-block mb-2 text-success fs-1"></i>
+                        <span class="text-light-gray">Stock levels healthy.</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="mt-2 d-flex flex-column gap-2">
+            @if (CurrentUser.Level >= AccessLevels.Engineer)
+            {
+                <button type="button" class="btn btn-success w-100 py-2 fw-bold text-white" style="background-color: var(--vis-green); border-color: var(--vis-green);" data-bs-toggle="modal" data-bs-target="#newItemModal">
+                    <i class="bi bi-plus-square me-2"></i> New Item Registry
+                </button>
+                <button type="button" class="btn btn-danger w-100 py-2 fw-bold text-white" data-bs-toggle="modal" data-bs-target="#confirmResetModal">Clear My Cart</button>
+            }
+        </div>
+    </div>
+
+    <!-- THE MAP -->
+    <div class="grid-item r2 c2 col-span-4 row-span-3 map-container">
+        <div class="map-image-frame">
+            <img src="~/images/facility.png" id="facility-map-img" alt="Facility Map" usemap="#labmap" />
+            <!-- Reinstated Glowing Red Dot Tracker Element -->
+            <div id="map-tracking-dot" class="glowing-tracker-dot"></div>
+
+            <map name="labmap" id="labmap">
+                <area shape="rect" coords="1025,370,1110,520" href="/Home/Index?mode=Omni&omniSearch=RLB" title="RD Lab" />
+                <area shape="rect" coords="210,45,320,365" href="/Home/Index?mode=Omni&omniSearch=ETRD" title="External Yard" />
+                <area shape="rect" coords="975,165,1010,260" href="/Home/Index?mode=Omni&omniSearch=NWES" title="New Test Cells" />
+                <area shape="rect" coords="975,455,1010,480" href="/Home/Index?mode=Omni&omniSearch=PATS" title="Plant Test Cells" />
+            </map>
+        </div>
+
+        <!-- Corrected Stats Dashboard -->
+        <div class="map-stats-bar">
+            <div class="stat-block">
+                <i class="bi bi-box-seam stat-icon text-bright-white"></i>
+                <div class="stat-text">
+                    <span class="stat-value text-bright-white">@allItems.Count()</span>
+                    <span class="stat-label">Total Items</span>
+                </div>
+            </div>
+            <div class="stat-block">
+                <i class="bi bi-geo-alt-fill stat-icon text-success"></i>
+                <div class="stat-text">
+                    <!-- Calculates distinct Parent values dynamically from the SQLite context -->
+                    <span class="stat-value text-success">@allItems.Where(i => !string.IsNullOrEmpty(i.Parent)).Select(i => i.Parent).Distinct().Count()</span>
+                    <span class="stat-label">Active Locations</span>
+                </div>
+            </div>
+            <div class="stat-block">
+                <i class="bi bi-exclamation-triangle-fill stat-icon text-warning"></i>
+                <div class="stat-text">
+                    <span class="stat-value text-warning">@lowStockItems.Count</span>
+                    <span class="stat-label">Low Stock</span>
+                </div>
+            </div>
+            <div class="stat-block">
+                <i class="bi bi-x-octagon-fill stat-icon text-danger"></i>
+                <div class="stat-text">
+                    <span class="stat-value text-danger">@allItems.Count(i => i.Quantity == 0)</span>
+                    <span class="stat-label">Out of Stock</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Tracking Status Bar -->
+        <div class="map-live-bar d-flex align-items-center">
+            <div class="blinking-dot me-2"></div>
+            <span class="text-white fw-bold me-2" style="font-size: 12px; letter-spacing: 0.5px;">Live Tracking Active</span>
+
+            <span class="mx-2 text-muted" style="opacity: 0.4;">|</span>
+
+            <span class="text-muted" style="font-size: 11px; font-weight: 500; color: #94A3B8 !important;">
+                Last Updated: <span id="last-updated-time">--:--:--</span>
+            </span>
+
+            <i class="bi bi-arrow-clockwise ms-2 text-muted" style="cursor: pointer; font-size: 12px;" onclick="location.reload();" title="Refresh Feed"></i>
+        </div>
+    </div>
+
+    <!-- Quick Filters & Activity Feed (Right Sidebar) -->
+    <div class="grid-item r2 c6 row-span-3 grid-card d-flex flex-column gap-1">
+        <label class="small fw-bold border-bottom mb-2 p-1">Quick Filters</label>
+        <a href="/Home/Index?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
+        <a href="/Home/Index?mode=Filter&filterType=Compressor" class="btn btn-sm btn-outline-primary py-2">Compressors</a>
+        <a href="/Home/Index?mode=Filter&filterType=Motor" class="btn btn-sm btn-outline-primary py-2">Motors</a>
+        <hr class="my-1" />
+        <a href="/Home/Index?mode=Omni&omniSearch=Commercial" class="btn btn-sm btn-outline-secondary py-1">Commercial</a>
+        <a href="/Home/Index?mode=Omni&omniSearch=Residential" class="btn btn-sm btn-outline-secondary py-1">Residential</a>
+
+        <!-- LIVE HISTORY TIMELINE FEED (ACTIVITY FEED) -->
+        <div class="flex-grow-1 border rounded d-flex flex-column overflow-hidden mt-2 vis-feed-panel" style="border-color: var(--vis-card-border) !important; background-color: #1A1C20;">
+            <div class="fw-bold small p-2 px-3 d-flex flex-column" style="background-color: var(--vis-card-border); border-bottom: 1px solid var(--vis-card-border);">
+                <span class="text-white fs-5 fw-bold">Activity Feed</span>
+                <span class="text-muted" style="font-size: 11px; font-weight: 500; color: #94A3B8 !important;">Live updates from your system</span>
+            </div>
+
+            <div class="p-3 overflow-auto" style="flex-grow: 1; font-size: 11px;">
+                @if (recentActivity.Any())
+                {
+                    <div class="activity-feed">
+                        @for (int idx = 0; idx < recentActivity.Count; idx++)
+                        {
+                            var log = recentActivity[idx];
+                            var item = invSvc?.GetById(log.ItemId);
+
+                            // Map DB actions to human-friendly operation titles
+                            string actionTitle =
+                                log.ActionType == "Add" || log.ActionType == "Quick Add" ? "Stock Added" :
+                                log.ActionType == "Scrap" ? "Item Scrapped" :
+                                log.ActionType == "Ownership" ? "Item Moved" :
+                                log.ActionType == "Location Transfer" ? "Item Relocated" :
+                                log.ActionType == "New Registry" ? "New Item" :
+                                log.ActionType == "Order Picked Up" ? "Order Picked Up" :
+                                "Stock Adjusted";
+
+                            // Timestamps are stored UTC; convert to local before
+                            // display and before the "today" check so the feed
+                            // matches the live tracking bar's local clock.
+                            var localTs = log.Timestamp.ToLocalTime();
+                            string timeDisplay = localTs.Date == DateTime.Today ?
+                                                 localTs.ToString("h:mm tt") :
+                                                 localTs.ToString("h:mm tt MM/dd/yyyy");
+
+                            // Dot color by action type (same in both themes).
+                            string dotColor =
+                                log.ActionType == "Add" || log.ActionType == "Quick Add" ? "#22C55E" : // green  - added
+                                log.ActionType == "Scrap" ? "#D82B33" :                                // red    - scrapped
+                                log.ActionType == "Ownership" ? "#A855F7" :                            // purple - moved
+                                log.ActionType == "Location Transfer" ? "#0EA5E9" :                     // cyan   - relocated
+                                log.ActionType == "New Registry" ? "#148A8A" :                         // teal   - new item
+                                log.ActionType == "Order Picked Up" ? "#F59E0B" :                      // amber  - picked up
+                                "#3B82F6";                                                             // blue   - adjusted
+                            string glowStyle = $"background-color: {dotColor} !important; box-shadow: 0 0 8px {dotColor} !important;";
+
+                            <div class="activity-item d-flex justify-content-between align-items-start mb-3">
+                                <!-- Activity dot, colored by action type -->
+                                <div class="activity-dot" style="@glowStyle"></div>
+
+                                <div style="padding-right: 12px; flex-grow: 1;">
+                                    <strong class="text-bright-white d-block" style="font-size: 13px; font-weight: 700;">@actionTitle</strong>
+                                    <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@log.ItemId: @TruncName(item?.ItemName ?? "Unknown item", 15)</small>
+                                </div>
+
+                                <div class="text-end text-muted" style="font-size: 11px; white-space: nowrap; color: #94A3B8 !important;">
+                                    <div>@timeDisplay</div>
+                                    <div style="font-size: 10px; margin-top: 2px;"><i class="bi bi-person-fill me-1"></i>@log.User</div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="text-muted text-center p-4">
+                        <i class="bi bi-journal-x d-block mb-2 text-muted fs-3"></i>
+                        <span class="text-light-gray">No activity logged today.</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 4. HOLOVIEWER MODAL -->
+@if (showHolo)
+{
+    <div class="holo-overlay">
+        <div class="holo-viewer" data-mode="@result.Mode">
+            <div class="holo-header">
+                <h3>@GetHoloTitle(result)</h3>
+                <a href="/Home/Index?mode=None&omniSearch=@ViewBag.OmniSearch&filterName=@ViewBag.FilterName" class="btn-close"></a>
+            </div>
+            <div class="holo-body">
+                @if (result.Mode == "Ledger")
+                {
+                    var ledger = ViewBag.Ledger as InventoryDevTwo.Models.LedgerViewModel;
+                    if (ledger != null && ledger.Entries.Any())
+                    {
+                        foreach (var entry in ledger.Entries)
+                        {
+                            var item = invSvc?.GetById(entry.ItemId);
+                            <div class="holo-row" data-item-id="@entry.ItemId" tabindex="0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong class="text-white fs-5">@(item?.ItemName ?? "Unknown Item")</strong> <span class="text-light-gray ms-2">(ID: @entry.ItemId)</span><br />
+                                        <small class="text-light-gray">@(item?.Type ?? "-") | @(item?.Brand ?? "-")</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="holo-qty fs-4">Qty: @entry.Quantity</span>
+                                        @if (InventoryDevTwo.Services.InventoryService.IsMotorType(item?.Type) && entry.ThermocoupledCount > 0)
+                                        {
+                                            <span class="fw-bold ms-2" style="color:#F59E0B;">TC Ct: @entry.ThermocoupledCount</span>
+                                        }
+                                        <br />
+                                        <form asp-action="RemoveFromLedger" method="post" class="mt-2">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="itemId" value="@entry.ItemId" />
+                                            <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">Remove</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+
+                        <div class="text-muted text-center mt-5 fs-5">Cart is empty.</div>
+                    }
+                }
+                else if (result.HasResults)
+                {
+                    foreach (var item in result.Items)
+                    {
+                        bool inDraft = headerDraftIds != null && headerDraftIds.Contains(item.ItemId);
+                        var actVars = item.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
+                        <div class="holo-row" data-item-id="@item.ItemId" tabindex="0">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong class="text-white fs-5">@item.ItemName</strong> <span class="text-light-gray ms-2">(ID: @item.ItemId)</span><br />
+                                    @{ bool itemIsMotor = InventoryDevTwo.Services.InventoryService.IsMotorType(item.Type); }
+                                    <small class="text-light-gray">@item.Type | Stock: @item.Quantity@(itemIsMotor ? $" | TC Qty: {item.TotalThermocoupled}" : "")</small>
+                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableQuantity(item.ItemId) : item.Quantity)</span>
+                                    @if (actVars.Count > 1)
+                                    {
+                                        foreach (var v in actVars)
+                                        {
+                                            <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted);">
+                                                <i class="bi bi-geo-alt me-1"></i>Variant @v.VariantNumber — @FriendlyVarLoc(v) · Qty @v.Quantity@(itemIsMotor ? $" · TC {v.ThermocoupledQty}" : "")
+                                            </small>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted); opacity: 0.75;">No variants of item</small>
+                                    }
+                                </div>
+                                <div class="d-flex flex-column align-items-end gap-2">
+                                    @if (CurrentUser.Level >= AccessLevels.Engineer)
+                                    {
+                                        @if (!inDraft)
+                                        {
+                                            <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openAddToCart('@item.ItemId')">
+                                                <i class="bi bi-cart-plus me-1"></i> Add to Cart
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary p-2 fs-6 fw-bold">In Cart</span>
+                                        }
+                                    }
+                                    @if (CurrentUser.Level >= AccessLevels.Standard)
+                                    {
+                                        <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
+                                            <i class="bi bi-box-seam me-1"></i> Handle Stock
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="text-end mt-1">
+                                <small class="text-light-gray" style="font-size: 10px; opacity: 0.7;">
+                                    <i class="bi bi-clock-history me-1"></i>Registered: @(item.RegisteredAt.HasValue ? item.RegisteredAt.Value.ToLocalTime().ToString("MMM d, yyyy") : "unknown")
+                                </small>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+
+                    <div class="text-muted text-center mt-5 fs-5">No results found.</div>
+                }
+            </div>
+            <div class="holo-actions">
+                @if (result.Mode == "Ledger")
+                {
+                    <button type="button" class="btn btn-success w-100 py-3 fs-5 fw-bold mb-2" data-bs-toggle="modal" data-bs-target="#confirmSubmitModal">Submit Order</button>
+                    <form asp-controller="Home" asp-action="CancelOrder" method="post" class="m-0">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="btn btn-outline-danger w-100 py-2 fw-bold">Cancel Order (Clear Cart)</button>
+                    </form>
+                }
+                else
+                {
+                    <div class="text-center text-light-gray p-3">
+                        <i class="bi bi-arrow-left-circle d-block mb-2 fs-3"></i>
+                        <div class="small">Set a quantity and click <strong>Add to Order</strong> on each item you need, then open your cart to submit.</div>
+                    </div>
+                }
+                <a href="/Home/Index?mode=None&omniSearch=@ViewBag.OmniSearch" class="btn btn-outline-secondary w-100 mt-3 py-2 text-white fw-bold">Close Viewer</a>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- 5. ALL MODALS -->
+<div class="modal fade" id="confirmSubmitModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="SubmitLedger" method="post" id="submit-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header"><h5>Confirm Final Order</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">Are you sure you want to submit this order?</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Back</button>
+                    <button type="button" class="btn btn-success fw-bold" onclick="executeSubmit('submit-frm', this)">Submit Now</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Themed confirm for starting an order on first add (replaces native confirm) -->
+<div class="modal fade" id="startOrderModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-cart-plus me-2" style="color: var(--vis-green);"></i>Start an Order?</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white">
+                This will start an order and open an active cart. You can keep adding items, then submit when you're ready.
+            </div>
+            <div class="modal-footer" style="border-top: 1px solid var(--vis-card-border);">
+                <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Back</button>
+                <button type="button" id="startOrderConfirmBtn" class="btn btn-success fw-bold"><i class="bi bi-check2 me-1"></i> Continue</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="confirmResetModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="SystemReset" method="post" id="reset-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Clear Session Cart</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">This will empty your personal shopping cart. Proceed?</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="executeSubmit('reset-frm', this)">Clear Cart</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modifyStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="ModifyStock" method="post" id="modify-stock-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-tools me-2"></i>Modify Stock</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <div class="mb-3 position-relative">
+                        <label class="form-label small fw-bold text-light-gray">Search Item</label>
+                        <input type="text" id="stock-search" class="form-control" placeholder="Type ID or Name..." autocomplete="off" />
+                        <div id="stock-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Selected Item ID</label>
+                            <input type="text" name="itemId" id="stock-item-id" class="form-control text-white fw-bold" style="background-color: var(--vis-card-border);" readonly required />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Action</label>
+                            <select name="actionType" id="stock-action-type" class="form-select fw-bold text-primary" onchange="toggleStockUI()">
+                                <option value="Add">Add Stock (+)</option>
+                                <option value="Adjustment">Adjustment (+/-)</option>
+                                <option value="Location Transfer">Location Transfer</option>
+                                @if (CurrentUser.Level >= AccessLevels.Engineer)
+                                {
+                                    <option value="Scrap">Scrap (-)</option>
+                                    <option value="Ownership">Internal - Transfer</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- LOCATION / VARIANT picker: which physical stack this action hits.
+                         Hidden for single-location items on non-Add actions (posts nothing ->
+                         primary variant, old behavior). Add always shows it for the
+                         "New location..." option. -->
+                    <div id="stock-variant-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Location / Variant</label>
+                        <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
+                    </div>
+
+                    <div id="stock-qty-div" class="mb-3">
+                        <label class="form-label small fw-bold text-light-gray">Quantity</label>
+                        <input type="number" name="quantity" id="stock-qty-input" class="form-control" value="1" required />
+                        <small class="text-light-gray" id="stock-qty-help">Amount to ADD to current inventory.</small>
+                    </div>
+
+                    <!-- THERMOCOUPLED subset (motors only). One field for Add/Scrap; a
+                         twin lives in the transfer move-qty row. Whichever is hidden is
+                         DISABLED so exactly one "thermocoupledQty" ever posts. -->
+                    <div id="stock-tc-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold" style="color: var(--vis-amber, #F59E0B);">
+                            <i class="bi bi-thermometer-half me-1"></i>Thermocoupled
+                        </label>
+                        <input type="number" name="thermocoupledQty" id="stock-tc-input" class="form-control fw-bold"
+                               value="0" min="0" disabled
+                               style="border-color:#F59E0B;" />
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-tc-help">How many of these are thermocoupled?</small>
+                    </div>
+
+                    <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">New Group</label>
+                            <select name="newGroup" class="form-select">
+                                <option value="Commercial">Commercial</option>
+                                <option value="Residential">Residential</option>
+                                <option value="International">International</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">New Team</label>
+                            <select name="newTeam" class="form-select">
+                                <option value="Samurai">Samurai (7166)</option>
+                                <option value="Ninja">Ninja (7165)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
+                         selected item's current location. 0 = unspecified at every level but Parent. -->
+                    <div id="stock-loc-div" class="mb-1" style="display:none;">
+                        <div class="py-2 px-3 mb-3 small rounded" style="background:#14151A; border:1px solid #3D4351; color:#94A3B8;">
+                            <i class="bi bi-geo-alt me-1"></i> Current location: <span class="fw-bold text-info" id="loc-current">--</span>
+                        </div>
+                        <div id="loc-needs-item" class="small text-warning mb-2">
+                            <i class="bi bi-info-circle me-1"></i> Select an item above to edit its location.
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Parent</label>
+                                <select name="newParent" id="loc-parent" class="form-select" disabled>
+                                    <option value="">Select Parent...</option>
+                                    <option value="RLB">RD Lab (RLB)</option>
+                                    <option value="ETRD">External Yard (ETRD)</option>
+                                    <option value="NWES">New Test Cells (NWES)</option>
+                                    <option value="PATS">Plant Test Cells (PATS)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Major</label>
+                                <select name="newMajor" id="loc-major" class="form-select" disabled></select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Sub</label>
+                                <select name="newSub" id="loc-sub" class="form-select" disabled></select>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-light-gray">Rack</label>
+                                <input type="text" name="newRack" id="loc-rack" class="form-control" placeholder="0" disabled />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-light-gray">Row</label>
+                                <input type="text" name="newRow" id="loc-row" class="form-control" placeholder="0" disabled />
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2" id="loc-moveqty-div" style="display:none;">
+                            <div class="col-md-5">
+                                <label class="form-label small fw-bold text-light-gray">Quantity to move</label>
+                                <input type="number" name="transferQty" id="loc-moveqty" class="form-control" min="1" />
+                                <small class="text-light-gray d-block mt-1" style="font-size:10px;">Defaults to the whole stack. Less = split off a new variant.</small>
+                            </div>
+                            <!-- Transfer-context TC twin (motors only). Disabled unless a
+                                 motor is being transferred, so it never double-posts with
+                                 the Add/Scrap TC field above. -->
+                            <div class="col-md-4" id="loc-tc-div" style="display:none;">
+                                <label class="form-label small fw-bold" style="color:#F59E0B;">
+                                    <i class="bi bi-thermometer-half me-1"></i>Of these, TC
+                                </label>
+                                <input type="number" name="thermocoupledQty" id="loc-tc-input" class="form-control fw-bold"
+                                       value="0" min="0" disabled style="border-color:#F59E0B;" />
+                                <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="loc-tc-help">How many moved are TC?</small>
+                            </div>
+                            <div class="col-md-3 d-flex align-items-center">
+                                <small id="loc-merge-note" class="text-warning fw-bold" style="display:none; font-size:11px;"></small>
+                            </div>
+                        </div>
+                        <div class="p-2 mt-2 border rounded" style="background-color:#14151A; border-color:#3D4351 !important;">
+                            <label class="form-label small fw-bold text-info mb-1">New FDA String</label>
+                            <input type="text" id="loc-fda" class="form-control fw-bold border-0 text-white" style="background:transparent; font-size:15px;" readonly placeholder="--" />
+                        </div>
+                        <small class="text-light-gray d-block mt-2" style="font-size:10px;">
+                            Set any level to <strong>0</strong> for "unspecified". Parent is required.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary fw-bold" onclick="executeSubmit('modify-stock-frm', this)">Execute</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ADD TO CART subprocess modal. One shared instance; openAddToCart(itemId)
+     fills it from itemsList. Plain Bootstrap .modal -> inherits the z-index
+     registry (2200 over holo overlay 2000). Posts to the same AddToCart action
+     Feature 1 already used; no controller/model/migration change. -->
+<div class="modal fade" id="addToCartModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="AddToCart" method="post" id="add-to-cart-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-cart-plus me-2"></i>Add to Cart</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <input type="hidden" name="itemId" id="atc-item-id" />
+
+                    <div class="mb-3">
+                        <div class="fw-bold fs-5 text-white" id="atc-item-name">--</div>
+                        <small class="text-light-gray" id="atc-item-sub">ID: --</small>
+                    </div>
+
+                    <!-- Which physical stack to pull from. Shown only when the item
+                         is split across locations; single-location items post null
+                         (= Either), matching the old inline behavior. -->
+                    <div class="mb-3" id="atc-loc-div" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Pull location</label>
+                        <select name="requestedVariantId" id="atc-loc-sel" class="form-select fw-bold text-info"
+                                style="background-color:#14151A; border-color:#3D4351;"></select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">Which location the runner pulls from — or Either.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-light-gray">Add Quantity</label>
+                        <input type="number" name="quantity" id="atc-qty" class="form-control fw-bold" value="1" min="1" required
+                               oninput="atcRecomputeTcCap();" />
+                    </div>
+
+                    <!-- Thermocoupled request (motors only). Capped at qty, live. -->
+                    <div class="mb-3" id="atc-tc-div" style="display:none;">
+                        <label class="form-label small fw-bold" style="color:#F59E0B;">
+                            <i class="bi bi-thermometer-half me-1"></i>Thermocoupled count
+                        </label>
+                        <input type="number" name="thermocoupledCount" id="atc-tc" class="form-control fw-bold" value="0" min="0"
+                               style="border-color:#F59E0B;" disabled
+                               oninput="var m=parseInt(this.max)||0; var v=parseInt(this.value); if(isNaN(v)||v<0)v=0; if(v>m)v=m; this.value=v;" />
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">How many of these should be thermocoupled? (capped by the chosen location's TC stock)</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold"><i class="bi bi-cart-plus me-1"></i>Add to Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modifyAlertsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="UpdateAlertThreshold" method="post" id="alert-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-bell-fill me-2"></i>Modify Stock Alert</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <div class="mb-3 position-relative">
+                        <label class="form-label small fw-bold text-light-gray">Search Item</label>
+                        <input type="text" id="alert-search" class="form-control" placeholder="Type ID or Name..." autocomplete="off" />
+                        <div id="alert-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label small fw-bold text-light-gray">Selected Item ID</label>
+                            <input type="text" name="itemId" id="alert-item-id" class="form-control text-white fw-bold" style="background-color: var(--vis-card-border);" readonly required />
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small fw-bold text-warning">Alert Threshold</label>
+                            <input type="number" name="threshold" id="alert-threshold" class="form-control fw-bold text-warning" min="0" required />
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">Set to 0 to disable.</small>
+                        </div>
+                    </div>
+                    @if (CurrentUser.Level >= AccessLevels.Management)
+                    {
+                        <hr class="border-secondary my-3" />
+                        <div>
+                            <label class="form-label small fw-bold text-warning">
+                                <i class="bi bi-sliders me-1"></i>Default value for all items
+                            </label>
+                            <div class="d-flex gap-2 align-items-start">
+                                <input type="number" id="bulk-threshold-input" class="form-control fw-bold text-warning" min="0" placeholder="e.g. 5" style="max-width: 140px;" />
+                                <button type="button" class="btn btn-outline-warning fw-bold" onclick="applyBulkThreshold()">Apply to all</button>
+                            </div>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">Sets the alert threshold for every item you oversee at once.</small>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark" onclick="executeSubmit('alert-frm', this)">Save Alert Rule</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<form asp-controller="Home" asp-action="SetDefaultThreshold" method="post" id="bulk-threshold-frm" class="d-none">
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="threshold" id="bulk-threshold-value" />
+</form>
+
+<div class="modal fade" id="confirmBulkThresholdModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title fw-bold"><i class="bi bi-sliders me-2"></i>Set Default Threshold</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" id="bulk-confirm-msg">Set the alert threshold for all items you oversee?</div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning fw-bold text-dark" onclick="executeSubmit('bulk-threshold-frm', this)">Okay</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="newItemModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="CreateItem" method="post" id="create-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header" style="background: var(--vis-green);">
+                    <h5 class="modal-title text-white fw-bold">New Item Registry</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label small fw-bold text-light-gray">Item ID (Auto)</label>
+                            <input type="text" name="ItemId" id="reg-itemid" class="form-control fw-bold text-white" style="background-color: var(--vis-card-border);" value="@ViewBag.NextItemId" placeholder="Auto-assigned" readonly />
+                        </div>
+                        <div class="col-md-7">
+                            <label class="form-label small fw-bold text-light-gray">Item Name</label>
+                            <input type="text" name="ItemName" class="form-control" required />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small fw-bold text-success">Initial Qty</label>
+                            <input type="number" name="Quantity" class="form-control text-success fw-bold" value="1" min="0" required />
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Group</label>
+                            <select name="Group" id="reg-group" class="form-select">
+                                <option value="Commercial">Commercial</option>
+                                <option value="Residential">Residential</option>
+                                <option value="International">International</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            <select name="Team" id="reg-team" class="form-select">
+                                <option value="Samurai" data-code="7166">Samurai (7166)</option>
+                                <option value="Ninja" data-code="7165">Ninja (7165)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Project Code</label>
+                            <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="7166" readonly />
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Type</label>
+                            <input type="text" name="Type" id="reg-type" class="form-control" placeholder="e.g. Motor, Unit..." />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Brand</label>
+                            <input type="text" name="Brand" class="form-control" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-light-gray">Description</label>
+                            <input type="text" name="Description" class="form-control" />
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary" />
+                    <h6 class="text-info fw-bold mb-3">Location Mapping</h6>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Parent</label>
+                            <select name="Parent" id="reg-parent" class="form-select">
+                                <option value="">Select Parent...</option>
+                                <option value="RD Lab">RD Lab</option>
+                                <option value="External Yard">External Yard</option>
+                                <option value="New Test Cells">New Test Cells</option>
+                                <option value="Plant Test Cells">Plant Test Cells</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Major</label>
+                            <select name="Major" id="reg-major" class="form-select" disabled>
+                                <option value="">Select Major...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Sub</label>
+                            <select name="Sub" id="reg-sub" class="form-select" disabled>
+                                <option value="">Select Sub...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Rack</label>
+                            <input type="text" name="Rack" id="reg-rack" class="form-control" placeholder="e.g. FLOOR, A" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Row</label>
+                            <input type="text" name="Row" id="reg-row" class="form-control" placeholder="e.g. 1, 2" />
+                        </div>
+                    </div>
+
+                    <div class="p-3 mt-4 border rounded" style="background-color: #14151A; border-color: #3D4351 !important;">
+                        <label class="form-label small fw-bold text-info">Generated FDA String</label>
+                        <input type="text" name="FdaString" id="reg-fda" class="form-control fw-bold border-0 text-white" style="background:transparent; font-size: 16px;" readonly placeholder="Waiting for location input..." />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success fw-bold" onclick="executeSubmit('create-frm', this)">Save to Registry</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="exportWizardModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="ExportInventory" method="get">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-arrow-down me-2"></i>Export List Wizard</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <p class="small text-light-gray mb-3">Leave fields blank to include everything, or select options to narrow your export.</p>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Group</label>
+                            <select name="exportGroup" class="form-select form-select-sm">
+                                <option value="">-- Any Group --</option>
+                                <option value="Commercial">Commercial</option>
+                                <option value="Residential">Residential</option>
+                                <option value="International">International</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            <select name="exportTeam" class="form-select form-select-sm">
+                                <option value="">-- Any Team --</option>
+                                <option value="Samurai">Samurai</option>
+                                <option value="Ninja">Ninja</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Type</label>
+                            <input type="text" name="exportType" class="form-control form-control-sm" placeholder="e.g. Motor" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Brand</label>
+                            <input type="text" name="exportBrand" class="form-control form-control-sm" placeholder="e.g. Broad Ocean" />
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary" />
+                    <h6 class="text-info fw-bold small mb-2">Location Filter (Cascading)</h6>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4">
+                            <select id="exp-parent" class="form-select form-select-sm">
+                                <option value="">Any Parent...</option>
+                                <option value="RD Lab">RD Lab</option>
+                                <option value="External Yard">External Yard</option>
+                                <option value="New Test Cells">New Test Cells</option>
+                                <option value="Plant Test Cells">Plant Test Cells</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="exp-major" class="form-select form-select-sm" disabled>
+                                <option value="">Any Major...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="exp-sub" class="form-select form-select-sm" disabled>
+                                <option value="">Any Sub...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <input type="hidden" name="exportFda" id="exp-fda" />
+
+                    <hr class="border-secondary" />
+                    <h6 class="text-warning fw-bold small mb-2">Include Status (OR Logic)</h6>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="expAvailable" id="expAvailable" value="true" checked>
+                                <label class="form-check-label small fw-bold text-light-gray" for="expAvailable">Available (Qty > 0)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="expAlerts" id="expAlerts" value="true">
+                                <label class="form-check-label small fw-bold text-warning" for="expAlerts">Stock Alerts</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input exp-history-chk" type="checkbox" name="expScrap" id="expScrap" value="true">
+                                <label class="form-check-label small fw-bold text-danger" for="expScrap">Scrapped</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input exp-history-chk" type="checkbox" name="expOwnership" id="expOwnership" value="true">
+                                <label class="form-check-label small fw-bold text-info" for="expOwnership">Ownership Change</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-1 mt-3" id="expTimeFrameDiv" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">History Time Frame</label>
+                        <select name="expTimeFrame" class="form-select form-select-sm">
+                            <option value="7">Last 7 Days</option>
+                            <option value="30" selected>Last 30 Days</option>
+                            <option value="90">Last 90 Days</option>
+                            <option value="all">All Time</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold" onclick="setTimeout(()=>$('#exportWizardModal').modal('hide'), 500);">Download CSV</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 8. SCRIPTS -->
+<script>
+    function executeSubmit(id, btnElement) {
+        const f = document.getElementById(id);
+        if (f) {
+            if (btnElement) {
+                btnElement.disabled = true;
+                btnElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Processing...';
+            }
+            f.submit();
+        }
+    }
+
+    // Management-only: validate, then show a styled confirm popup before bulk-
+    // setting the alert threshold. We CLOSE the alerts modal first and open the
+    // confirm popup only once it's fully hidden, so the two never stack (the app
+    // pins every modal to the same z-index, so stacking would misbehave).
+    function applyBulkThreshold() {
+        const input = document.getElementById('bulk-threshold-input');
+        const raw = input ? input.value.trim() : '';
+        if (raw === '' || isNaN(raw) || parseInt(raw, 10) < 0) {
+            showToast('Enter a valid threshold (0 or higher).', 'error');
+            return;
+        }
+        const val = parseInt(raw, 10);
+        document.getElementById('bulk-threshold-value').value = val;
+
+        const msg = document.getElementById('bulk-confirm-msg');
+        if (msg) msg.textContent = 'Set the alert threshold to ' + val + ' for all items you oversee? This overwrites every current threshold.';
+
+        const alertsEl = document.getElementById('modifyAlertsModal');
+        const confirmEl = document.getElementById('confirmBulkThresholdModal');
+        const confirmModal = bootstrap.Modal.getInstance(confirmEl) || new bootstrap.Modal(confirmEl);
+        const alertsModal = alertsEl ? (bootstrap.Modal.getInstance(alertsEl) || new bootstrap.Modal(alertsEl)) : null;
+
+        if (alertsModal && alertsEl) {
+            alertsEl.addEventListener('hidden.bs.modal', function handler() {
+                alertsEl.removeEventListener('hidden.bs.modal', handler);
+                confirmModal.show();
+            });
+            alertsModal.hide();
+        } else {
+            confirmModal.show();
+        }
+    }
+
+    // Opens the Modify Stock panel pre-loaded with a specific item (from a search row).
+    function handleStock(itemId) {
+        const idField = document.getElementById('stock-item-id');
+        const searchField = document.getElementById('stock-search');
+        if (idField) idField.value = itemId;
+        if (searchField) searchField.value = itemId;
+        if (typeof toggleStockUI === 'function') toggleStockUI();
+        const el = document.getElementById('modifyStockModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    // Variants of the item currently shown in the Add to Cart modal (with tcqty),
+    // so the TC cap can react to the chosen pull-location.
+    let atcCurrentVariants = [];
+
+    // Opens the Add to Cart subprocess modal for a specific item, filling the
+    // qty / pull-location / TC controls from itemsList (same data the Modify
+    // Stock modal reads). Location select only appears for multi-location items;
+    // TC only for motors, capped by the chosen location's actual TC.
+    function openAddToCart(itemId) {
+        const item = itemsList.find(function (i) { return i.id === itemId; });
+        if (!item) return;
+
+        atcCurrentVariants = (item.variants || []);
+
+        document.getElementById('atc-item-id').value = itemId;
+        document.getElementById('atc-item-name').textContent = item.name || itemId;
+        document.getElementById('atc-item-sub').textContent =
+            'ID: ' + itemId + (item.type ? '  ·  ' + item.type : '');
+
+        // Reset the header close button in case a prior add mangled it (the
+        // generic add handler retargets the form's first button, which is this X).
+        const xbtn = document.querySelector('#add-to-cart-frm .btn-close');
+        if (xbtn) { xbtn.textContent = ''; xbtn.disabled = false; }
+
+        // Reset quantity.
+        const qty = document.getElementById('atc-qty');
+        qty.value = 1;
+
+        // Pull-location selector: only when split across >1 active location.
+        const locDiv = document.getElementById('atc-loc-div');
+        const locSel = document.getElementById('atc-loc-sel');
+        const vars = atcCurrentVariants;
+        locSel.innerHTML = '';
+        if (vars.length > 1) {
+            const either = document.createElement('option');
+            either.value = '';
+            either.textContent = 'Either location (picker chooses)';
+            locSel.appendChild(either);
+            vars.forEach(function (v) {
+                const o = document.createElement('option');
+                o.value = String(v.vid);
+                o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+                locSel.appendChild(o);
+            });
+            locDiv.style.display = 'block';
+        } else {
+            // Single location: post nothing -> null -> Either (pulls the one stack).
+            locDiv.style.display = 'none';
+        }
+        // Re-cap TC whenever the pull-location changes.
+        locSel.onchange = atcRecomputeTcCap;
+
+        // TC request: motors only. Disabled when hidden so it never posts for
+        // non-motors (keeps thermocoupledCount at its 0 default).
+        const tcDiv = document.getElementById('atc-tc-div');
+        const tc = document.getElementById('atc-tc');
+        if (typeof isMotorType === 'function' && isMotorType(item.type)) {
+            tc.value = 0;
+            tc.disabled = false;
+            tcDiv.style.display = 'block';
+        } else {
+            tc.value = 0;
+            tc.disabled = true;
+            tcDiv.style.display = 'none';
+        }
+        atcRecomputeTcCap();
+
+        const el = document.getElementById('addToCartModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    // Cap the TC request by the chosen pull-location's ACTUAL thermocoupled stock
+    // (and by Add Quantity): a specific stack -> that stack's TC; "Either" -> the
+    // total TC across active stacks; single-location -> the one stack's TC. This
+    // stops a TC count being attached to a stack that has no TC to give.
+    function atcRecomputeTcCap() {
+        const tc = document.getElementById('atc-tc');
+        if (!tc || tc.disabled) return;
+        const qty = parseInt(document.getElementById('atc-qty').value, 10) || 0;
+        const sel = document.getElementById('atc-loc-sel');
+        const locDiv = document.getElementById('atc-loc-div');
+        const vars = atcCurrentVariants || [];
+
+        let availTc = 0;
+        if (locDiv && locDiv.style.display !== 'none' && sel) {
+            if (sel.value === '') {
+                availTc = vars.reduce(function (s, v) { return s + (v.tcqty || 0); }, 0);
+            } else {
+                const vid = parseInt(sel.value, 10);
+                const hit = vars.find(function (v) { return v.vid === vid; });
+                availTc = hit ? (hit.tcqty || 0) : 0;
+            }
+        } else {
+            availTc = vars.length ? (vars[0].tcqty || 0) : 0;
+        }
+
+        const ceil = Math.max(0, Math.min(qty, availTc));
+        tc.max = ceil;
+        let v = parseInt(tc.value, 10); if (isNaN(v) || v < 0) v = 0;
+        if (v > ceil) v = ceil;
+        tc.value = v;
+    }
+
+    // ---- Variant helpers -------------------------------------------------
+    function getStockItem() {
+        const idEl = document.getElementById('stock-item-id');
+        const itemId = idEl ? idEl.value : '';
+        if (!itemId) return null;
+        return itemsList.find(function (i) { return i.id === itemId; }) || null;
+    }
+
+    // The variant currently chosen in the selector (never "NEW"); falls back
+    // to the item's first (primary) variant.
+    function getSelectedVariant(item) {
+        if (!item || !item.variants || !item.variants.length) return null;
+        const sel = document.getElementById('stock-variant-sel');
+        if (sel && sel.value && sel.value !== 'NEW') {
+            const vid = parseInt(sel.value, 10);
+            const f = item.variants.find(function (v) { return v.vid === vid; });
+            if (f) return f;
+        }
+        return item.variants[0];
+    }
+
+    // (Re)build the Location/Variant selector for the current item + action.
+    // Shown when the item is split across locations, or on Add (for the
+    // "New location..." option). Hidden = posts nothing = primary variant.
+    function populateVariantSel(action) {
+        const div = document.getElementById('stock-variant-div');
+        const sel = document.getElementById('stock-variant-sel');
+        const help = document.getElementById('stock-variant-help');
+        if (!div || !sel) return;
+
+        const item = getStockItem();
+        const vars = (item && item.variants) ? item.variants : [];
+        const show = item && (vars.length > 1 || action === 'Add') && action !== 'Ownership';
+
+        sel.innerHTML = '';
+        if (!show) { div.style.display = 'none'; return; }
+
+        vars.forEach(function (v) {
+            const o = document.createElement('option');
+            o.value = String(v.vid);
+            o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+            sel.appendChild(o);
+        });
+        if (action === 'Add') {
+            const o = document.createElement('option');
+            o.value = 'NEW';
+            o.textContent = '+ New location...';
+            sel.appendChild(o);
+        }
+        if (help) {
+            help.textContent = (action === 'Location Transfer')
+                ? 'Which stack to move FROM.'
+                : (action === 'Add' ? 'Which stack to add to — or start a new location.'
+                                    : 'Which physical stack this action applies to.');
+        }
+        div.style.display = 'block';
+    }
+
+    // Transfer only: warn when the destination matches a sibling stack, since
+    // executing will MERGE quantities (source retires if fully drained).
+    function refreshMergeNote() {
+        const note = document.getElementById('loc-merge-note');
+        if (!note) return;
+        const action = document.getElementById('stock-action-type').value;
+        if (action !== 'Location Transfer') { note.style.display = 'none'; return; }
+
+        const item = getStockItem();
+        const srcVar = getSelectedVariant(item);
+        if (!item || !srcVar) { note.style.display = 'none'; return; }
+
+        const seg = function (id) {
+            const el = document.getElementById(id);
+            const v = el ? String(el.value || '').trim().toUpperCase() : '';
+            return v === '' ? '0' : v;
+        };
+        const norm = function (v) {
+            const s = (v == null ? '' : String(v).trim().toUpperCase());
+            return s === '' ? '0' : s;
+        };
+        const dest = [seg('loc-parent'), seg('loc-major'), seg('loc-sub'), seg('loc-rack'), seg('loc-row')];
+
+        const hit = (item.variants || []).find(function (v) {
+            if (v.vid === srcVar.vid) return false;
+            return norm(v.parent) === dest[0] && norm(v.major) === dest[1] && norm(v.sub) === dest[2]
+                && norm(v.rack) === dest[3] && norm(v.row) === dest[4];
+        });
+
+        if (hit) {
+            note.innerHTML = '<i class="bi bi-arrow-down-up me-1"></i>Merges into Variant ' + hit.num
+                + ' (Qty ' + hit.qty + ') — source retires if fully drained.';
+            note.style.display = 'block';
+        } else {
+            note.style.display = 'none';
+        }
+    }
+
+    // Prefill "Quantity to move" with the source stack's full amount.
+    function refreshMoveQty() {
+        const input = document.getElementById('loc-moveqty');
+        if (!input) return;
+        const srcVar = getSelectedVariant(getStockItem());
+        if (srcVar) { input.value = srcVar.qty; input.max = srcVar.qty; }
+    }
+
+    function toggleStockUI() {
+        const action = document.getElementById('stock-action-type').value;
+        const qtyDiv = document.getElementById('stock-qty-div');
+        const ownDiv = document.getElementById('stock-own-div');
+        const locDiv = document.getElementById('stock-loc-div');
+        const moveQtyDiv = document.getElementById('loc-moveqty-div');
+        const qtyInput = document.getElementById('stock-qty-input');
+        const helpText = document.getElementById('stock-qty-help');
+
+        populateVariantSel(action);
+        const variantSel = document.getElementById('stock-variant-sel');
+        const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
+
+        if (action === 'Ownership') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'flex';
+            if (locDiv) locDiv.style.display = 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = false;
+        } else if (action === 'Location Transfer') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'none';
+            if (locDiv) locDiv.style.display = 'block';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'flex';
+            qtyInput.required = false;
+            if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
+            refreshMoveQty();
+            refreshMergeNote();
+        } else {
+            qtyDiv.style.display = 'block';
+            ownDiv.style.display = 'none';
+            // Add-to-NEW-location reuses the transfer cascade for the address,
+            // but hides the move-qty row (the main Quantity box is the amount).
+            if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = true;
+            if (addingNew) {
+                locSetEnabled(true);
+                locRefreshFda();
+            }
+
+            if (action === 'Add') helpText.innerText = addingNew
+                ? "Amount to place at the NEW location."
+                : "Amount to ADD to current inventory.";
+            else if (action === 'Scrap') helpText.innerText = "Amount to REMOVE from inventory.";
+            else if (action === 'Adjustment') helpText.innerText = "Use negative numbers (-) to subtract, positive to add.";
+        }
+
+        refreshTcFields(action);
+    }
+
+    // ---- Thermocoupled (motors only) -------------------------------------
+    // Keep in lockstep with InventoryService.IsMotorType: a type ending in
+    // "Motor" (Motor / ID Motor / OD Motor) is TC-eligible; nothing else is.
+    function isMotorType(t) {
+        return !!t && String(t).trim().toLowerCase().endsWith('motor');
+    }
+
+    // Show/enable exactly the right TC input for the action, and cap it so the
+    // human can never enter an impossible number. Disabled inputs don't post,
+    // so the hidden twin stays out of the way. Add/Scrap use #stock-tc-input;
+    // Location Transfer uses #loc-tc-input.
+    function refreshTcFields(action) {
+        const item = getStockItem();
+        const motor = item && isMotorType(item.type);
+
+        const stockDiv = document.getElementById('stock-tc-div');
+        const stockInput = document.getElementById('stock-tc-input');
+        const stockHelp = document.getElementById('stock-tc-help');
+        const locDiv = document.getElementById('loc-tc-div');
+        const locInput = document.getElementById('loc-tc-input');
+        const locHelp = document.getElementById('loc-tc-help');
+
+        // Default: both off. We turn on only what applies below.
+        const off = function (div, input) {
+            if (div) div.style.display = 'none';
+            if (input) { input.disabled = true; input.value = 0; }
+        };
+        off(stockDiv, stockInput);
+        off(locDiv, locInput);
+
+        if (!motor) return;   // non-motors never carry TC
+
+        const clampInto = function (input, floor, ceil, help, helpText) {
+            let v = parseInt(input.value, 10); if (isNaN(v)) v = 0;
+            v = Math.max(floor, Math.min(ceil, v));
+            input.value = v;
+            input.min = floor;
+            input.max = ceil;
+            if (help) help.textContent = floor > 0
+                ? (helpText + ' (at least ' + floor + ' must be)')
+                : helpText;
+        };
+
+        if (action === 'Add') {
+            // Of the amount being added, any number can be TC (0..qty added).
+            const qty = parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0;
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, 0, Math.max(0, qty), stockHelp, 'How many added are thermocoupled?');
+        } else if (action === 'Scrap') {
+            const v = getSelectedVariant(item);
+            const scrapQty = parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0;
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            const eff = Math.min(scrapQty, v ? (v.qty || 0) : scrapQty);
+            const floor = Math.max(0, eff - nonTc);      // forced TC if not enough non-TC to cover
+            const ceil = Math.min(eff, tcHave);
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, floor, Math.max(floor, ceil), stockHelp, 'How many scrapped are thermocoupled?');
+        } else if (action === 'Location Transfer') {
+            const v = getSelectedVariant(item);
+            const moveQty = parseInt((document.getElementById('loc-moveqty') || {}).value, 10) || 0;
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            const eff = Math.min(moveQty, v ? (v.qty || 0) : moveQty);
+            const floor = Math.max(0, eff - nonTc);
+            const ceil = Math.min(eff, tcHave);
+            locDiv.style.display = 'block';
+            locInput.disabled = false;
+            clampInto(locInput, floor, Math.max(floor, ceil), locHelp, 'How many moved are TC?');
+        }
+    }
+
+    // Recompute TC caps live as the driving quantities change.
+    (function bindTcRecompute() {
+        const q = document.getElementById('stock-qty-input');
+        if (q) q.addEventListener('input', function () {
+            const a = document.getElementById('stock-action-type').value;
+            if (a === 'Add' || a === 'Scrap') refreshTcFields(a);
+        });
+        const mq = document.getElementById('loc-moveqty');
+        if (mq) mq.addEventListener('input', function () {
+            if (document.getElementById('stock-action-type').value === 'Location Transfer')
+                refreshTcFields('Location Transfer');
+        });
+    })();
+
+    // Variant choice changes reshape the panel: re-seed transfer source,
+    // re-prefill move qty, re-check merges, or reveal the new-location cascade.
+    (function bindVariantSel() {
+        const sel = document.getElementById('stock-variant-sel');
+        if (!sel) return;
+        sel.addEventListener('change', function () {
+            const action = document.getElementById('stock-action-type').value;
+            if (typeof refreshTcFields === 'function') refreshTcFields(action);
+            if (action === 'Location Transfer') {
+                if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
+                refreshMoveQty();
+                refreshMergeNote();
+                if (typeof refreshTcFields === 'function') refreshTcFields(action);
+            } else if (action === 'Add') {
+                // Only the loc-div visibility depends on NEW vs existing.
+                const locDiv = document.getElementById('stock-loc-div');
+                const addingNew = (sel.value === 'NEW');
+                if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+                const helpText = document.getElementById('stock-qty-help');
+                if (helpText) helpText.innerText = addingNew
+                    ? "Amount to place at the NEW location."
+                    : "Amount to ADD to current inventory.";
+                if (addingNew) { locSetEnabled(true); locRefreshFda(); }
+            }
+        });
+    })();
+
+    /* ---- LOCATION TRANSFER cascade ----------------------------------------
+       Item-first: fields seed from the selected item's stored location, then
+       can be edited. Major/Sub options come from the REAL coded hierarchy
+       (locHierarchyData = Parent -> Major -> [Subs]). 0 = "unspecified" and is
+       selectable at every level below Parent; setting a level to 0 leaves the
+       levels under it with only their 0 option (they pin to 0 naturally,
+       because the hierarchy has no children under a 0 segment). */
+    const locHierarchyData = @Html.Raw(locHierarchyJson);
+
+    // Code -> friendly name for DISPLAY in the map drill. Storage/filtering stay
+    // on the code; this only changes what the label reads. Unknown codes (and
+    // already-friendly values) pass through unchanged.
+    const locDecodeMap = @Html.Raw(locDecodeJson);
+    function locDecode(code) {
+        return (code != null && locDecodeMap && locDecodeMap[code]) ? locDecodeMap[code] : code;
+    }
+
+    // Populate a <select> with a leading "0 (Unspecified)", the given values,
+    // and the item's current value if it isn't already present, then preselect
+    // `current` (or 0 when current is blank/0).
+    function locFill(selectEl, values, current) {
+        if (!selectEl) return;
+        const seen = {};
+        const opts = [{ v: "0", label: "0 (Unspecified)" }];
+        seen["0"] = true;
+        (values || []).forEach(function (v) {
+            if (v == null) return;
+            const s = String(v).trim();
+            if (!s || seen[s]) return;
+            seen[s] = true;
+            opts.push({ v: s, label: s });
+        });
+        const cur = (current == null ? "" : String(current).trim());
+        if (cur && cur !== "0" && !seen[cur]) {
+            seen[cur] = true;
+            opts.push({ v: cur, label: cur });
+        }
+        selectEl.innerHTML = '';
+        opts.forEach(function (o) {
+            const opt = document.createElement('option');
+            opt.value = o.v;
+            opt.textContent = o.label;
+            selectEl.appendChild(opt);
+        });
+        selectEl.value = (cur && cur !== "") ? cur : "0";
+        if (!selectEl.value) selectEl.value = "0";
+    }
+
+    function locMajorsFor(parentCode) {
+        const p = locHierarchyData[parentCode];
+        return p ? Object.keys(p) : [];
+    }
+    function locSubsFor(parentCode, majorCode) {
+        const p = locHierarchyData[parentCode];
+        if (!p) return [];
+        return p[majorCode] || [];
+    }
+
+    // Rebuild the FDA preview from the five fields. Blank segment -> "0".
+    function locRefreshFda() {
+        const seg = function (id) {
+            const el = document.getElementById(id);
+            const v = el ? String(el.value || '').trim() : '';
+            return v === '' ? '0' : v;
+        };
+        const fda = [seg('loc-parent'), seg('loc-major'), seg('loc-sub'), seg('loc-rack'), seg('loc-row')].join('.');
+        const out = document.getElementById('loc-fda');
+        if (out) out.value = fda;
+    }
+
+    function locSetEnabled(on) {
+        ['loc-parent', 'loc-major', 'loc-sub', 'loc-rack', 'loc-row'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = !on;
+        });
+        const warn = document.getElementById('loc-needs-item');
+        if (warn) warn.style.display = on ? 'none' : 'block';
+    }
+
+    // Seed the cascade from the currently-selected item's stored location.
+    function seedLocationTransfer() {
+        const idEl = document.getElementById('stock-item-id');
+        const itemId = idEl ? idEl.value : '';
+        const cur = document.getElementById('loc-current');
+
+        if (!itemId) {
+            locSetEnabled(false);
+            if (cur) cur.textContent = '--';
+            locRefreshFda();
+            return;
+        }
+        const item = itemsList.find(function (i) { return i.id === itemId; });
+        if (!item) { locSetEnabled(false); if (cur) cur.textContent = '--'; return; }
+
+        // Seed from the SELECTED variant (transfer source), not the item-level
+        // primary -- for single-location items these are the same thing.
+        const srcVar = getSelectedVariant(item) || item;
+
+        locSetEnabled(true);
+        if (cur) cur.textContent = srcVar.fda || item.fda || '--';
+
+        // Parent (fixed coded select). Add the stored code if it isn't a known
+        // option so we never silently drop a real value.
+        const parentEl = document.getElementById('loc-parent');
+        const pcode = (srcVar.parent == null ? '' : String(srcVar.parent).trim());
+        if (parentEl) {
+            const has = Array.from(parentEl.options).some(function (o) { return o.value === pcode; });
+            if (pcode && !has) {
+                const opt = document.createElement('option');
+                opt.value = pcode; opt.textContent = pcode;
+                parentEl.appendChild(opt);
+            }
+            parentEl.value = pcode || '';
+        }
+
+        const majorEl = document.getElementById('loc-major');
+        locFill(majorEl, locMajorsFor(pcode), srcVar.major);
+        const subEl = document.getElementById('loc-sub');
+        locFill(subEl, locSubsFor(pcode, majorEl ? majorEl.value : ''), srcVar.sub);
+
+        const rk = document.getElementById('loc-rack');
+        const rw = document.getElementById('loc-row');
+        if (rk) rk.value = (srcVar.rack == null || String(srcVar.rack).trim() === '') ? '0' : String(srcVar.rack).trim();
+        if (rw) rw.value = (srcVar.row == null || String(srcVar.row).trim() === '') ? '0' : String(srcVar.row).trim();
+
+        locRefreshFda();
+        refreshMergeNote();
+    }
+
+    // Wire the cascade once on load. Bind-time does no data reads (safe re: const TDZ).
+    (function bindLocTransfer() {
+        const parentEl = document.getElementById('loc-parent');
+        const majorEl = document.getElementById('loc-major');
+        const subEl = document.getElementById('loc-sub');
+        const rackEl = document.getElementById('loc-rack');
+        const rowEl = document.getElementById('loc-row');
+
+        function fdaAndMerge() { locRefreshFda(); if (typeof refreshMergeNote === 'function') refreshMergeNote(); }
+        if (parentEl) parentEl.addEventListener('change', function () {
+            locFill(majorEl, locMajorsFor(parentEl.value), null);
+            locFill(subEl, locSubsFor(parentEl.value, majorEl ? majorEl.value : ''), null);
+            fdaAndMerge();
+        });
+        if (majorEl) majorEl.addEventListener('change', function () {
+            locFill(subEl, locSubsFor(parentEl ? parentEl.value : '', majorEl.value), null);
+            fdaAndMerge();
+        });
+        if (subEl) subEl.addEventListener('change', fdaAndMerge);
+        if (rackEl) rackEl.addEventListener('input', fdaAndMerge);
+        if (rowEl) rowEl.addEventListener('input', fdaAndMerge);
+    })();
+
+    function syncHeaderOffset() {
+        const header = document.querySelector('header');
+        if (!header) return;
+        const rect = header.getBoundingClientRect();
+        const breathingRoom = 28; //accounts for the navbar's mb-3 margin + looks better kinda
+        document.documentElement.style.setProperty('--vis-header-bottom' ,(rect.bottom + breathingRoom) + 'px')
+    }
+
+    if (window.location.protocol === "http:") {
+        document.getElementById("http-warning").style.display = "block";
+    }
+
+    // Order Mode is "active" once the cart holds at least one item.
+    let orderActive = @(hasDraft ? "true" : "false");
+    let pendingAddForm = null;
+
+    function performAdd(form) {
+        fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                orderActive = true;
+                document.querySelector('.rheem-navbar')?.classList.add('order-mode');
+                if (window.showToast) showToast(data.message, "success");
+                const b = form.querySelector('button');
+                if (b) { b.classList.replace('btn-primary', 'btn-success'); b.innerText = "Added!"; b.disabled = true; }
+            }
+        }).catch(err => console.error(err));
+    }
+
+    document.addEventListener('submit', function (e) {
+        if (e.target && typeof e.target.action === 'string' && e.target.action.includes('AddToCart')) {
+            e.preventDefault();
+            const form = e.target;
+
+            // What happens once the Add to Cart modal is out of the way: the first
+            // item asks to start an order (themed modal); later items just add.
+            const proceed = function () {
+                if (!orderActive) {
+                    pendingAddForm = form;
+                    const el = document.getElementById('startOrderModal');
+                    if (el) { new bootstrap.Modal(el).show(); }
+                    else { performAdd(form); } // fallback if modal missing
+                } else {
+                    performAdd(form);
+                }
+            };
+
+            // Close the Add to Cart modal FIRST so it never blocks the start-order
+            // modal or lingers after the add. Wait for it to fully hide (backdrop
+            // gone) before the next step -- two modals never overlap (z-index safe).
+            const atc = document.getElementById('addToCartModal');
+            const inst = atc ? bootstrap.Modal.getInstance(atc) : null;
+            if (inst) {
+                atc.addEventListener('hidden.bs.modal', proceed, { once: true });
+                inst.hide();
+            } else {
+                proceed();
+            }
+        }
+    });
+
+    // "Continue" on the themed start-order modal fires the stashed add.
+    (function () {
+        const btn = document.getElementById('startOrderConfirmBtn');
+        if (btn) {
+            btn.addEventListener('click', function () {
+                const el = document.getElementById('startOrderModal');
+                const m = el ? bootstrap.Modal.getInstance(el) : null;
+                if (m) m.hide();
+                if (pendingAddForm) { performAdd(pendingAddForm); pendingAddForm = null; }
+            });
+        }
+    })();
+
+    const zoneDataMap = @Html.Raw(mapDataJson);
+
+    // Pre-determined coordinate path (as percentages of image width/height) for the tracking dot
+    const trackingPath = [
+        { x: 0.15, y: 0.45 }, // External Yard road
+        { x: 0.35, y: 0.45 }, // Heading east toward building
+        { x: 0.38, y: 0.75 }, // Driveway/parking lot access road
+        { x: 0.55, y: 0.75 }, // Loading dock access
+        { x: 0.70, y: 0.75 }, // Approaching RD Lab
+        { x: 0.70, y: 0.90 }, // South loop
+        { x: 0.90, y: 0.90 }, // East perimeter
+        { x: 0.90, y: 0.40 }, // North perimeter
+        { x: 0.65, y: 0.40 }  // Approaching New Test Cells
+    ];
+    let currentPathIndex = 0;
+
+    function moveTrackingDot() {
+        const img = document.getElementById('facility-map-img');
+        const container = document.querySelector('.map-image-frame');
+        const dot = document.getElementById('map-tracking-dot');
+        if (!img || !container || !dot) return;
+
+        // Dynamic coordinate math that recalculates with letterbox/pillarbox offsets
+        const imgRect = img.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const offsetX = imgRect.left - containerRect.left;
+        const offsetY = imgRect.top - containerRect.top;
+
+        const point = trackingPath[currentPathIndex];
+
+        // Translates responsive percentages back into actual on-screen viewport pixels
+        const posX = (point.x * img.clientWidth) + offsetX;
+        const posY = (point.y * img.clientHeight) + offsetY;
+
+        dot.style.left = posX + 'px';
+        dot.style.top = posY + 'px';
+
+        currentPathIndex = (currentPathIndex + 1) % trackingPath.length;
+    }
+
+    function resizeMap() {
+        const img = document.getElementById('facility-map-img');
+        const map = document.getElementById('labmap');
+        const container = document.querySelector('.map-image-frame');
+        if (!img || !map || !container) return;
+
+        const originalWidth = img.naturalWidth;
+        const originalHeight = img.naturalHeight;
+        if (originalWidth === 0) return;
+
+        const currentWidth = img.clientWidth;
+        const currentHeight = img.clientHeight;
+        const widthRatio = currentWidth / originalWidth;
+        const heightRatio = currentHeight / originalHeight;
+
+        // Gets exact starting pixel offset of the visible map image inside the black frame
+        const imgRect = img.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const offsetX = imgRect.left - containerRect.left;
+        const offsetY = imgRect.top - containerRect.top;
+
+        // Coordinates are measured against the natural image (1146x643), so the
+        // letterbox offset + scale ratio fully position each zone. No fudge needed.
+        const shiftX = 0;
+
+        document.querySelectorAll('.map-zone').forEach(b => b.remove());
+
+        const areas = map.getElementsByTagName('area');
+
+        for (let a of areas) {
+            if (!a.dataset.orig) a.dataset.orig = a.coords;
+            const origCoords = a.dataset.orig.split(',').map(Number);
+            const scaledCoords = origCoords.map((c, i) => Math.round(c * (i % 2 === 0 ? widthRatio : heightRatio)));
+            a.coords = scaledCoords.join(',');
+
+            if (scaledCoords.length === 4) {
+                const x1 = scaledCoords[0];
+                const y1 = scaledCoords[1];
+                const w = scaledCoords[2] - x1;
+                const h = scaledCoords[3] - y1;
+                const title = a.title;
+                const data = zoneDataMap[title];
+
+                const centerX = x1 + (w / 2);
+                const centerY = y1 + (h / 2);
+
+                let vClass = (centerY > currentHeight * 0.6) ? 'menu-up' : 'menu-down';
+                let hClass = 'menu-center';
+                if (centerX < currentWidth * 0.3) hClass = 'menu-right';
+                else if (centerX > currentWidth * 0.7) hClass = 'menu-left';
+
+                const zoneDiv = document.createElement('div');
+                zoneDiv.className = 'map-zone';
+
+                // Position relative to the rendered image: scaled coord + letterbox offset
+                zoneDiv.style.left = (x1 + offsetX + shiftX) + 'px';
+                zoneDiv.style.top = (y1 + offsetY) + 'px';
+                zoneDiv.style.width = w + 'px';
+                zoneDiv.style.height = h + 'px';
+
+                if (data && data.TotalRows > 0) {
+                    let pulseClass = data.HasAlert ? 'alert-pulse' : '';
+                    if (data.HasAlert) zoneDiv.classList.add('alert-zone');
+                    let warningIcon = data.HasAlert ? `<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark" style="font-size:10px; padding:4px;"><i class="bi bi-exclamation-triangle-fill"></i></span>` : '';
+
+                    let innerHTML = `
+                        <div class="zone-marker ${pulseClass}" title="${title}" style="position:relative;">
+                            <i class="bi bi-geo-alt-fill marker-icon"></i>
+                            <span class="marker-count">${data.TotalRows} Rows</span>
+                            ${warningIcon}
+                        </div>
+                    `;
+
+                    innerHTML += `
+                        <div class="zone-menu ${vClass} ${hClass}">
+                            <div class="zone-menu-header">${title} Locations</div>
+                            <button type="button" class="zone-menu-btn" onclick="window.location.href='${a.href}'">
+                                <span><i class="bi bi-globe me-2"></i>View All</span>
+                                <span class="badge bg-secondary">${data.TotalRows}</span>
+                            </button>
+                    `;
+
+                    for (let major in data.Majors) {
+                        let mData = data.Majors[major];
+                        let mAlert = mData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
+                        let majorLink = `/Home/Index?mode=Filter&filterNotes=${encodeURIComponent(major)}`;
+                        let subKeys = mData.Subs ? Object.keys(mData.Subs) : [];
+
+                        if (subKeys.length > 0) {
+                            // Major has real sub-areas -> expandable group (Parent > Major > Sub).
+                            let subsHTML = `
+                                <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='${majorLink}'">
+                                    <span><i class="bi bi-grid-3x3-gap me-2"></i>View all ${locDecode(major)}</span>
+                                    <span class="badge bg-secondary">${mData.Rows}</span>
+                                </button>`;
+                            for (let sub in mData.Subs) {
+                                let sData = mData.Subs[sub];
+                                let sAlert = sData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
+                                subsHTML += `
+                                    <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='/Home/Index?mode=Filter&filterNotes=${encodeURIComponent(sub)}'">
+                                        <span><i class="bi bi-box me-2"></i>${locDecode(sub)} ${sAlert}</span>
+                                        <span class="badge bg-secondary">${sData.Rows}</span>
+                                    </button>`;
+                            }
+
+                            innerHTML += `
+                                <div class="zone-major-group">
+                                    <button type="button" class="zone-menu-btn zone-major-toggle"
+                                            onclick="event.stopPropagation(); this.closest('.zone-major-group').classList.toggle('open');">
+                                        <span><i class="bi bi-diagram-3 me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                        <span class="badge bg-secondary">${mData.Rows}<i class="bi bi-chevron-down zone-chev"></i></span>
+                                    </button>
+                                    <div class="zone-submenu">${subsHTML}</div>
+                                </div>`;
+                        } else {
+                            // No real sub-areas -> single button straight to the filter.
+                            innerHTML += `
+                                <button type="button" class="zone-menu-btn" onclick="window.location.href='${majorLink}'">
+                                    <span><i class="bi bi-box-seam me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                    <span class="badge bg-secondary">${mData.Rows}</span>
+                                </button>`;
+                        }
+                    }
+                    innerHTML += `</div>`;
+                    zoneDiv.innerHTML = innerHTML;
+
+                    zoneDiv.onclick = (e) => {
+                        e.stopPropagation();
+
+                        const menu = zoneDiv.querySelector('.zone-menu');
+                        const isShowing = menu.classList.contains('show');
+
+                        // Close other active menus and lower their stack heights
+                        document.querySelectorAll('.zone-menu.show').forEach(m => m.classList.remove('show'));
+                        document.querySelectorAll('.map-zone.active-zone').forEach(z => z.classList.remove('active-zone'));
+
+                        if (!isShowing) {
+                            menu.classList.add('show');
+                            zoneDiv.classList.add('active-zone'); // Elevate active popup z-index above all other pins
+                        }
+                    };
+                } else {
+                    zoneDiv.title = `${title} (Empty)`;
+                    zoneDiv.onclick = () => window.location.href = a.href;
+                }
+
+                container.appendChild(zoneDiv);
+            }
+        }
+
+        // Refresh tracker dot position instantly during map container resizing
+        moveTrackingDot();
+    }
+
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.zone-menu.show').forEach(m => m.classList.remove('show'));
+        document.querySelectorAll('.map-zone.active-zone').forEach(z => z.classList.remove('active-zone'));
+    });
+
+    window.addEventListener('load', () => {
+        resizeMap();
+        // Cycle the tracking dot coordinates smoothly on a 2.5-second loop
+        setInterval(moveTrackingDot, 2500);
+    });
+
+    window.addEventListener('resize', resizeMap);
+    const facilityImg = document.getElementById('facility-map-img');
+    if(facilityImg) facilityImg.addEventListener('load', resizeMap);
+
+    window.addEventListener('load', syncHeaderOffset);
+    window.addEventListener('resize', syncHeaderOffset);
+    syncHeaderOffset();
+
+    document.addEventListener('click', function (e) {
+        const row = e.target.closest('.holo-row');
+        if (!row) return;
+        document.querySelectorAll('.holo-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+        const b = document.getElementById('holo-add-submit');
+        const i = document.getElementById('holo-add-itemId');
+        if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
+    });
+
+    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+
+    function bindAutocomplete(inputId, listId, idOutputId, isAlertModal) {
+        const searchInput = document.getElementById(inputId);
+        const autoList = document.getElementById(listId);
+        const idInput = document.getElementById(idOutputId);
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                let val = this.value.toLowerCase();
+                autoList.innerHTML = '';
+                if (!val) { autoList.style.display = 'none'; return; }
+
+                let matches = itemsList.filter(i =>
+                    i.id.toLowerCase().includes(val) || i.name.toLowerCase().includes(val)
+                ).slice(0, 10);
+
+                if (matches.length > 0) {
+                    autoList.style.display = 'block';
+                    matches.forEach(m => {
+                        let btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
+                        btn.style.backgroundColor = '#1C1E24';
+                        btn.innerHTML = `<strong class="text-primary">${m.id}</strong> - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
+
+                        btn.onclick = function() {
+                            searchInput.value = m.name;
+                            idInput.value = m.id;
+                            autoList.style.display = 'none';
+
+                            if (isAlertModal) {
+                                document.getElementById('alert-threshold').value = m.threshold;
+                            } else if (typeof toggleStockUI === 'function') {
+                                // Rebuild the variant selector + re-seed the cascade
+                                // for the newly picked item, whatever the action.
+                                toggleStockUI();
+                            }
+                        };
+
+                        btn.onmouseover = () => btn.style.backgroundColor = '#2A2D35';
+                        btn.onmouseout = () => btn.style.backgroundColor = '#1C1E24';
+
+                        autoList.appendChild(btn);
+                    });
+                } else {
+                    autoList.style.display = 'none';
+                }
+            });
+
+            document.addEventListener('click', function(e) {
+                if (e.target !== searchInput) autoList.style.display = 'none';
+            });
+        }
+    }
+
+    bindAutocomplete('alert-search', 'alert-autocomplete-list', 'alert-item-id', true);
+    bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
+
+    (function() {
+        const historyChks = document.querySelectorAll('.exp-history-chk');
+        const timeFrameDiv = document.getElementById('expTimeFrameDiv');
+        if (historyChks && timeFrameDiv) {
+            historyChks.forEach(chk => {
+                chk.addEventListener('change', () => {
+                    timeFrameDiv.style.display = Array.from(historyChks).some(c => c.checked) ? 'block' : 'none';
+                });
+            });
+        }
+
+        const teamSel = document.getElementById('reg-team');
+        const codeInput = document.getElementById('reg-projcode');
+        if (teamSel && codeInput) {
+            teamSel.addEventListener('change', function() {
+                codeInput.value = this.options[this.selectedIndex].getAttribute('data-code');
+            });
+        }
+
+        // ---- Live Item ID preview -----------------------------------------
+        // Shows the predicted ID (<GroupInitial><Type first+last>-NNNN) as the
+        // user picks Group / types Type. The number is read from the items
+        // already on the page. This is ONLY a preview: HomeController.CreateItem
+        // recomputes and assigns the real ID at save, so a stale number here
+        // can never cause a clash. The success toast shows the actual ID.
+        const regGroup = document.getElementById('reg-group');
+        const regType = document.getElementById('reg-type');
+        const regIdOut = document.getElementById('reg-itemid');
+
+        function regBuildPrefix() {
+            let g = (regGroup && regGroup.value ? regGroup.value : 'Commercial').trim();
+            let t = (regType && regType.value ? regType.value : '').trim();
+            if (g === '') g = 'Commercial';
+            if (t === '') t = 'General';
+            const gi = g.charAt(0).toUpperCase();
+            const tc = (t.charAt(0) + t.charAt(t.length - 1)).toUpperCase();
+            return gi + tc + '-';
+        }
+        function regPreviewId() {
+            if (!regIdOut) return;
+            const prefix = regBuildPrefix();
+            let max = 0;
+            const list = (typeof itemsList !== 'undefined' && itemsList) ? itemsList : [];
+            list.forEach(function (it) {
+                const id = (it && it.id) ? String(it.id) : '';
+                if (id.indexOf(prefix) === 0) {
+                    const numPart = id.substring(prefix.length);
+                    if (/^\d+$/.test(numPart)) {
+                        const n = parseInt(numPart, 10);
+                        if (n > max) max = n;
+                    }
+                }
+            });
+            regIdOut.value = prefix + String(max + 1).padStart(4, '0');
+        }
+        if (regGroup) regGroup.addEventListener('change', regPreviewId);
+        if (regType) regType.addEventListener('input', regPreviewId);
+        // Refresh the preview each time the registry modal opens.
+        const newItemModal = document.getElementById('newItemModal');
+        if (newItemModal) newItemModal.addEventListener('shown.bs.modal', regPreviewId);
+
+        // Location hierarchy (friendly names only). Codes are derived by the
+        // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),
+        // so the live preview always matches what actually gets saved.
+        const locMap = {
+            "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja"], "2-6": [] },
+            "External Yard": { "Connex Area": ["Connex Box 6"], "Trailer Area": ["Trailer 1"] },
+            "New Test Cells": {},
+            "Plant Test Cells": {}
+        };
+
+        // Mirror of LocationCodec.Encode: 1st, 3rd, 5th and last letter/digit
+        // of the cleaned name, de-duplicated, kept in ascending order.
+        function encodeLoc(name) {
+            if (!name) return "";
+            const clean = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+            if (!clean.length) return "";
+            const n = clean.length;
+            const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
+            return pos.map(p => clean[p - 1]).join("");
+        }
+
+        function bindCascadingLocation(pId, mId, sId, rkId, rwId, fdaId) {
+            const pSel = document.getElementById(pId);
+            const mSel = document.getElementById(mId);
+            const sSel = document.getElementById(sId);
+            const rkIn = document.getElementById(rkId);
+            const rwIn = document.getElementById(rwId);
+            const fdaOut = document.getElementById(fdaId);
+
+            function updateFda() {
+                if(!pSel || !fdaOut) return;
+
+                let pCode = encodeLoc(pSel.value);
+                let mCode = encodeLoc(mSel.value);
+                let sCode = encodeLoc(sSel.value);
+
+                let rkCode = rkIn ? rkIn.value.trim().toUpperCase() : "";
+                let rwCode = rwIn ? rwIn.value.trim() : "";
+
+                let parts = [pCode, mCode, sCode, rkCode, rwCode].filter(x => x !== "");
+                fdaOut.value = parts.join('.');
+            }
+
+            if (pSel) {
+                pSel.addEventListener('change', function() {
+                    mSel.innerHTML = '<option value="">Select Major...</option>';
+                    sSel.innerHTML = '<option value="">Select Sub...</option>';
+                    sSel.disabled = true;
+
+                    let pName = this.value;
+                    let majors = (pName && locMap[pName]) ? Object.keys(locMap[pName]) : [];
+                    if (majors.length > 0) {
+                        mSel.disabled = false;
+                        majors.forEach(m => mSel.add(new Option(m, m)));
+                    } else {
+                        mSel.disabled = true;
+                    }
+                    updateFda();
+                });
+
+                mSel.addEventListener('change', function() {
+                    sSel.innerHTML = '<option value="">Select Sub...</option>';
+                    let pName = pSel.value;
+                    let mName = this.value;
+                    let subs = (pName && mName && locMap[pName] && locMap[pName][mName]) ? locMap[pName][mName] : [];
+
+                    if (subs.length > 0) {
+                        sSel.disabled = false;
+                        subs.forEach(s => sSel.add(new Option(s, s)));
+                    } else {
+                        sSel.disabled = true;
+                    }
+                    updateFda();
+                });
+
+                sSel.addEventListener('change', updateFda);
+                if(rkIn) rkIn.addEventListener('input', updateFda);
+                if(rwIn) rwIn.addEventListener('input', updateFda);
+            }
+        }
+
+        bindCascadingLocation('reg-parent', 'reg-major', 'reg-sub', 'reg-rack', 'reg-row', 'reg-fda');
+        bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', null, null, 'exp-fda');
+    })();
+    function updateLiveTrackingTime() {
+        const now = new Date();
+        let hours = now.getHours();
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+
+        hours = hours % 12;
+        hours = hours ? hours : 12; // Formats '0' to '12'
+
+        const strTime = `${hours}:${minutes}:${seconds} ${ampm}`;
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const year = now.getFullYear();
+
+        const formattedText = `${strTime} ${month}/${day}/${year}`;
+
+        // Locates the span in the live tracking bar and updates the text
+        const timeSpan = document.getElementById('last-updated-time');
+        if (timeSpan) {
+            timeSpan.innerText = formattedText;
+        }
+    }
+
+    // Call on load alongside your map resizer
+    window.addEventListener('load', () => {
+        updateLiveTrackingTime();
+    });
+</script>

@@ -1,0 +1,206 @@
+@model InventoryDevTwo.Models.ViewModels.MyOrdersViewModel
+@{
+    ViewData["Title"] = "My Orders";
+}
+
+<style>
+    /* Theme-aware (uses --vis-* so it flips with the toggle -- no hardcoded white). */
+    .mo-wrap { max-width: 1100px; margin: 1.5rem auto; }
+    .mo-card {
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .mo-h { color: var(--vis-text); font-weight: 700; }
+    .mo-sub { color: var(--vis-text-muted); }
+    .mo-table { width: 100%; color: var(--vis-text); }
+    .mo-table th { color: var(--vis-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--vis-card-border); padding: 8px 10px; text-align: left; }
+    .mo-table td { border-bottom: 1px solid var(--vis-card-border); padding: 10px; vertical-align: middle; }
+    .mo-input {
+        background: var(--vis-bg); color: var(--vis-text);
+        border: 1px solid var(--vis-card-border); border-radius: 6px;
+        padding: 4px 8px;
+    }
+    .mo-input:focus { outline: none; border-color: var(--vis-blue); }
+    .loan-line { border: 1px solid var(--vis-card-border); border-radius: 8px; padding: 1rem 1.15rem; margin-bottom: 1rem; }
+    .loan-ctx { color: var(--vis-text-muted); font-size: 12px; }
+    .tc-tag { color: #F59E0B; font-weight: 700; }
+    .mo-empty { color: var(--vis-text-muted); text-align: center; padding: 1.5rem; }
+    .new-loc-row { display: none; }
+</style>
+
+<div class="mo-wrap">
+
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success">@TempData["Success"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger">@TempData["Error"]</div>
+    }
+
+    <h2 class="mo-h mb-1"><i class="bi bi-person-lines-fill me-2 text-primary"></i>My Orders</h2>
+    <div class="mo-sub mb-4">Signed in as <strong>@Model.UserName</strong> — this page shows only your orders and your loans.</div>
+
+    <!-- SECTION 2 first: action lives here (things you owe back). -->
+    <div class="mo-card">
+        <h4 class="mo-h mb-1"><i class="bi bi-arrow-return-left me-2" style="color:#F59E0B;"></i>Items Out on Loan</h4>
+        <div class="mo-sub mb-3">Loanable stock you've picked up and still owe back — Controls, and the thermocoupled motors. Return puts stock back; Scrap writes it off.</div>
+
+        @if (!Model.Loans.Any())
+        {
+            <div class="mo-empty">Nothing out on loan. You're all square.</div>
+        }
+        else
+        {
+            @foreach (var loan in Model.Loans)
+            {
+                <div class="loan-line">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                        <div>
+                            <span class="mo-h">@loan.ItemName</span>
+                            <span class="mo-sub">(@loan.ItemId)</span>
+                            @if (loan.ReturnsAsTc)
+                            {
+                                <span class="tc-tag ms-2"><i class="bi bi-thermometer-half"></i> TC</span>
+                            }
+                            <div class="loan-ctx mt-1">
+                                <i class="bi bi-hash"></i>Order #@loan.OrderId
+                                · ordered @loan.OrderedAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                                @if (!string.IsNullOrWhiteSpace(loan.Description))
+                                {
+                                    <text> · @loan.Description</text>
+                                }
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="mo-sub" style="font-size:11px;">Still out</div>
+                            <div class="mo-h" style="font-size:1.5rem; color:#F59E0B;">@loan.Outstanding</div>
+                        </div>
+                    </div>
+
+                    <!-- RETURN: adds stock back at a chosen active location, or a new one. -->
+                    <form asp-controller="Home" asp-action="ReturnLoan" method="post" class="mt-3">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="orderItemId" value="@loan.OrderItemId" />
+                        <div class="d-flex align-items-end flex-wrap gap-2">
+                            <div>
+                                <label class="mo-sub d-block" style="font-size:11px;">Return qty</label>
+                                <input type="number" name="qty" value="@loan.Outstanding" min="1" max="@loan.Outstanding" class="mo-input" style="width:80px;" />
+                            </div>
+                            <div>
+                                <label class="mo-sub d-block" style="font-size:11px;">Back to location</label>
+                                <select name="targetVariantId" class="mo-input" style="min-width:230px;"
+                                        data-oiid="@loan.OrderItemId"
+                                        onchange="toggleReturnLoc(this, @loan.OrderItemId)">
+                                    @foreach (var c in loan.LocationChoices)
+                                    {
+                                        <option value="@c.VariantId">@c.Label</option>
+                                    }
+                                    <option value="">＋ New location…</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-success fw-bold">Return · Execute</button>
+                        </div>
+
+                        <!-- New-location fields (lightweight): Parent dropdown + coded text.
+                             Blank levels store as "0". Shown only when "New location" chosen. -->
+                        <div class="new-loc-row mt-2" id="newloc-@loan.OrderItemId">
+                            <div class="d-flex flex-wrap gap-2">
+                                <select name="newParent" class="mo-input">
+                                    <option value="">Parent…</option>
+                                    <option value="RLB">RD Lab (RLB)</option>
+                                    <option value="ETRD">External Yard (ETRD)</option>
+                                    <option value="NWES">New Test Cells (NWES)</option>
+                                    <option value="PATS">Plant Test Cells (PATS)</option>
+                                </select>
+                                <input type="text" name="newMajor" placeholder="Major" class="mo-input" style="width:100px;" />
+                                <input type="text" name="newSub" placeholder="Sub" class="mo-input" style="width:100px;" />
+                                <input type="text" name="newRack" placeholder="Rack" class="mo-input" style="width:90px;" />
+                                <input type="text" name="newRow" placeholder="Row" class="mo-input" style="width:90px;" />
+                            </div>
+                            <div class="loan-ctx mt-1">Leave a level blank for "unspecified" (stored as 0). Parent recommended.</div>
+                        </div>
+                    </form>
+
+                    <!-- SCRAP: writes the loaned units off; no stock returns. -->
+                    <form asp-controller="Home" asp-action="ScrapLoan" method="post" class="mt-2">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="orderItemId" value="@loan.OrderItemId" />
+                        <div class="d-flex align-items-end gap-2">
+                            <div>
+                                <label class="mo-sub d-block" style="font-size:11px;">Scrap qty</label>
+                                <input type="number" name="qty" value="1" min="1" max="@loan.Outstanding" class="mo-input" style="width:80px;" />
+                            </div>
+                            <button type="submit" class="btn btn-outline-danger fw-bold">Scrap · Execute</button>
+                        </div>
+                    </form>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- SECTION 1: my order history. -->
+    <div class="mo-card">
+        <h4 class="mo-h mb-3"><i class="bi bi-clock-history me-2 text-primary"></i>My Order History</h4>
+        @if (!Model.Orders.Any())
+        {
+            <div class="mo-empty">You haven't placed any orders yet.</div>
+        }
+        else
+        {
+            <table class="mo-table">
+                <thead>
+                    <tr>
+                        <th>Order</th><th>Ordered</th><th>Status</th><th>Picked up by</th><th>Items</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var o in Model.Orders)
+                    {
+                        <tr>
+                            <td class="fw-bold">#@o.Id</td>
+                            <td class="mo-sub">@o.CreatedAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</td>
+                            <td>
+                                @if (o.Status == "Completed")
+                                {
+                                    <span class="badge bg-success">@o.Status</span>
+                                }
+                                else if (o.Status == "Pending")
+                                {
+                                    <span class="badge bg-warning text-dark">@o.Status</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger">@o.Status</span>
+                                }
+                            </td>
+                            <td class="mo-sub">@(string.IsNullOrEmpty(o.FulfilledBy) ? "—" : o.FulfilledBy)</td>
+                            <td>@(o.Items?.Count ?? 0)</td>
+                            <td><a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@o.Id" class="btn btn-sm btn-info text-white fw-bold">View</a></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<script>
+    // Show the new-location fields only when "＋ New location…" (empty value) is picked.
+    function toggleReturnLoc(sel, oiId) {
+        var row = document.getElementById('newloc-' + oiId);
+        if (row) row.style.display = (sel.value === '') ? 'block' : 'none';
+    }
+    // On load, honor the initial selection (e.g. a loan whose only option is
+    // "New location" because the item has no active variants left).
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('select[name="targetVariantId"]').forEach(function (sel) {
+            toggleReturnLoc(sel, sel.getAttribute('data-oiid'));
+        });
+    });
+</script>

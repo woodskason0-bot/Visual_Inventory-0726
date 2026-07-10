@@ -1,0 +1,587 @@
+/* =========================================================
+   VISUAL INVENTORY SYSTEM - DARK TACTICAL MASTER THEME
+========================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --vis-bg: #111216; /* Deepest background */
+    --vis-card: #1C1E24; /* Card background */
+    --vis-card-border: #2A2D35; /* Card borders */
+    --vis-text: #FFFFFF; /* Pure White Text */
+    --vis-text-muted: #CBD5E1; /* Light Silver-Gray for subtext (Highly readable) */
+
+    --vis-red: #D82B33; /* Bright Rheem Red */
+    --vis-red-hover: #E83B43;
+    --vis-blue: #1DA1F2;
+    --vis-teal: #148A8A;
+    --vis-yellow: #F5A623;
+    --vis-green: #219653;
+}
+
+/* --- 1. Base & Reset --- */
+html, body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--vis-bg);
+    color: var(--vis-text);
+    position: relative;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--vis-bg);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3A3F4B;
+    border-radius: 4px;
+}
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #4F5565;
+    }
+
+/* --- 2. Form & Input Overrides (High Legibility) --- */
+.form-control, .form-select {
+    background-color: #14151A !important;
+    border: 1px solid var(--vis-card-border) !important;
+    color: white !important;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+    .form-control:focus, .form-select:focus {
+        border-color: var(--vis-red) !important;
+        box-shadow: 0 0 0 0.2rem rgba(216, 43, 51, 0.25) !important;
+    }
+
+    .form-control::placeholder {
+        color: #5C6370 !important;
+    }
+
+/* --- 3. Buttons --- */
+.btn {
+    font-weight: 700 !important; /* Forces all buttons to be bold */
+    text-transform: uppercase;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    border-radius: 4px;
+}
+
+.btn-primary {
+    background-color: var(--vis-red);
+    border-color: var(--vis-red);
+    color: white;
+}
+
+    .btn-primary:hover {
+        background-color: var(--vis-red-hover);
+        border-color: var(--vis-red-hover);
+        box-shadow: 0 0 15px rgba(216, 43, 51, 0.4);
+    }
+
+.btn-outline-primary {
+    color: var(--vis-red);
+    border-color: var(--vis-red);
+}
+
+    .btn-outline-primary:hover {
+        background-color: var(--vis-red);
+        color: white;
+    }
+
+.btn-outline-secondary {
+    color: white !important;
+    border-color: var(--vis-card-border);
+}
+
+    .btn-outline-secondary:hover {
+        background-color: var(--vis-card-border);
+        color: white !important;
+    }
+
+.btn-info {
+    background-color: var(--vis-blue);
+    border-color: var(--vis-blue);
+    color: white;
+}
+
+.btn-outline-info {
+    color: var(--vis-teal);
+    border-color: var(--vis-teal);
+}
+
+    .btn-outline-info:hover {
+        background-color: var(--vis-teal);
+        color: white;
+    }
+
+.btn-warning {
+    background-color: var(--vis-yellow);
+    color: #000;
+}
+
+.btn-outline-warning {
+    color: var(--vis-yellow);
+    border-color: var(--vis-yellow);
+}
+
+/* --- 4. Cards --- */
+.grid-item {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.grid-card {
+    background: var(--vis-card);
+    border: 1px solid var(--vis-card-border);
+    border-radius: 8px;
+    padding: 14px;
+    height: 100%;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+    .grid-card:hover {
+        border-color: #3D4351;
+        transform: translateY(-2px);
+    }
+
+/* Pickup Box (Big Yellow Box) */
+.pickup-box {
+    border: 2px solid var(--vis-yellow) !important;
+    background: rgba(245, 166, 35, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vis-yellow);
+    font-size: 16px;
+    font-weight: 700;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+    .pickup-box:hover {
+        background: var(--vis-yellow);
+        color: #000;
+        box-shadow: 0 0 20px rgba(245, 166, 35, 0.3);
+    }
+
+/* --- 5. The Map Container & Overlay --- */
+.map-container {
+    background: var(--vis-card);
+    border: 2px solid var(--vis-card-border);
+    border-radius: 8px;
+    position: relative;
+    overflow: visible;
+    z-index: 105;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+/* 2. MAP TOP-ALIGNMENT */
+.map-image-frame {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: flex-start; /* Snaps the map image to the top border */
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #000;
+}
+
+    .map-image-frame img {
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        object-fit: contain; /* Keeps map perfectly unstretched */
+        display: block;
+    }
+
+/* The Bottom Stats Bar on the Map */
+.map-stats-bar {
+    position: absolute;
+    bottom: 15px; /* Sits nicely at the bottom of the visible image */
+    left: 15px;
+    right: 15px;
+    background: rgba(28, 30, 36, 0.95);
+    backdrop-filter: blur(5px);
+    border: 1px solid var(--vis-card-border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    z-index: 110;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.6);
+}
+
+.stat-block {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.stat-icon {
+    font-size: 22px;
+    line-height: 1;
+    opacity: 0.9;
+}
+
+.stat-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+}
+
+.stat-value {
+    font-size: 20px;
+    font-weight: 800;
+    color: white;
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: var(--vis-text-muted);
+    text-transform: uppercase;
+}
+
+/* Static Live Bar (Lives safely below the image) */
+.map-live-bar-static {
+    font-size: 12px;
+    color: #CBD5E1;
+    font-weight: 600;
+}
+
+.blinking-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--vis-green);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--vis-green);
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+/* --- 6. Activity Feed Timeline --- */
+.activity-feed {
+    border-left: 2px solid var(--vis-card-border);
+    margin-left: 10px;
+    padding-left: 15px;
+    position: relative;
+}
+
+.activity-item {
+    position: relative;
+    margin-bottom: 12px;
+}
+
+.activity-dot {
+    position: absolute;
+    left: -22px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.dot-blue {
+    background: var(--vis-blue);
+    box-shadow: 0 0 8px var(--vis-blue);
+}
+
+.dot-green {
+    background: var(--vis-green);
+    box-shadow: 0 0 8px var(--vis-green);
+}
+
+.dot-purple {
+    background: #9b51e0;
+    box-shadow: 0 0 8px #9b51e0;
+}
+
+.dot-yellow {
+    background: var(--vis-yellow);
+    box-shadow: 0 0 8px var(--vis-yellow);
+}
+
+/* --- 7. Modals & Holo Viewer Overrides --- */
+.modal-content {
+    background-color: var(--vis-card);
+    border: 1px solid var(--vis-card-border);
+    color: white;
+}
+
+.modal-header {
+    border-bottom: 1px solid var(--vis-card-border);
+}
+
+.modal-footer {
+    border-top: 1px solid var(--vis-card-border);
+}
+
+.btn-close {
+    filter: invert(1);
+}
+
+.holo-viewer {
+    background: var(--vis-bg);
+    border: 1px solid var(--vis-card-border);
+    color: white;
+}
+
+.holo-header {
+    background: var(--vis-card);
+    border-bottom: 2px solid var(--vis-card-border);
+}
+
+.holo-body {
+    background: var(--vis-bg);
+}
+
+.holo-actions {
+    background: var(--vis-card);
+    border-left: 1px solid var(--vis-card-border);
+}
+
+.holo-row {
+    background: var(--vis-card);
+    border: 1px solid var(--vis-card-border);
+    color: white;
+}
+
+    .holo-row:hover {
+        border-color: var(--vis-text-muted);
+        background: #262931;
+    }
+
+    .holo-row.selected {
+        border-left: 4px solid var(--vis-red);
+        background: #2A1F20;
+        border-color: var(--vis-red);
+    }
+
+/* Fix utility grids */
+.filter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.r1 {
+    grid-row-start: 1;
+}
+
+.r2 {
+    grid-row-start: 2;
+}
+
+.r3 {
+    grid-row-start: 3;
+}
+
+.r4 {
+    grid-row-start: 4;
+}
+
+.c1 {
+    grid-column-start: 1;
+}
+
+.c2 {
+    grid-column-start: 2;
+}
+
+.c3 {
+    grid-column-start: 3;
+}
+
+.c4 {
+    grid-column-start: 4;
+}
+
+.c5 {
+    grid-column-start: 5;
+}
+
+.c6 {
+    grid-column-start: 6;
+}
+
+.row-span-2 {
+    grid-row-end: span 2;
+}
+
+.row-span-3 {
+    grid-row-end: span 3;
+}
+
+.col-span-2 {
+    grid-column-end: span 2;
+}
+
+.col-span-4 {
+    grid-column-end: span 4;
+}
+
+/* Tactical Dot Matrix Background */
+body {
+    background-color: #111216;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1.5px, transparent 1.5px);
+    background-size: 25px 25px;
+    background-attachment: fixed;
+    /* Fill the viewport so the fixed dot grid isn't clipped to a short body
+       (percentage min-height on the shared html,body rule collapses because
+       html has no definite height). 100vh always resolves. */
+    min-height: 100vh;
+}
+
+/* Inactive top-nav links: visible on the dark bar, brighten on hover */
+.nav-link-dim {
+    color: #9aa4b2;
+    transition: color 0.15s ease;
+}
+
+    .nav-link-dim:hover {
+        color: #fff;
+    }
+
+
+/* =========================================================
+   LIGHT THEME  (toggled via <html data-theme="light">)
+   Covers global chrome: page background, surfaces, inputs,
+   scrollbars. The top nav stays dark in both themes so its
+   white text remains legible.
+========================================================= */
+
+/* Keep the top bar dark regardless of theme. */
+.rheem-navbar {
+    background-color: #15161B;
+}
+
+:root[data-theme="light"] {
+    --vis-bg: #F4F6F8;
+    --vis-card: #FFFFFF;
+    --vis-card-border: #DCE1E8;
+    --vis-text: #1A1D23;
+    --vis-text-muted: #5A6470;
+    /* Brand accent colors (red/blue/green/yellow/teal) are intentionally unchanged. */
+}
+
+:root[data-theme="light"] body {
+    background-color: #F4F6F8;
+    background-image: radial-gradient(rgba(0, 0, 0, 0.045) 1.5px, transparent 1.5px);
+    background-size: 25px 25px;
+}
+
+:root[data-theme="light"] .form-control,
+:root[data-theme="light"] .form-select {
+    background-color: #FFFFFF !important;
+    color: #1A1D23 !important;
+    border-color: #CED4DA !important;
+}
+
+:root[data-theme="light"] .form-control::placeholder {
+    color: #8A93A0 !important;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-track {
+    background: #E9EDF2;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: #C2C9D2;
+}
+
+/* =========================================================
+   LIGHT THEME - VIEW-LEVEL LEGIBILITY PASS
+   Targeted fixes for elements that hardcode white text or
+   dark backgrounds and so ignore the variable swap.
+========================================================= */
+
+/* Widget card headers (Advanced Filters / Omni Search / Export Wizard / Modify Stock) + activity titles */
+:root[data-theme="light"] .grid-card .text-bright-white { color: #1A1D23 !important; }
+
+/* Quick Filters: Commercial / Residential, and the filter CLEAR button (outline-secondary forces white text) */
+:root[data-theme="light"] .btn-outline-secondary { color: #1A1D23 !important; }
+
+/* VIEW ORDERS (outline-info button carries a text-white class) */
+:root[data-theme="light"] .btn-outline-info.text-white { color: var(--vis-teal) !important; }
+
+/* Pick Up Orders box (text-white sitting over a near-white box) */
+:root[data-theme="light"] .pickup-box,
+:root[data-theme="light"] .pickup-box * { color: #8A5200 !important; }
+
+/* Map stats bar (Total Items / Active Locations / ...) -> light panel */
+:root[data-theme="light"] .map-stats-bar {
+    background: rgba(255, 255, 255, 0.94) !important;
+    border: 1px solid #DCE1E8 !important;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15) !important;
+}
+:root[data-theme="light"] .map-stats-bar .text-bright-white { color: #1A1D23 !important; }
+
+/* Live tracking bar */
+:root[data-theme="light"] .map-live-bar .text-white { color: #1A1D23 !important; }
+
+/* Stock Alerts + Activity Feed panels -> light grey, dark text */
+:root[data-theme="light"] .vis-feed-panel {
+    background-color: #F1F3F6 !important;
+    border-color: #DCE1E8 !important;
+}
+:root[data-theme="light"] .vis-feed-panel .text-white { color: #1A1D23 !important; }
+:root[data-theme="light"] .vis-feed-panel .text-light-gray { color: #5A6470 !important; }
+
+/* Stock alert rows -> white cards with dark text */
+:root[data-theme="light"] .vis-alert-row {
+    background: #FFFFFF !important;
+    color: #1A1D23 !important;
+    border-color: #DCE1E8 !important;
+}
+:root[data-theme="light"] .vis-alert-row .text-white { color: #1A1D23 !important; }
+
+/* Holo viewer: darken the header title and the right action panel; keep result rows dark + readable */
+:root[data-theme="light"] .holo-header h3 { color: #1A1D23 !important; }
+:root[data-theme="light"] .holo-actions { color: #1A1D23; }
+:root[data-theme="light"] .holo-actions .text-light-gray { color: #5A6470 !important; }
+:root[data-theme="light"] .holo-row {
+    background: #FFFFFF !important;
+    border-color: #DCE1E8 !important;
+}
+:root[data-theme="light"] .holo-row .text-white { color: #1A1D23 !important; }
+:root[data-theme="light"] .holo-row .text-light-gray { color: #5A6470 !important; }
+
+/* Logs page: title + active/hover tabs */
+:root[data-theme="light"] .logs-wrap h2 { color: #1A1D23 !important; }
+:root[data-theme="light"] .logs-wrap .nav-tabs .nav-link.active { color: #1A1D23 !important; }
+:root[data-theme="light"] .logs-wrap .nav-tabs .nav-link:hover { color: #1A1D23 !important; }
+
+/* Start-Order modal: its header/body sit on var(--vis-card) (white in light mode),
+   but the title + body carry .text-white, so they vanished in light mode.
+   Scoped to #startOrderModal so colored-header modals (blue/green/dark) are untouched. */
+:root[data-theme="light"] #startOrderModal .modal-title,
+:root[data-theme="light"] #startOrderModal .modal-body,
+:root[data-theme="light"] #startOrderModal .modal-body .text-white { color: #1A1D23 !important; }
+:root[data-theme="light"] #startOrderModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }

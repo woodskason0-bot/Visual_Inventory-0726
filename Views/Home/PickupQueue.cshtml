@@ -1,0 +1,301 @@
+@model InventoryDevTwo.Models.ViewModels.TasksAvailableViewModel
+@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
+@{
+    ViewData["Title"] = "Tasks Available";
+    var orders = Model?.Orders ?? new List<InventoryDevTwo.Models.ViewModels.PendingOrderViewModel>();
+    var ready = orders.Where(o => o.CanFulfill).ToList();
+    var blocked = orders.Where(o => !o.CanFulfill).ToList();
+    var storeTasks = Model?.StoreTasks ?? new List<InventoryDevTwo.Models.VisTask>();
+
+    bool canCreate = CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Engineer;
+    bool canClaim = CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Standard;
+    string me = CurrentUser.Name;
+
+    string Requester(string? r) => string.IsNullOrEmpty(r) ? "\u2014" : r.Replace('.', ' ');
+    string Ago(DateTime utc)
+    {
+        var a = DateTime.UtcNow - utc;
+        return a.TotalMinutes < 1 ? "just now"
+            : a.TotalHours < 1 ? $"{(int)a.TotalMinutes}m ago"
+            : a.TotalDays < 1 ? $"{(int)a.TotalHours}h ago"
+            : $"{(int)a.TotalDays}d ago";
+    }
+}
+
+<style>
+    .queue-wrap { max-width: 1200px; margin: 1.5rem auto; }
+    .queue-card {
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    }
+    .queue-card table { color: var(--vis-text); margin-bottom: 0; }
+    .queue-card thead th {
+        background-color: #14151A; color: #CBD5E1;
+        border-color: var(--vis-card-border) !important;
+        text-transform: uppercase; font-size: 12px; letter-spacing: 0.4px;
+    }
+    .queue-card tbody td { border-color: var(--vis-card-border) !important; vertical-align: middle; }
+    .queue-card tbody tr:hover { background-color: rgba(216,43,51,0.05); }
+    .queue-card .item-list { font-size: 12px; color: #94A3B8; margin: 6px 0 0; padding-left: 18px; }
+    .text-dim { color: #94A3B8 !important; }
+
+    /* "Go Store These" corkboard -- sticky notes as theme-aware cards with an
+       amber edge (avoids a full-yellow card that would fail dark-mode contrast). */
+    .board { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .sticky {
+        flex: 0 1 260px;
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-left: 4px solid #F59E0B;
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+    }
+    .sticky.claimed { border-left-color: #64748B; opacity: 0.92; }
+    .sticky h6 { color: var(--vis-text); font-weight: 700; margin-bottom: 0.35rem; }
+    .sticky .note { color: var(--vis-text-muted); font-size: 12px; white-space: pre-wrap; }
+    .sticky .meta { color: var(--vis-text-muted); font-size: 10px; margin-top: 0.5rem; }
+    .create-note {
+        background-color: var(--vis-card);
+        border: 1px dashed var(--vis-card-border);
+        border-radius: 8px; padding: 1rem;
+    }
+    .cn-input {
+        background: var(--vis-bg); color: var(--vis-text);
+        border: 1px solid var(--vis-card-border); border-radius: 6px; padding: 6px 10px;
+    }
+    .cn-input:focus { outline: none; border-color: var(--vis-blue); }
+    .section-h { color: var(--vis-text); font-weight: 700; }
+</style>
+
+<div class="queue-wrap px-3">
+    <h2 class="fw-bold mb-1"><i class="bi bi-clipboard-check me-2" style="color: var(--vis-red);"></i>Tasks Available</h2>
+    <div class="text-dim mb-3">Things to grab and things to put away.</div>
+
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success py-2">@TempData["Success"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger py-2">@TempData["Error"]</div>
+    }
+
+    <!-- ============ GO GET THESE (pending-order pickup queue) ============ -->
+    <h4 class="section-h mb-2"><i class="bi bi-box-seam me-2 text-success"></i>Go Get These</h4>
+    <div class="mb-2 d-flex gap-3">
+        <span class="badge bg-success fs-6">Ready: @ready.Count</span>
+        <span class="badge bg-warning text-dark fs-6">Blocked: @blocked.Count</span>
+    </div>
+
+    <h6 class="fw-bold mb-2"><i class="bi bi-check2-circle me-1 text-success"></i>Ready to Pick</h6>
+    <div class="queue-card p-3 mb-4">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Requested By</th>
+                    <th>Created</th>
+                    <th>Items</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!ready.Any())
+                {
+                    <tr><td colspan="5" class="text-center text-dim py-3">Nothing ready to pick.</td></tr>
+                }
+                @foreach (var order in ready)
+                {
+                    <tr>
+                        <td class="fw-bold">#@order.OrderId</td>
+                        <td>@Requester(order.RequestedBy)</td>
+                        <td class="text-dim small">@order.CreatedAt.ToLocalTime()</td>
+                        <td>@(order.Items?.Count ?? 0)</td>
+                        <td>
+                            <form asp-controller="Home" asp-action="PickUpOrderConfirmed" method="post" class="d-inline ms-1">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="orderId" value="@order.OrderId" />
+                                <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.OrderId" class="btn btn-sm btn-info text-white me-1">View</a>
+                                <button type="submit" class="btn btn-sm btn-success fw-bold">Pick Up</button>
+                                <ul class="item-list">
+                                    @foreach (var it in order.Items)
+                                    {
+                                        <li>
+                                            @it.ItemId &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)
+                                            @if (it.RequestedVariantId.HasValue)
+                                            {
+                                                <span class="d-block text-info" style="font-size:11px;">
+                                                    <i class="bi bi-geo-alt-fill me-1"></i>Pull from: @(it.RequestedLabel ?? "requested location no longer active — will auto-pull")
+                                                </span>
+                                            }
+                                            else if (it.LocationChoices.Count > 1)
+                                            {
+                                                <span class="d-block mt-1" style="font-size:11px;">
+                                                    <i class="bi bi-geo-alt me-1 text-warning"></i>Pull from:
+                                                    <select name="variantChoice_@it.OrderItemId" class="form-select form-select-sm d-inline-block ms-1"
+                                                            style="width:auto; max-width:300px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;">
+                                                        <option value="">Any location (auto)</option>
+                                                        @foreach (var c in it.LocationChoices)
+                                                        {
+                                                            <option value="@c.VariantId">@c.Label</option>
+                                                        }
+                                                    </select>
+                                                </span>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            </form>
+                            <form asp-controller="Home" asp-action="CancelPersisted" method="post" class="d-inline ms-1 align-top">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="orderId" value="@order.OrderId" />
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Cancel</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h6 class="fw-bold mb-2"><i class="bi bi-exclamation-triangle-fill me-1 text-warning"></i>Blocked Orders</h6>
+    <div class="queue-card p-3 mb-5">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Requested By</th>
+                    <th>Created</th>
+                    <th>Items</th>
+                    <th>Why Blocked</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!blocked.Any())
+                {
+                    <tr><td colspan="6" class="text-center text-dim py-3">No blocked orders.</td></tr>
+                }
+                @foreach (var order in blocked)
+                {
+                    <tr>
+                        <td class="fw-bold">#@order.OrderId</td>
+                        <td>@Requester(order.RequestedBy)</td>
+                        <td class="text-dim small">@order.CreatedAt.ToLocalTime()</td>
+                        <td>@(order.Items?.Count ?? 0)</td>
+                        <td>
+                            @if (order.IsBlockedByPriority)
+                            {
+                                <span class="text-warning">Blocked by earlier orders</span>
+                            }
+                            else
+                            {
+                                <span class="text-danger">Insufficient inventory</span>
+                            }
+                        </td>
+                        <td>
+                            <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.OrderId" class="btn btn-sm btn-info text-white">View</a>
+                            <form asp-controller="Home" asp-action="CancelPersisted" method="post" class="d-inline ms-1">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="orderId" value="@order.OrderId" />
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Cancel</button>
+                            </form>
+                            <ul class="item-list">
+                                @foreach (var it in order.Items)
+                                {
+                                    <li>@it.ItemId &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)</li>
+                                }
+                            </ul>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ============ GO STORE THESE (new claimable sticky-note tasks) ============ -->
+    <h4 class="section-h mb-2"><i class="bi bi-sticky me-2" style="color:#F59E0B;"></i>Go Store These</h4>
+    <div class="text-dim mb-3">Hand-posted put-away tasks. Claim one to lock your name to it; finish it and it drops off the board.</div>
+
+    @if (canCreate)
+    {
+        <form asp-controller="Home" asp-action="CreateStoreTask" method="post" class="create-note mb-4">
+            @Html.AntiForgeryToken()
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="text-dim d-block mb-1" style="font-size:11px;">Task title</label>
+                    <input type="text" name="title" class="cn-input w-100" placeholder="e.g. Put away pallet by Connex 6" required />
+                </div>
+                <div class="col-md-6">
+                    <label class="text-dim d-block mb-1" style="font-size:11px;">Note (optional) — point at the New Item Registry if needed</label>
+                    <input type="text" name="details" class="cn-input w-100" placeholder="Anything the runner should know" />
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-warning fw-bold w-100"><i class="bi bi-pin-angle me-1"></i>Pin</button>
+                </div>
+            </div>
+        </form>
+    }
+
+    @if (!storeTasks.Any())
+    {
+        <div class="queue-card p-4 text-center text-dim">Nothing to store right now.</div>
+    }
+    else
+    {
+        <div class="board">
+            @foreach (var t in storeTasks)
+            {
+                var claimed = t.Status == "Claimed";
+                var mine = claimed && string.Equals(t.ClaimedBy, me, StringComparison.OrdinalIgnoreCase);
+                <div class="sticky @(claimed ? "claimed" : "")">
+                    <h6>@t.Title</h6>
+                    @if (!string.IsNullOrWhiteSpace(t.Details))
+                    {
+                        <div class="note">@t.Details</div>
+                    }
+                    <div class="meta">
+                        <i class="bi bi-person me-1"></i>@Requester(t.CreatedBy) · @Ago(t.CreatedAt)
+                    </div>
+
+                    <div class="mt-2">
+                        @if (!claimed)
+                        {
+                            if (canClaim)
+                            {
+                                <form asp-controller="Home" asp-action="ClaimTask" method="post" class="m-0">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="id" value="@t.Id" />
+                                    <button type="submit" class="btn btn-sm btn-success fw-bold w-100"><i class="bi bi-hand-index me-1"></i>Claim</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">Open</span>
+                            }
+                        }
+                        else
+                        {
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="badge" style="background:#64748B;"><i class="bi bi-person-check me-1"></i>@Requester(t.ClaimedBy)</span>
+                                @if (mine)
+                                {
+                                    <form asp-controller="Home" asp-action="CompleteTask" method="post" class="m-0">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="id" value="@t.Id" />
+                                        <button type="submit" class="btn btn-sm btn-outline-success fw-bold"><i class="bi bi-check2 me-1"></i>Done</button>
+                                    </form>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <p class="mt-4"><a asp-controller="Home" asp-action="Index" class="btn btn-sm btn-secondary">&larr; Back to Dashboard</a></p>
+</div>

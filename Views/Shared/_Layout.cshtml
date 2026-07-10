@@ -1,0 +1,437 @@
+﻿@inject InventoryDevTwo.Data.AppDbContext Db
+@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
+@inject InventoryDevTwo.Services.OrderService OrderSvc
+@inject InventoryDevTwo.Services.NotificationService Notifications
+@{
+    bool orderMode = false;
+    try { orderMode = OrderSvc.GetCurrentDraft().Entries.Any(); } catch { orderMode = false; }
+
+    bool signedIn = CurrentUser.IsSet;
+    string theme = CurrentUser.Theme;
+    string visUser = signedIn ? CurrentUser.Name : "";
+
+    // Supervisor low-stock summary is scoped to the viewer's team:
+    //   team set  (e.g. Conner=Samurai, James=Ninja) -> only that team's low-stock count
+    //   team null (Kevin / Admin / management)        -> all teams
+    // try/catch so a database missing the Users.Team column still renders
+    // (it just falls back to the all-teams count instead of throwing).
+    string? myTeam = null;
+    if (signedIn)
+    {
+        try { myTeam = Db.Users.Where(u => u.UserName == visUser).Select(u => u.Team).FirstOrDefault(); }
+        catch { myTeam = null; }
+    }
+
+    int alertCount = 0;
+    try
+    {
+        // Quantity lives on ItemVariants (item.Quantity is a NotMapped
+        // pass-through and cannot be used inside an EF query), so the badge
+        // sums each item's active variants database-side.
+        var alertQ = Db.InventoryItems.Where(i => i.AlertThreshold > 0
+            && (i.Variants.Where(v => !v.IsRetired).Sum(v => (int?)v.Quantity) ?? 0) <= i.AlertThreshold);
+        if (!string.IsNullOrWhiteSpace(myTeam)) alertQ = alertQ.Where(i => i.Team == myTeam);
+        alertCount = alertQ.Count();
+    }
+    catch { alertCount = 0; }
+
+    string displayName = signedIn ? visUser.Replace('.', ' ') : "Not signed in";
+    string currentAction = ViewContext.RouteData.Values["action"]?.ToString() ?? "Index";
+    string initials = "?";
+    if (signedIn)
+    {
+        var ps = visUser.Split('.').Where(p => p.Length > 0).ToArray();
+        initials = string.Concat(ps.Select(p => char.ToUpper(p[0])));
+        if (initials.Length > 2) initials = initials.Substring(0, 2);
+    }
+
+    // --- Notification bell data ---
+    var notifications = signedIn
+        ? Notifications.GetActiveFor(visUser)
+        : new List<InventoryDevTwo.Models.Notification>();
+    int unreadCount = notifications.Count(n => !n.IsRead);
+    bool isManager = signedIn && CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Management;
+
+    Func<DateTime, string> relTime = utc =>
+    {
+        var span = DateTime.UtcNow - utc;
+        if (span.TotalSeconds < 60) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
+        return utc.ToLocalTime().ToString("MMM d");
+    };
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="@theme">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - Rheem VIS</title>
+    <script type="importmap"></script>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/InventoryDevTwo.styles.css" asp-append-version="true" />
+    <style>
+        /* Green accent across the whole nav while an order is being built */
+        .rheem-navbar { position: relative; }
+        .rheem-navbar.order-mode {
+            border-bottom: 4px solid var(--vis-green);
+            box-shadow: 0 4px 16px rgba(34, 197, 94, 0.28);
+            background-image: linear-gradient(rgba(34,197,94,0.07), rgba(34,197,94,0.07));
+            overflow: visible; /* let the impact pop bloom just past the right edge */
+        }
+        /* The line "flies" left -> right along the bottom border when order mode begins.
+           Plays on first add (class added live) and on each load while order mode persists.
+           z-index kept local + low: well under holo overlay (2000) and modals (2150/2200). */
+        .rheem-navbar.order-mode::after {
+            content: "";
+            position: absolute;
+            left: 0; right: 0; bottom: -4px;
+            height: 4px;
+            background: linear-gradient(90deg, transparent 0%, var(--vis-green) 35%, #4ade80 50%, var(--vis-green) 65%, transparent 100%);
+            transform: scaleX(0);
+            transform-origin: left center;
+            animation: vis-order-sweep 0.7s cubic-bezier(.22,.61,.36,1) both;
+            pointer-events: none;
+            z-index: 4;
+        }
+        /* The little "blow up" when the sweep meets the right wall. */
+        .rheem-navbar.order-mode::before {
+            content: "";
+            position: absolute;
+            right: 0; bottom: -3px;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #8af0b0 0%, var(--vis-green) 45%, rgba(34,197,94,0) 72%);
+            transform: translate(50%, 50%) scale(0);
+            opacity: 0;
+            animation: vis-order-pop 0.34s ease-out 0.66s both; /* fires as the sweep lands */
+            pointer-events: none;
+            z-index: 5;
+        }
+        @@keyframes vis-order-sweep {
+            0%   { transform: scaleX(0); opacity: 0.25; }
+            55%  { opacity: 1; }
+            100% { transform: scaleX(1); opacity: 1; }
+        }
+        @@keyframes vis-order-pop {
+            0%   { transform: translate(50%,50%) scale(0); opacity: 0; }
+            30%  { opacity: 1; }
+            60%  { transform: translate(50%,50%) scale(1.5); opacity: 0.9; }
+            100% { transform: translate(50%,50%) scale(2.2); opacity: 0; }
+        }
+        @@media (prefers-reduced-motion: reduce) {
+            .rheem-navbar.order-mode::after,
+            .rheem-navbar.order-mode::before { animation: none; }
+            .rheem-navbar.order-mode::after { transform: scaleX(1); }
+            .rheem-navbar.order-mode::before { opacity: 0; }
+        }
+        .order-mode-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--vis-green);
+            color: #06210f;
+            font-weight: 800;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            text-transform: uppercase;
+        }
+        /* Notification bell dropdown */
+        .notif-menu {
+            width: 360px;
+            max-width: 92vw;
+            max-height: 460px;
+            overflow-y: auto;
+            background: var(--vis-card);
+            border: 1px solid var(--vis-card-border);
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+            z-index: 5000;
+        }
+        .notif-header {
+            padding: 10px 14px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: .4px;
+            text-transform: uppercase;
+            color: var(--vis-text-muted);
+            border-bottom: 1px solid var(--vis-card-border);
+        }
+        .notif-lowstock {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            color: #06210f;
+            background: var(--vis-yellow);
+            font-weight: 700;
+            text-decoration: none;
+            border-bottom: 1px solid var(--vis-card-border);
+        }
+        .notif-lowstock:hover { filter: brightness(1.06); color: #06210f; }
+        .notif-item { border-bottom: 1px solid var(--vis-card-border); }
+        .notif-item:last-child { border-bottom: 0; }
+        .notif-link { color: var(--vis-text); display: block; padding: 10px 14px; text-decoration: none; }
+        .notif-link:hover { background: rgba(255, 255, 255, 0.04); color: var(--vis-text); }
+        .notif-msg { font-size: 13px; line-height: 1.35; }
+        .notif-time { font-size: 11px; color: var(--vis-text-muted); margin-top: 2px; }
+        .notif-unread { box-shadow: inset 3px 0 0 var(--vis-blue); background: rgba(29, 161, 242, 0.07); }
+        .notif-dismiss { color: var(--vis-text-muted); text-decoration: none; align-self: flex-start; }
+        .notif-dismiss:hover { color: var(--vis-red); }
+        .notif-empty { padding: 22px 14px; text-align: center; color: var(--vis-text-muted); font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header>
+        <nav class="navbar navbar-expand-sm rheem-navbar mb-3 @(orderMode ? "order-mode" : "")">
+            <div class="container-fluid px-4">
+
+                <a class="navbar-brand d-flex align-items-center" asp-area="" asp-controller="Home" asp-action="Index">
+                    <!-- RESTORED RHEEM LOGO -->
+                    <img src="~/images/RheemLogo.png" alt="Rheem" height="40" class="me-3" />
+
+                    <!-- Stylized "Visual Inventory System" text -->
+                    <span class="text-white fw-bold" style="letter-spacing: 0.5px; font-size: 1.4rem;">
+                        <span style="color: var(--vis-red); font-size: 1.7rem;">V</span>isual
+                        <span style="color: var(--vis-red); font-size: 1.7rem; margin-left: 4px;">I</span>nventory
+                        <span style="color: var(--vis-red); font-size: 1.7rem; margin-left: 4px;">S</span>ystem
+                    </span>
+                </a>
+
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-end align-items-center">
+                    @if (orderMode)
+                    {
+                        <span class="order-mode-badge me-4"><i class="bi bi-cart-fill"></i> Order Mode</span>
+                    }
+                    <ul class="navbar-nav me-4">
+                        <li class="nav-item">
+                            <a class="nav-link @(currentAction == "Index" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Index">Dashboard</a>
+                        </li>
+                        <li class="nav-item ms-3">
+                            <a class="nav-link @(currentAction == "Logs" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Logs">View Logs</a>
+                        </li>
+                        <li class="nav-item ms-3">
+                            <a class="nav-link @(currentAction == "MyOrders" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="MyOrders">My Orders</a>
+                        </li>
+                    </ul>
+
+                    <div class="d-flex align-items-center border-start border-secondary ps-4">
+                        @if (signedIn)
+                        {
+                            <form asp-controller="Home" asp-action="SetTheme" method="post" class="m-0 me-3">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="theme" value="@(theme == "light" ? "dark" : "light")" />
+                                <button type="submit" class="btn btn-link p-0 align-baseline"
+                                        title="Switch to @(theme == "light" ? "dark" : "light") mode"
+                                        style="color:#a0aab5; text-decoration:none;">
+                                    <i class="bi @(theme == "light" ? "bi-moon-stars-fill" : "bi-sun-fill") fs-5"></i>
+                                </button>
+                            </form>
+                        }
+                        @if (signedIn)
+                        {
+                            <div class="dropdown me-4" id="notifBellWrap">
+                                <a href="#" class="position-relative d-inline-block text-decoration-none" role="button"
+                                   id="notifBell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                   style="cursor:pointer; color:#a0aab5;">
+                                    <i class="bi bi-bell-fill fs-5"></i>
+                                    <span id="notifBadge"
+                                          class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger @(unreadCount > 0 ? "" : "d-none")"
+                                          style="font-size:9px;">@unreadCount</span>
+                                </a>
+                                <div class="dropdown-menu dropdown-menu-end notif-menu p-0" aria-labelledby="notifBell">
+                                    <div class="notif-header">Notifications</div>
+                                    @if (isManager && alertCount > 0)
+                                    {
+                                        <a class="notif-lowstock" asp-controller="Home" asp-action="Index">
+                                            <i class="bi bi-exclamation-triangle-fill"></i>
+                                            <span>@alertCount item@(alertCount == 1 ? "" : "s") low on stock</span>
+                                        </a>
+                                    }
+                                    <ul class="list-unstyled m-0" id="notifList">
+                                        @foreach (var n in notifications)
+                                        {
+                                            string nIcon; string nColor;
+                                            switch (n.Category)
+                                            {
+                                                case "PickupRequested": nIcon = "bi-cart-plus-fill"; nColor = "text-info"; break;
+                                                case "Fulfilled": nIcon = "bi-check-circle-fill"; nColor = "text-success"; break;
+                                                default: nIcon = "bi-bell-fill"; nColor = "text-light"; break;
+                                            }
+                                            <li class="notif-item d-flex align-items-stretch @(n.IsRead ? "" : "notif-unread")" data-id="@n.Id">
+                                                @if (!string.IsNullOrEmpty(n.LinkUrl))
+                                                {
+                                                    <a href="@n.LinkUrl" class="notif-link flex-grow-1">
+                                                        <div class="d-flex align-items-start">
+                                                            <i class="bi @nIcon me-2 @nColor"></i>
+                                                            <div>
+                                                                <div class="notif-msg">@n.Message</div>
+                                                                <div class="notif-time">@relTime(n.CreatedAt)</div>
+                                                            </div>
+                                                        </div>
+                                                    </a>
+                                                }
+                                                else
+                                                {
+                                                    <div class="notif-link flex-grow-1">
+                                                        <div class="d-flex align-items-start">
+                                                            <i class="bi @nIcon me-2 @nColor"></i>
+                                                            <div>
+                                                                <div class="notif-msg">@n.Message</div>
+                                                                <div class="notif-time">@relTime(n.CreatedAt)</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                <button type="button" class="notif-dismiss btn btn-link p-2" data-id="@n.Id" title="Dismiss">
+                                                    <i class="bi bi-x-lg"></i>
+                                                </button>
+                                            </li>
+                                        }
+                                    </ul>
+                                    <div class="notif-empty @(notifications.Any() ? "d-none" : "")" id="notifEmpty">
+                                        You're all caught up.
+                                    </div>
+                                </div>
+                                @Html.AntiForgeryToken()
+                            </div>
+                        }
+                        <div class="d-flex align-items-center">
+                            <div class="bg-secondary text-white rounded-circle d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px; font-size: 12px; font-weight: bold;">@initials</div>
+                            <div style="line-height: 1.2;">
+                                <div class="text-white small fw-bold">@displayName</div>
+                                @if (signedIn)
+                                {
+                                    <form asp-controller="Home" asp-action="SignOut" method="post" class="m-0 p-0">
+                                        @Html.AntiForgeryToken()
+                                        <button type="submit" class="btn btn-link p-0 text-decoration-none" style="color: var(--vis-red); font-size: 10px; line-height:1;">
+                                            <i class="bi bi-box-arrow-right me-1"></i>Sign Out
+                                        </button>
+                                    </form>
+                                }
+                                else
+                                {
+                                    <div style="color: var(--vis-text-muted); font-size: 10px;">Guest</div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <div class="container-fluid px-4">
+        <main role="main" class="pb-3">
+            @if (TempData["AuthError"] != null)
+            {
+                <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center shadow-lg" role="alert"
+                     style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 4000; max-width: 640px; width: calc(100% - 40px); border-left: 4px solid #b02a37;">
+                    <i class="bi bi-shield-lock-fill me-2"></i>
+                    <div>@TempData["AuthError"]</div>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            }
+            @RenderBody()
+        </main>
+    </div>
+
+    <!-- Toast container (Fixed Z-Index) -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 12000;"></div>
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script>
+        function showToast(message, type) {
+        var toastId = 't' + Math.floor(Math.random() * 1000000);
+        var bgClass = (type === 'success') ? 'bg-success text-white' : 'bg-danger text-white';
+        var icon = (type === 'success') ? '<i class="bi bi-check-circle-fill me-2"></i>' : '<i class="bi bi-exclamation-triangle-fill me-2"></i>';
+
+        var html = `
+        <div id="${toastId}" class="toast ${bgClass} border-0 shadow-lg" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="4000">
+        <div class="toast-body fw-bold" style="font-size: 1.05rem;">
+        ${icon} ${message}
+        </div>
+        </div>`;
+        $('#toastContainer').append(html);
+        var el = document.getElementById(toastId);
+        var bs = new bootstrap.Toast(el);
+        bs.show();
+        el.addEventListener('hidden.bs.toast', function () { el.remove(); });
+        }
+    </script>
+
+    <script>
+        (function () {
+            function visAntiForgeryToken() {
+                var el = document.querySelector('#notifBellWrap input[name="__RequestVerificationToken"]');
+                return el ? el.value : '';
+            }
+
+            function updateNotifEmptyState() {
+                var list = document.getElementById('notifList');
+                var empty = document.getElementById('notifEmpty');
+                if (!list || !empty) return;
+                var hasItems = list.querySelectorAll('.notif-item').length > 0;
+                empty.classList.toggle('d-none', hasItems);
+            }
+
+            // Mark all read when the bell opens (clears the badge).
+            var bellWrap = document.getElementById('notifBellWrap');
+            if (bellWrap) {
+                bellWrap.addEventListener('show.bs.dropdown', function () {
+                    var badge = document.getElementById('notifBadge');
+                    if (!badge || badge.classList.contains('d-none')) return;
+                    fetch('/Home/MarkNotificationsRead', {
+                        method: 'POST',
+                        headers: { 'RequestVerificationToken': visAntiForgeryToken() }
+                    }).then(function (r) {
+                        if (r.ok) { badge.classList.add('d-none'); badge.textContent = '0'; }
+                    }).catch(function () { });
+                });
+            }
+
+            // Dismiss (x) a single notification.
+            document.addEventListener('click', function (e) {
+                var btn = e.target.closest('.notif-dismiss');
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                var id = btn.getAttribute('data-id');
+                fetch('/Home/DismissNotification', {
+                    method: 'POST',
+                    headers: {
+                        'RequestVerificationToken': visAntiForgeryToken(),
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: 'id=' + encodeURIComponent(id)
+                }).then(function (r) {
+                    if (r.ok) {
+                        var item = btn.closest('.notif-item');
+                        if (item) item.remove();
+                        updateNotifEmptyState();
+                    }
+                }).catch(function () { });
+            });
+        })();
+    </script>
+
+    @if (TempData["Success"] != null)
+    {
+        <script>showToast("@TempData["Success"]", "success");</script>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <script>showToast("@TempData["Error"]", "error");</script>
+    }
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
