@@ -568,10 +568,6 @@
     }
 </style>
 
-<!-- HTTP Warning -->
-<div id="http-warning" class="alert alert-warning floating-alert" style="display:none; top: 80px;">
-    <strong>Warning:</strong> You are using HTTP. Form submissions will fail! Please switch to HTTPS.
-</div>
 
 <!-- 2. BACKGROUND GUIDE GRID (RE-ENABLED) -->
 <div class="selection-grid" id="placement-grid">
@@ -2164,9 +2160,7 @@
         document.documentElement.style.setProperty('--vis-header-bottom' ,(rect.bottom + breathingRoom) + 'px')
     }
 
-    if (window.location.protocol === "http:") {
-        document.getElementById("http-warning").style.display = "block";
-    }
+   
 
     // Order Mode is "active" once the cart holds at least one item.
     let orderActive = @(hasDraft ? "true" : "false");
