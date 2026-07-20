@@ -5,35 +5,37 @@
 namespace Visual_Inventory_System.Migrations
 {
     /// <inheritdoc />
-    public partial class AddProjectIdentifiers : Migration
+    public partial class AddRheemPartNumber : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string>(
-                name: "ProjectCode",
+                name: "RheemPartNumber",
                 table: "InventoryItems",
                 type: "TEXT",
                 nullable: false,
                 defaultValue: "");
 
-            migrationBuilder.AddColumn<string>(
-                name: "ProjectName",
+            // Unique only among NON-blank values: legacy rows without a PN
+            // coexist; two items can never share a real Rheem part number.
+            migrationBuilder.CreateIndex(
+                name: "IX_InventoryItems_RheemPartNumber",
                 table: "InventoryItems",
-                type: "TEXT",
-                nullable: false,
-                defaultValue: "");
+                column: "RheemPartNumber",
+                unique: true,
+                filter: "\"RheemPartNumber\" <> ''");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "ProjectCode",
+            migrationBuilder.DropIndex(
+                name: "IX_InventoryItems_RheemPartNumber",
                 table: "InventoryItems");
 
             migrationBuilder.DropColumn(
-                name: "ProjectName",
+                name: "RheemPartNumber",
                 table: "InventoryItems");
         }
     }

@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     /// <summary>
     /// A known team member for the name picker on the Identify page.

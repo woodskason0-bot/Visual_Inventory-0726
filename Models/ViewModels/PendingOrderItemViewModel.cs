@@ -1,12 +1,15 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
-namespace InventoryDevTwo.Models.ViewModels
+namespace Visual_Inventory_System.Models.ViewModels
 {
     public class PendingOrderItemViewModel
     {
         public int OrderItemId { get; set; }
         public string ItemId { get; set; } = string.Empty;
         public string ItemName { get; set; } = string.Empty;
+        // Rheem PN off the physical label -- shown so the pickup person can
+        // verify the box in hand matches the line item. "" = not captured yet.
+        public string RheemPartNumber { get; set; } = string.Empty;
         public int Quantity { get; set; }
         public int AvailableForThisOrder { get; set; }
 

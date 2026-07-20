@@ -1,7 +1,7 @@
-﻿@inject InventoryDevTwo.Data.AppDbContext Db
-@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
-@inject InventoryDevTwo.Services.OrderService OrderSvc
-@inject InventoryDevTwo.Services.NotificationService Notifications
+﻿@inject Visual_Inventory_System.Data.AppDbContext Db
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@inject Visual_Inventory_System.Services.OrderService OrderSvc
+@inject Visual_Inventory_System.Services.NotificationService Notifications
 @{
     bool orderMode = false;
     try { orderMode = OrderSvc.GetCurrentDraft().Entries.Any(); } catch { orderMode = false; }
@@ -48,9 +48,9 @@
     // --- Notification bell data ---
     var notifications = signedIn
         ? Notifications.GetActiveFor(visUser)
-        : new List<InventoryDevTwo.Models.Notification>();
+        : new List<Visual_Inventory_System.Models.Notification>();
     int unreadCount = notifications.Count(n => !n.IsRead);
-    bool isManager = signedIn && CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Management;
+    bool isManager = signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Management;
 
     Func<DateTime, string> relTime = utc =>
     {
@@ -72,7 +72,7 @@
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link rel="stylesheet" href="~/InventoryDevTwo.styles.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/Visual_Inventory_System.styles.css" asp-append-version="true" />
     <style>
         /* Green accent across the whole nav while an order is being built */
         .rheem-navbar { position: relative; }

@@ -1,7 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     /// <summary>
     /// One physical instance of an item family at one location.

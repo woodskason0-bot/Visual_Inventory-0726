@@ -1,6 +1,6 @@
-﻿using InventoryDevTwo.Models;
+﻿using Visual_Inventory_System.Models;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     public class SearchResult
     {

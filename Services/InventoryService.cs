@@ -1,11 +1,11 @@
-using InventoryDevTwo.Models;
-using InventoryDevTwo.Data;
+﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
 using System.Collections.Generic;
 using System.Text;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     public class InventoryService
     {
@@ -135,7 +135,10 @@ namespace InventoryDevTwo.Services
         // ============================
         // SEARCH AND CORE LOGIC
         // ============================
-        public List<InventoryItem> Search(string? omni, string? name, string? type, string? brand, string? notes)
+        // NOTE: the old "name" filter slot is now the Rheem Part # filter
+        // (leadership: PN is a primary identifier). Item NAME is still
+        // reachable through omni-search.
+        public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand, string? notes)
         {
             // Include variants: results feed the holoviewer, which reads the
             // Quantity/location pass-throughs -- without variants loaded those
@@ -146,9 +149,9 @@ namespace InventoryDevTwo.Services
 
             bool isFilterActive = false;
 
-            if (!string.IsNullOrWhiteSpace(name))
+            if (!string.IsNullOrWhiteSpace(rheemPart))
             {
-                query = query.Where(i => i.ItemName.ToLower().Contains(name.ToLower()));
+                query = query.Where(i => i.RheemPartNumber.ToLower().Contains(rheemPart.ToLower()));
                 isFilterActive = true;
             }
             if (!string.IsNullOrWhiteSpace(type))
@@ -175,6 +178,7 @@ namespace InventoryDevTwo.Services
                 var s = omni.ToLower();
                 query = query.Where(i =>
                     i.ItemId.ToLower().Contains(s) ||
+                    i.RheemPartNumber.ToLower().Contains(s) ||
                     i.ItemName.ToLower().Contains(s) ||
                     i.Brand.ToLower().Contains(s) ||
                     i.Type.ToLower().Contains(s) ||
@@ -224,7 +228,7 @@ namespace InventoryDevTwo.Services
             var builder = new StringBuilder();
 
             // CSV HEADER: Added Status, Scrapped, and Ownership columns
-            builder.AppendLine("ItemID,ItemName,Type,Brand,Location,CurrentQuantity,Group,Team,ProjectCode,StatusTags,ScrappedQty,OwnershipChanges");
+            builder.AppendLine("ItemID,RheemPartNumber,ItemName,Type,Brand,Location,CurrentQuantity,Group,Team,ProjectCode,StatusTags,ScrappedQty,OwnershipChanges");
 
             foreach (var i in items)
             {
@@ -261,8 +265,9 @@ namespace InventoryDevTwo.Services
                 // Escape commas to protect the CSV structure
                 string safeName = i.ItemName?.Replace(",", ";") ?? "";
                 string safeBrand = i.Brand?.Replace(",", ";") ?? "";
+                string safeRpn = i.RheemPartNumber?.Replace(",", ";") ?? "";
 
-                builder.AppendLine($"{i.ItemId},{safeName},{i.Type},{safeBrand},{i.FdaString},{i.Quantity},{i.Group},{i.Team},{i.ProjectCode},{tagString},{scrapQty},{ownCount}");
+                builder.AppendLine($"{i.ItemId},{safeRpn},{safeName},{i.Type},{safeBrand},{i.FdaString},{i.Quantity},{i.Group},{i.Team},{i.ProjectCode},{tagString},{scrapQty},{ownCount}");
             }
 
             return Encoding.UTF8.GetBytes(builder.ToString());
@@ -303,6 +308,95 @@ namespace InventoryDevTwo.Services
 
         public InventoryItem? GetById(string itemId) =>
             _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
+
+        // Case-insensitive lookup by Rheem PN. Used for the registration
+        // duplicate check ("this part already exists as CVE-0042") and the
+        // Edit Details uniqueness gate.
+        public InventoryItem? FindByRheemPart(string? rheemPartNumber)
+        {
+            if (string.IsNullOrWhiteSpace(rheemPartNumber)) return null;
+            var pn = rheemPartNumber.Trim().ToLower();
+            return _db.InventoryItems.AsNoTracking()
+                .FirstOrDefault(i => i.RheemPartNumber.ToLower() == pn);
+        }
+
+        // ============================
+        // IDENTITY EDITS (Edit Details)
+        // ============================
+        // Family-level identity fields, editable from the Modify Stock modal:
+        //   Rheem PN  -- set or change, REJECTED if another item already owns it
+        //                ("taken"): PN is a business identifier like ItemId.
+        //   Description -- free edit.
+        //   Brand     -- fill-if-blank ONLY: an existing brand is never
+        //                overwritten from here (matches "add a brand if there
+        //                is not one already").
+        // Variants are untouched -- identity lives on the family record.
+        // Returns (ok, message); logs an "Edit Details" transaction on success.
+        public (bool ok, string message) UpdateItemDetails(string itemId, string? rheemPartNumber, string? description, string? brand)
+        {
+            var item = _db.InventoryItems.FirstOrDefault(i => i.ItemId == itemId);
+            if (item == null) return (false, $"Item {itemId} not found.");
+
+            var changes = new List<string>();
+
+            if (rheemPartNumber != null)
+            {
+                string pn = rheemPartNumber.Trim();
+                if (pn != item.RheemPartNumber)
+                {
+                    if (pn.Length > 0)
+                    {
+                        var pnLower = pn.ToLower();
+                        var owner = _db.InventoryItems.AsNoTracking()
+                            .FirstOrDefault(i => i.ItemId != itemId && i.RheemPartNumber.ToLower() == pnLower);
+                        if (owner != null)
+                            return (false, $"Rheem part number '{pn}' is already taken by {owner.ItemId} ({owner.ItemName}).");
+                    }
+                    changes.Add(string.IsNullOrEmpty(item.RheemPartNumber)
+                        ? $"Rheem PN set to '{pn}'"
+                        : $"Rheem PN '{item.RheemPartNumber}' -> '{pn}'");
+                    item.RheemPartNumber = pn;
+                }
+            }
+
+            if (description != null && description.Trim() != item.Description)
+            {
+                changes.Add("Description updated");
+                item.Description = description.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(brand))
+            {
+                if (string.IsNullOrWhiteSpace(item.Brand) || item.Brand.Trim().Equals("Unknown", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    changes.Add($"Brand set to '{brand.Trim()}'");
+                    item.Brand = brand.Trim();
+                }
+                else if (!brand.Trim().Equals(item.Brand.Trim(), System.StringComparison.OrdinalIgnoreCase))
+                {
+                    // Existing brand stays; tell the caller instead of silently dropping.
+                    return (false, $"{itemId} already has brand '{item.Brand}' -- brand can only be added when blank.");
+                }
+            }
+
+            if (changes.Count == 0) return (true, "No changes to apply.");
+
+            item.LastUpdated = System.DateTime.UtcNow;
+            item.UpdatedBy = _currentUser.Name;
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = System.DateTime.UtcNow,
+                ActionType = "Edit Details",
+                ItemId = itemId,
+                QuantityChange = 0,
+                Details = string.Join("; ", changes) + ".",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            return (true, string.Join("; ", changes) + ".");
+        }
 
         public void UpdateAlertThreshold(string itemId, int threshold)
         {

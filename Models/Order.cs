@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     public class Order
     {

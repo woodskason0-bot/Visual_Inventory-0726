@@ -1,7 +1,7 @@
-using InventoryDevTwo.Models;
+﻿using Visual_Inventory_System.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace InventoryDevTwo.Data
+namespace Visual_Inventory_System.Data
 {
     public class AppDbContext : DbContext
     {
@@ -24,6 +24,15 @@ namespace InventoryDevTwo.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<InventoryItem>(b =>
+            {
+                // Rheem PN is a business identifier like ItemId: no two items
+                // may share one. Partial index so legacy blanks ("") coexist.
+                b.HasIndex(i => i.RheemPartNumber)
+                 .IsUnique()
+                 .HasFilter("\"RheemPartNumber\" <> ''");
+            });
 
             modelBuilder.Entity<ItemVariant>(b =>
             {

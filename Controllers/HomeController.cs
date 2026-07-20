@@ -1,15 +1,15 @@
-using InventoryDevTwo.Models;
-using InventoryDevTwo.Services;
-using InventoryDevTwo.Data;
+﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Services;
+using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using System.Linq;
-using InventoryDevTwo.Models.ViewModels;
+using Visual_Inventory_System.Models.ViewModels;
 using System;
 using System.Collections.Generic;
 
-namespace InventoryDevTwo.Controllers
+namespace Visual_Inventory_System.Controllers
 {
     public class HomeController : Controller
     {
@@ -30,7 +30,9 @@ namespace InventoryDevTwo.Controllers
             _notifications = notifications;
         }
 
-        public IActionResult Index(string? omniSearch, string? filterName, string? filterType, string? filterBrand, string? filterNotes, string? mode)
+        // filterRheem replaced the old filterName slot: the Name filter box is
+        // now "Rheem Part #" per leadership (PN is a primary identifier).
+        public IActionResult Index(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode)
         {
             var allItems = _inventoryService.GetAll().ToList();
 
@@ -59,6 +61,10 @@ namespace InventoryDevTwo.Controllers
             var autocompleteData = allItems.Select(i => new {
                 id = i.ItemId,
                 name = i.ItemName,
+                // Identity fields the Modify Stock "Edit Details" pane prefills.
+                rpn = i.RheemPartNumber,
+                brand = i.Brand,
+                desc = i.Description,
                 threshold = i.AlertThreshold,
                 quantity = i.Quantity,
                 // Item TYPE drives the motors-only TC gate on the client. A type
@@ -107,7 +113,7 @@ namespace InventoryDevTwo.Controllers
             var searchResult = new SearchResult { Mode = mode ?? "None" };
             if (mode != "None")
             {
-                var foundItems = _inventoryService.Search(omniSearch, filterName, filterType, filterBrand, filterNotes);
+                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
                 searchResult.Items = foundItems;
 
                 if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
@@ -118,7 +124,7 @@ namespace InventoryDevTwo.Controllers
             ViewBag.InventoryService = _inventoryService;
 
             ViewBag.OmniSearch = omniSearch ?? "";
-            ViewBag.FilterName = filterName ?? "";
+            ViewBag.FilterRheem = filterRheem ?? "";
             ViewBag.FilterType = filterType ?? "";
             ViewBag.FilterBrand = filterBrand ?? "";
             ViewBag.FilterNotes = filterNotes ?? "";
@@ -220,19 +226,30 @@ namespace InventoryDevTwo.Controllers
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
-            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0)
+            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
+            string? newRheemPart = null, string? newDescription = null, string? newBrand = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return RedirectToAction("Index");
 
             // "Add" and "Adjustment" are allowed at Standard (runners restock and fix
-            // counts on recount); Scrap and Ownership transfer require Engineer or higher.
+            // counts on recount); Scrap, Ownership, and identity edits (Edit Details)
+            // require Engineer or higher -- same tier that registers items.
             // Location Transfer is non-destructive (no quantity change) so it stays at Standard.
-            var elevated = new[] { "Scrap", "Ownership" };
+            var elevated = new[] { "Scrap", "Ownership", "Edit Details" };
             if (elevated.Contains(actionType, StringComparer.OrdinalIgnoreCase)
                 && _currentUser.Level < AccessLevels.Engineer)
             {
                 TempData["AuthError"] = $"Sorry, you're not authorized to perform '{actionType}' " +
                     "(requires Engineer access or higher). Please contact your supervisor or manager for assistance.";
+                return RedirectToAction("Index");
+            }
+
+            // Identity edits never touch quantities/variants -- separate path.
+            if (string.Equals(actionType, "Edit Details", StringComparison.OrdinalIgnoreCase))
+            {
+                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand);
+                if (ok) TempData["Success"] = $"{itemId}: {message}";
+                else TempData["Error"] = message;
                 return RedirectToAction("Index");
             }
 
@@ -266,6 +283,25 @@ namespace InventoryDevTwo.Controllers
                 newItem.Type ??= "General";
                 newItem.Brand ??= "Unknown";
                 newItem.Description ??= "";
+
+                // --- RHEEM PART NUMBER (required on NEW registrations) ---
+                // Leadership: every item should carry one. Legacy rows may still
+                // be blank, but nothing new enters without a PN, and a PN that
+                // already belongs to another family is rejected so the same
+                // physical part can't be registered twice under two ItemIds.
+                newItem.RheemPartNumber = (newItem.RheemPartNumber ?? "").Trim();
+                if (newItem.RheemPartNumber.Length == 0)
+                {
+                    TempData["Error"] = "Registration needs a Rheem part number (check the physical label).";
+                    return RedirectToAction("Index");
+                }
+                var pnOwner = _inventoryService.FindByRheemPart(newItem.RheemPartNumber);
+                if (pnOwner != null)
+                {
+                    TempData["Error"] = $"Rheem PN '{newItem.RheemPartNumber}' already exists as {pnOwner.ItemId} ({pnOwner.ItemName}). " +
+                        "Add stock to that item instead of registering a duplicate.";
+                    return RedirectToAction("Index");
+                }
                 newItem.Parent ??= "";
                 newItem.Major ??= "";
                 newItem.Sub ??= "";
@@ -417,7 +453,7 @@ namespace InventoryDevTwo.Controllers
 
             // Friendly per-location label for the return picker (decode codes,
             // drop "0"/blank levels), mirroring the pickup queue.
-            string VLabel(InventoryDevTwo.Models.ItemVariant v)
+            string VLabel(Visual_Inventory_System.Models.ItemVariant v)
             {
                 bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
                 var crumbs = new List<string>();
@@ -434,7 +470,7 @@ namespace InventoryDevTwo.Controllers
                 foreach (var it in o.Items.Where(x => x.LoanOutstanding > 0))
                 {
                     invLookup.TryGetValue(it.ItemId, out var inv);
-                    var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<InventoryDevTwo.Models.ItemVariant>())
+                    var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .OrderBy(v => v.VariantNumber).ToList();
 
                     loans.Add(new LoanLineViewModel
@@ -444,6 +480,7 @@ namespace InventoryDevTwo.Controllers
                         OrderedAt = o.CreatedAt,
                         ItemId = it.ItemId,
                         ItemName = inv?.ItemName ?? "Unknown",
+                        RheemPartNumber = inv?.RheemPartNumber ?? "",
                         Description = inv?.Description ?? "",
                         ItemType = inv?.Type ?? "",
                         Outstanding = it.LoanOutstanding,
@@ -504,7 +541,7 @@ namespace InventoryDevTwo.Controllers
 
                     // Friendly per-location labels for the pickup person. Decode the
                     // stored codes; "0"/blank levels are dropped from the breadcrumb.
-                    string VLabel(InventoryDevTwo.Models.ItemVariant v)
+                    string VLabel(Visual_Inventory_System.Models.ItemVariant v)
                     {
                         bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
                         var crumbs = new List<string>();
@@ -515,7 +552,7 @@ namespace InventoryDevTwo.Controllers
                         return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
                     }
 
-                    var activeVars = (itemEntity?.ActiveVariants ?? Enumerable.Empty<InventoryDevTwo.Models.ItemVariant>())
+                    var activeVars = (itemEntity?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .OrderBy(v => v.VariantNumber).ToList();
 
                     var itemVm = new PendingOrderItemViewModel
@@ -523,6 +560,7 @@ namespace InventoryDevTwo.Controllers
                         OrderItemId = it.Id,
                         ItemId = it.ItemId,
                         ItemName = itemEntity?.ItemName ?? "Unknown",
+                        RheemPartNumber = itemEntity?.RheemPartNumber ?? "",
                         Quantity = it.Quantity,
                         AvailableForThisOrder = availForThis,
                         RequestedVariantId = it.RequestedVariantId,

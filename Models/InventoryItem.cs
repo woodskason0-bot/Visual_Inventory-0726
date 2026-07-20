@@ -1,9 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     /// <summary>
     /// The item FAMILY record (e.g. "CCR-0001"). Holds everything that is true
@@ -24,6 +24,13 @@ namespace InventoryDevTwo.Models
     {
         public int Id { get; set; }          // DB PK
         public string ItemId { get; set; } = "";   // Business/FAMILY ID, e.g. "CVE-0042"
+
+        // Second business identifier, per leadership: every item SHOULD carry
+        // the Rheem part number off the physical label. Family-level like
+        // ItemId (variants inherit it -- it's on the binder, not the pockets).
+        // "" = not captured yet (legacy rows); non-blank values are UNIQUE
+        // across items (partial index, blanks exempt).
+        public string RheemPartNumber { get; set; } = "";
 
         public string ItemName { get; set; } = "";
         public string Type { get; set; } = "";

@@ -1,8 +1,8 @@
 ﻿using System.Net.Mail;
-using InventoryDevTwo.Models;
-using InventoryDevTwo.Data;
+using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Data;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     public class EmailService
     {

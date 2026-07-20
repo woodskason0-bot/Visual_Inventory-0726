@@ -1,7 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
-namespace InventoryDevTwo.Models.ViewModels
+namespace Visual_Inventory_System.Models.ViewModels
 {
     // Backs the self-scoped "My Orders" page. Section 1 = this user's order
     // history; Section 2 = their items still out on loan.
@@ -22,6 +22,8 @@ namespace InventoryDevTwo.Models.ViewModels
         public DateTime OrderedAt { get; set; }
         public string ItemId { get; set; } = string.Empty;
         public string ItemName { get; set; } = string.Empty;
+        // Rheem PN for label-verification at return time. "" = not captured.
+        public string RheemPartNumber { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public string ItemType { get; set; } = string.Empty;
         public int Outstanding { get; set; }

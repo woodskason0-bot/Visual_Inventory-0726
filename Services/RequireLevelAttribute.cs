@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// Put [RequireLevel(AccessLevels.Engineer)] on an action to block anyone

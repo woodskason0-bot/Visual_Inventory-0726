@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Visual_Inventory_System.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260703025200_AddVisTasks")]
-    partial class AddVisTasks
+    [Migration("20260719000000_AddRheemPartNumber")]
+    partial class AddRheemPartNumber
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -94,6 +94,10 @@ namespace Visual_Inventory_System.Migrations
                     b.Property<DateTime?>("RegisteredAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RheemPartNumber")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Team")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -107,6 +111,10 @@ namespace Visual_Inventory_System.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("RheemPartNumber")
+                        .IsUnique()
+                        .HasFilter("\"RheemPartNumber\" <> ''");
 
                     b.ToTable("InventoryItems");
                 });

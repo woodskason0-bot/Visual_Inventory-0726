@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using InventoryDevTwo.Data;
-using InventoryDevTwo.Services;
+using Visual_Inventory_System.Data;
+using Visual_Inventory_System.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,7 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllersWithViews(options =>
 {
     // Require a name (see Identify page) before any action runs.
-    options.Filters.Add<InventoryDevTwo.Services.RequireNameFilter>();
+    options.Filters.Add<Visual_Inventory_System.Services.RequireNameFilter>();
 });
 
 // Configure DbContext (SQLite)
@@ -54,7 +54,7 @@ using (var scope = app.Services.CreateScope())
         if (!db.EmailRoutings.Any())
         {
             db.EmailRoutings.AddRange(
-                new InventoryDevTwo.Models.EmailRouting
+                new Visual_Inventory_System.Models.EmailRouting
                 {
                     Group = "Commercial",
                     Team = "Samurai",
@@ -63,7 +63,7 @@ using (var scope = app.Services.CreateScope())
                     SupervisorName = "Conner Walworth",
                     SupervisorEmail = "conner.walworth@rheem.com"
                 },
-                new InventoryDevTwo.Models.EmailRouting
+                new Visual_Inventory_System.Models.EmailRouting
                 {
                     Group = "Commercial",
                     Team = "Ninja",
@@ -98,7 +98,7 @@ using (var scope = app.Services.CreateScope())
             {
                 var parts = full.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) continue;
-                db.Users.Add(new InventoryDevTwo.Models.User
+                db.Users.Add(new Visual_Inventory_System.Models.User
                 {
                     DisplayName = string.Join(" ", parts),
                     UserName = parts[0] + "." + parts[parts.Length - 1], // First.Last

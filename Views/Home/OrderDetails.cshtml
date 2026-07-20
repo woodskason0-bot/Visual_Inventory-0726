@@ -1,16 +1,16 @@
-@model InventoryDevTwo.Models.Order
+﻿@model Visual_Inventory_System.Models.Order
 
 @{
     ViewData["Title"] = "Order Details";
-    var inventoryLookup = ViewBag.InventoryLookup as System.Collections.Generic.Dictionary<string, InventoryDevTwo.Models.InventoryItem>;
+    var inventoryLookup = ViewBag.InventoryLookup as System.Collections.Generic.Dictionary<string, Visual_Inventory_System.Models.InventoryItem>;
 
     // Build a compact friendly breadcrumb of all five location levels. Parent/
     // Major/Sub are stored as codes; LocationCodec.Decode turns them back into
     // names (unknown codes pass through unchanged). "0"/blank levels are dropped.
     // Rack/Row are free-form numbers the team assigns, shown as-is.
     bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
-    string Friendly(string? code) => InventoryDevTwo.Services.LocationCodec.Decode(code);
-    string FmtLocation(InventoryDevTwo.Models.InventoryItem? inv)
+    string Friendly(string? code) => Visual_Inventory_System.Services.LocationCodec.Decode(code);
+    string FmtLocation(Visual_Inventory_System.Models.InventoryItem? inv)
     {
         if (inv == null) return "-";
         var crumbs = new System.Collections.Generic.List<string>();
@@ -54,7 +54,7 @@
         var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
         <tr>
             <td>@it.ItemId</td>
-            <td>@(inv?.ItemName ?? "Unknown item")</td>
+            <td>@(inv?.ItemName ?? "Unknown item")@(string.IsNullOrWhiteSpace(inv?.RheemPartNumber) ? "" : $" — PN: {inv!.RheemPartNumber}")</td>
             <td>@(string.IsNullOrWhiteSpace(inv?.Description) ? "-" : inv.Description)</td>
             <td>
                 @(

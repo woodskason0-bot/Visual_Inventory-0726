@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using InventoryDevTwo.Models;
+using Visual_Inventory_System.Models;
 
-namespace InventoryDevTwo.Models.ViewModels
+namespace Visual_Inventory_System.Models.ViewModels
 {
     // Backs the two-section "Tasks Available" page:
     //   Orders     -> "Go Get These" (the pending-order pickup queue)

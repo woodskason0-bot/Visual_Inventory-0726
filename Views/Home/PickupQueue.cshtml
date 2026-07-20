@@ -1,14 +1,14 @@
-@model InventoryDevTwo.Models.ViewModels.TasksAvailableViewModel
-@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
+﻿@model Visual_Inventory_System.Models.ViewModels.TasksAvailableViewModel
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @{
     ViewData["Title"] = "Tasks Available";
-    var orders = Model?.Orders ?? new List<InventoryDevTwo.Models.ViewModels.PendingOrderViewModel>();
+    var orders = Model?.Orders ?? new List<Visual_Inventory_System.Models.ViewModels.PendingOrderViewModel>();
     var ready = orders.Where(o => o.CanFulfill).ToList();
     var blocked = orders.Where(o => !o.CanFulfill).ToList();
-    var storeTasks = Model?.StoreTasks ?? new List<InventoryDevTwo.Models.VisTask>();
+    var storeTasks = Model?.StoreTasks ?? new List<Visual_Inventory_System.Models.VisTask>();
 
-    bool canCreate = CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Engineer;
-    bool canClaim = CurrentUser.Level >= InventoryDevTwo.Services.AccessLevels.Standard;
+    bool canCreate = CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Engineer;
+    bool canClaim = CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Standard;
     string me = CurrentUser.Name;
 
     string Requester(string? r) => string.IsNullOrEmpty(r) ? "\u2014" : r.Replace('.', ' ');
@@ -124,7 +124,7 @@
                                     @foreach (var it in order.Items)
                                     {
                                         <li>
-                                            @it.ItemId &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)
+                                            @it.ItemId@(string.IsNullOrWhiteSpace(it.RheemPartNumber) ? "" : $" [{it.RheemPartNumber}]") &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)
                                             @if (it.RequestedVariantId.HasValue)
                                             {
                                                 <span class="d-block text-info" style="font-size:11px;">
@@ -206,7 +206,7 @@
                             <ul class="item-list">
                                 @foreach (var it in order.Items)
                                 {
-                                    <li>@it.ItemId &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)</li>
+                                    <li>@it.ItemId@(string.IsNullOrWhiteSpace(it.RheemPartNumber) ? "" : $" [{it.RheemPartNumber}]") &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)</li>
                                 }
                             </ul>
                         </td>

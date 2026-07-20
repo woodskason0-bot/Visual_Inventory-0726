@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace InventoryDevTwo.Models.ViewModels
+namespace Visual_Inventory_System.Models.ViewModels
 {
     public class PendingOrderViewModel
     {

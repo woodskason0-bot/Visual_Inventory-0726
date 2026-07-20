@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// Holds the current user's name for the session. This is a lightweight

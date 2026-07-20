@@ -1,7 +1,7 @@
 using System.Linq;
 using System.Collections.Generic;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// Converts a human-readable location name (e.g. "External Yard") into its

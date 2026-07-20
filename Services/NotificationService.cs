@@ -1,10 +1,10 @@
-using InventoryDevTwo.Data;
-using InventoryDevTwo.Models;
+using Visual_Inventory_System.Data;
+using Visual_Inventory_System.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// Creates and serves in-app notifications. One row per recipient (fan-out on

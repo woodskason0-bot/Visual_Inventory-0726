@@ -1,7 +1,7 @@
-@using InventoryDevTwo.Services
-@inject InventoryDevTwo.Services.CurrentUserService CurrentUser
+﻿@using Visual_Inventory_System.Services
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @functions {
-    string GetHoloTitle(InventoryDevTwo.Models.SearchResult result)
+    string GetHoloTitle(Visual_Inventory_System.Models.SearchResult result)
     {
         if (result.Mode == "Omni") return $"Omni Search: \"{ViewBag.OmniSearch}\"";
         if (result.Mode == "Filter") return "Filter Search";
@@ -10,13 +10,13 @@
 
     // Friendly one-line location for a variant: decode coded P/M/S, drop 0/blank
     // levels, append Rack/Row when real. Falls back to the raw FDA string.
-    string FriendlyVarLoc(InventoryDevTwo.Models.ItemVariant v)
+    string FriendlyVarLoc(Visual_Inventory_System.Models.ItemVariant v)
     {
         bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
         var crumbs = new System.Collections.Generic.List<string>();
-        if (Real(v.Parent)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Parent));
-        if (Real(v.Major)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Major));
-        if (Real(v.Sub)) crumbs.Add(InventoryDevTwo.Services.LocationCodec.Decode(v.Sub));
+        if (Real(v.Parent)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Parent));
+        if (Real(v.Major)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Major));
+        if (Real(v.Sub)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Sub));
         string path = string.Join(" › ", crumbs);
         string rr = "";
         if (Real(v.Rack) || Real(v.Row))
@@ -46,16 +46,16 @@
 
 @{
     ViewData["Title"] = "Command Center";
-    var result = ViewBag.SearchResult as InventoryDevTwo.Models.SearchResult;
+    var result = ViewBag.SearchResult as Visual_Inventory_System.Models.SearchResult;
     bool showHolo = result != null && result.Mode != "None";
     var headerDraftIds = ViewBag.DraftItemIds as System.Collections.Generic.HashSet<string>;
     var hasDraft = headerDraftIds != null && headerDraftIds.Any();
 
-    var invSvc = ViewBag.InventoryService as InventoryDevTwo.Services.InventoryService;
-    var allItems = invSvc?.GetAll() ?? new List<InventoryDevTwo.Models.InventoryItem>();
+    var invSvc = ViewBag.InventoryService as Visual_Inventory_System.Services.InventoryService;
+    var allItems = invSvc?.GetAll() ?? new List<Visual_Inventory_System.Models.InventoryItem>();
 
     var lowStockItems = allItems.Where(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold).OrderBy(i => i.Quantity).ToList();
-    var recentActivity = ViewBag.RecentActivity as List<InventoryDevTwo.Models.TransactionLog> ?? new List<InventoryDevTwo.Models.TransactionLog>();
+    var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
 
     // A location segment only "counts" if it's present and not the 0 placeholder.
     // Used for the map drill-down so 0-filled levels (e.g. PATS.0.0.0.0) never show.
@@ -112,7 +112,7 @@
                 .Select(i => i.Sub).Distinct().OrderBy(s => s).ToList()));
     var locHierarchyJson = System.Text.Json.JsonSerializer.Serialize(locHierarchy);
     // Code -> friendly map so the client map drill can show names, not codes.
-    var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(InventoryDevTwo.Services.LocationCodec.DecodeMap);
+    var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(Visual_Inventory_System.Services.LocationCodec.DecodeMap);
 }
 
 <style>
@@ -585,7 +585,9 @@
         <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
         <form asp-action="Index" method="get" class="d-flex flex-column h-100">
             <div class="filter-grid mb-2">
-                <input name="filterName" placeholder="Name" class="form-control" value="@ViewBag.FilterName" />
+                @* Rheem Part # replaced the old Name filter (leadership: PN is a
+                   primary identifier). Names are still findable via omni-search. *@
+                <input name="filterRheem" placeholder="Rheem Part #" class="form-control" value="@ViewBag.FilterRheem" />
                 <input name="filterType" placeholder="Type" class="form-control" value="@ViewBag.FilterType" />
                 <input name="filterBrand" placeholder="Brand" class="form-control" value="@ViewBag.FilterBrand" />
                 <input name="filterNotes" placeholder="FDA Term" class="form-control" value="@ViewBag.FilterNotes" />
@@ -601,7 +603,7 @@
     <div class="grid-item r1 c3 grid-card">
         <label class="text-bright-white fw-bold mb-2">Omni Search</label>
         <form asp-action="Index" method="get" class="d-flex flex-column h-100">
-            <input name="omniSearch" placeholder="Search ID / Brand / Location..." class="form-control mb-2" value="@ViewBag.OmniSearch" />
+            <input name="omniSearch" placeholder="Search ID / Rheem PN / Brand / Location..." class="form-control mb-2" value="@ViewBag.OmniSearch" />
             <button type="submit" class="btn btn-outline-primary w-100 mb-1 fw-bold">GO TO →</button>
             <div class="mt-auto small text-light-gray">Items: @allItems.Count()</div>
         </form>
@@ -629,7 +631,7 @@
         <div class="d-flex flex-column h-100">
             <div class="mb-2">
                 <label class="text-bright-white fw-bold d-block">Modify Stock</label>
-                <small class="d-block text-light-gray" style="line-height: 1.3;">Add, Scrap, Adjust, Transfer</small>
+                <small class="d-block text-light-gray" style="line-height: 1.3;">Add, Scrap, Adjust, Transfer, Edit Details</small>
             </div>
             <div class="mt-auto">
                 @if (CurrentUser.Level >= AccessLevels.Standard)
@@ -876,12 +878,12 @@
         <div class="holo-viewer" data-mode="@result.Mode">
             <div class="holo-header">
                 <h3>@GetHoloTitle(result)</h3>
-                <a href="/Home/Index?mode=None&omniSearch=@ViewBag.OmniSearch&filterName=@ViewBag.FilterName" class="btn-close"></a>
+                <a href="/Home/Index?mode=None&omniSearch=@ViewBag.OmniSearch&filterRheem=@ViewBag.FilterRheem" class="btn-close"></a>
             </div>
             <div class="holo-body">
                 @if (result.Mode == "Ledger")
                 {
-                    var ledger = ViewBag.Ledger as InventoryDevTwo.Models.LedgerViewModel;
+                    var ledger = ViewBag.Ledger as Visual_Inventory_System.Models.LedgerViewModel;
                     if (ledger != null && ledger.Entries.Any())
                     {
                         foreach (var entry in ledger.Entries)
@@ -891,11 +893,11 @@
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <strong class="text-white fs-5">@(item?.ItemName ?? "Unknown Item")</strong> <span class="text-light-gray ms-2">(ID: @entry.ItemId)</span><br />
-                                        <small class="text-light-gray">@(item?.Type ?? "-") | @(item?.Brand ?? "-")</small>
+                                        <small class="text-light-gray">@(item?.Type ?? "-") | @(item?.Brand ?? "-")@(string.IsNullOrWhiteSpace(item?.RheemPartNumber) ? "" : $" | PN: {item!.RheemPartNumber}")</small>
                                     </div>
                                     <div class="text-end">
                                         <span class="holo-qty fs-4">Qty: @entry.Quantity</span>
-                                        @if (InventoryDevTwo.Services.InventoryService.IsMotorType(item?.Type) && entry.ThermocoupledCount > 0)
+                                        @if (Visual_Inventory_System.Services.InventoryService.IsMotorType(item?.Type) && entry.ThermocoupledCount > 0)
                                         {
                                             <span class="fw-bold ms-2" style="color:#F59E0B;">TC Ct: @entry.ThermocoupledCount</span>
                                         }
@@ -925,8 +927,21 @@
                         <div class="holo-row" data-item-id="@item.ItemId" tabindex="0">
                             <div class="d-flex justify-content-between align-items-center">
                                 <div>
+                                    @* Rheem PN is the PRIMARY visual identifier: sits on top,
+                                       a touch heavier than the item name below it. The item
+                                       name line keeps its exact old format, just pushed down. *@
+                                    @if (!string.IsNullOrWhiteSpace(item.RheemPartNumber))
+                                    {
+                                        <strong class="text-white fs-4 d-block" style="letter-spacing: 0.5px;">@item.RheemPartNumber</strong>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning text-dark fw-bold d-inline-block mb-1" title="Leadership requires a Rheem part number on every item — add it via Handle Stock → Edit Details.">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>No Rheem PN
+                                        </span>
+                                    }
                                     <strong class="text-white fs-5">@item.ItemName</strong> <span class="text-light-gray ms-2">(ID: @item.ItemId)</span><br />
-                                    @{ bool itemIsMotor = InventoryDevTwo.Services.InventoryService.IsMotorType(item.Type); }
+                                    @{ bool itemIsMotor = Visual_Inventory_System.Services.InventoryService.IsMotorType(item.Type); }
                                     <small class="text-light-gray">@item.Type | Stock: @item.Quantity@(itemIsMotor ? $" | TC Qty: {item.TotalThermocoupled}" : "")</small>
                                     <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableQuantity(item.ItemId) : item.Quantity)</span>
                                     @if (actVars.Count > 1)
@@ -1065,7 +1080,7 @@
                 <div class="modal-body text-white">
                     <div class="mb-3 position-relative">
                         <label class="form-label small fw-bold text-light-gray">Search Item</label>
-                        <input type="text" id="stock-search" class="form-control" placeholder="Type ID or Name..." autocomplete="off" />
+                        <input type="text" id="stock-search" class="form-control" placeholder="Type ID, Rheem PN, or Name..." autocomplete="off" />
                         <div id="stock-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
                     </div>
 
@@ -1084,6 +1099,7 @@
                                 {
                                     <option value="Scrap">Scrap (-)</option>
                                     <option value="Ownership">Internal - Transfer</option>
+                                    <option value="Edit Details">Edit Details (PN / Desc / Brand)</option>
                                 }
                             </select>
                         </div>
@@ -1133,6 +1149,28 @@
                                 <option value="Samurai">Samurai (7166)</option>
                                 <option value="Ninja">Ninja (7165)</option>
                             </select>
+                        </div>
+                    </div>
+
+                    <!-- EDIT DETAILS (Engineer+): family-level identity fields. Inputs are
+                         DISABLED unless this pane is active so they never post alongside a
+                         stock action. Rheem PN is unique across items (server rejects a
+                         taken PN); Brand is fill-if-blank only -- an existing brand locks
+                         the field. Prefilled from itemsList when the pane opens. -->
+                    <div id="stock-edit-div" class="mb-3" style="display:none;">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold text-light-gray">Rheem Part Number</label>
+                            <input type="text" name="newRheemPart" id="edit-rpn" class="form-control fw-bold" disabled placeholder="From the physical Rheem label" />
+                            <small class="text-warning mt-1" style="font-size:10px; display:none;" id="edit-rpn-warn"></small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold text-light-gray">Description</label>
+                            <input type="text" name="newDescription" id="edit-desc" class="form-control" disabled />
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label small fw-bold text-light-gray">Brand</label>
+                            <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
                         </div>
                     </div>
 
@@ -1391,11 +1429,19 @@
                     </div>
 
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold" style="color: var(--vis-yellow, #F59E0B);">Rheem Part # <span class="text-danger">*</span></label>
+                            @* REQUIRED (leadership): every new item carries the PN off the
+                               physical Rheem label. Server rejects blanks and duplicates;
+                               reg-rpn-warn gives the live "already exists" heads-up. *@
+                            <input type="text" name="RheemPartNumber" id="reg-rpn" class="form-control fw-bold" required placeholder="From the label" />
+                            <small class="text-warning" style="font-size:10px; display:none;" id="reg-rpn-warn"></small>
+                        </div>
+                        <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Type</label>
                             <input type="text" name="Type" id="reg-type" class="form-control" placeholder="e.g. Motor, Unit..." />
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Brand</label>
                             <input type="text" name="Brand" class="form-control" />
                         </div>
@@ -1762,7 +1808,8 @@
 
         const item = getStockItem();
         const vars = (item && item.variants) ? item.variants : [];
-        const show = item && (vars.length > 1 || action === 'Add') && action !== 'Ownership';
+        const show = item && (vars.length > 1 || action === 'Add')
+            && action !== 'Ownership' && action !== 'Edit Details';
 
         sel.innerHTML = '';
         if (!show) { div.style.display = 'none'; return; }
@@ -1847,7 +1894,27 @@
         const variantSel = document.getElementById('stock-variant-sel');
         const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
 
-        if (action === 'Ownership') {
+        // Edit Details pane: identity fields only. Inputs stay DISABLED (= never
+        // post) unless this action is active; prefilled fresh from the selected
+        // item each time so the human edits what's actually there.
+        const editDiv = document.getElementById('stock-edit-div');
+        const editOn = (action === 'Edit Details');
+        if (editDiv) {
+            editDiv.style.display = editOn ? 'block' : 'none';
+            ['edit-rpn', 'edit-desc', 'edit-brand'].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.disabled = !editOn;
+            });
+            if (editOn) prefillEditDetails();
+        }
+
+        if (action === 'Edit Details') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'none';
+            if (locDiv) locDiv.style.display = 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = false;
+        } else if (action === 'Ownership') {
             qtyDiv.style.display = 'none';
             ownDiv.style.display = 'flex';
             if (locDiv) locDiv.style.display = 'none';
@@ -1884,6 +1951,52 @@
 
         refreshTcFields(action);
     }
+
+    // ---- Edit Details (identity fields) -----------------------------------
+    // Seed the pane from the selected item. Brand LOCKS when the item already
+    // has a real one (fill-if-blank rule); PN gets a live "taken" warning
+    // against the loaded items list (server re-checks authoritatively).
+    function prefillEditDetails() {
+        const item = getStockItem();
+        const rpn = document.getElementById('edit-rpn');
+        const desc = document.getElementById('edit-desc');
+        const brand = document.getElementById('edit-brand');
+        const brandHelp = document.getElementById('edit-brand-help');
+        const warn = document.getElementById('edit-rpn-warn');
+        if (!rpn || !desc || !brand) return;
+
+        rpn.value = item ? (item.rpn || '') : '';
+        desc.value = item ? (item.desc || '') : '';
+        if (warn) warn.style.display = 'none';
+
+        const hasBrand = item && item.brand && item.brand.trim() !== ''
+            && item.brand.trim().toLowerCase() !== 'unknown';
+        brand.value = item ? (item.brand || '') : '';
+        brand.disabled = !item || hasBrand;   // locked if a real brand exists
+        if (brandHelp) brandHelp.textContent = hasBrand
+            ? 'This item already has a brand — it can\'t be changed here.'
+            : 'Brand can only be ADDED when the item has none.';
+    }
+
+    // Live duplicate check as the PN is typed: warn if another item owns it.
+    (function bindRpnDupCheck() {
+        const rpn = document.getElementById('edit-rpn');
+        const warn = document.getElementById('edit-rpn-warn');
+        if (!rpn || !warn) return;
+        rpn.addEventListener('input', function () {
+            const val = String(rpn.value || '').trim().toLowerCase();
+            const me = (document.getElementById('stock-item-id') || {}).value || '';
+            const hit = val && itemsList.find(function (i) {
+                return i.id !== me && i.rpn && i.rpn.trim().toLowerCase() === val;
+            });
+            if (hit) {
+                warn.textContent = 'Taken: PN belongs to ' + hit.id + ' (' + hit.name + ').';
+                warn.style.display = 'block';
+            } else {
+                warn.style.display = 'none';
+            }
+        });
+    })();
 
     // ---- Thermocoupled (motors only) -------------------------------------
     // Keep in lockstep with InventoryService.IsMotorType: a type ending in
@@ -2467,6 +2580,7 @@
 
                 let matches = itemsList.filter(i =>
                     i.id.toLowerCase().includes(val) || i.name.toLowerCase().includes(val)
+                    || (i.rpn && i.rpn.toLowerCase().includes(val))
                 ).slice(0, 10);
 
                 if (matches.length > 0) {
@@ -2476,7 +2590,7 @@
                         btn.type = 'button';
                         btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
                         btn.style.backgroundColor = '#1C1E24';
-                        btn.innerHTML = `<strong class="text-primary">${m.id}</strong> - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
+                        btn.innerHTML = `<strong class="text-primary">${m.id}</strong>${m.rpn ? ' <span class="text-info">[' + m.rpn + ']</span>' : ''} - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
 
                         btn.onclick = function() {
                             searchInput.value = m.name;
@@ -2510,6 +2624,27 @@
 
     bindAutocomplete('alert-search', 'alert-autocomplete-list', 'alert-item-id', true);
     bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
+
+    // Registration dup-check: warn live if the typed Rheem PN already belongs
+    // to an existing item ("add stock to that item instead of a twin").
+    // Server still enforces authoritatively on submit.
+    (function () {
+        const rpn = document.getElementById('reg-rpn');
+        const warn = document.getElementById('reg-rpn-warn');
+        if (!rpn || !warn) return;
+        rpn.addEventListener('input', function () {
+            const val = String(rpn.value || '').trim().toLowerCase();
+            const hit = val && itemsList.find(function (i) {
+                return i.rpn && i.rpn.trim().toLowerCase() === val;
+            });
+            if (hit) {
+                warn.textContent = 'Already exists as ' + hit.id + ' (' + hit.name + ') — add stock there instead.';
+                warn.style.display = 'block';
+            } else {
+                warn.style.display = 'none';
+            }
+        });
+    })();
 
     (function() {
         const historyChks = document.querySelectorAll('.exp-history-chk');

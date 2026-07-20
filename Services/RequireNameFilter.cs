@@ -2,7 +2,7 @@ using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// Mark an action with [AllowWithoutName] to let it run before a name has

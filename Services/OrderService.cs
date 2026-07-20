@@ -1,10 +1,10 @@
-using InventoryDevTwo.Models;
-using InventoryDevTwo.Data;
+using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json; // Used for JSON shrinking/expanding
 using System.Linq;
 
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     public class OrderService
     {

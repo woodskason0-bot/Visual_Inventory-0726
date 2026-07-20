@@ -1,6 +1,6 @@
 using System;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     // A lightweight "sticky note" task on the Tasks Available board -- the
     // "Go Store These" column. Supervisors often don't have item details when

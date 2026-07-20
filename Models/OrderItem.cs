@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace InventoryDevTwo.Models
+namespace Visual_Inventory_System.Models
 {
     public class OrderItem
     {

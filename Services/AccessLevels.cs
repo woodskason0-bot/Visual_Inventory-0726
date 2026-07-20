@@ -1,4 +1,4 @@
-namespace InventoryDevTwo.Services
+namespace Visual_Inventory_System.Services
 {
     /// <summary>
     /// The five access tiers, as integers so checks read as "level >= required".
