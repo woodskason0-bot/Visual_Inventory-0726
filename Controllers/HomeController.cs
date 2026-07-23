@@ -1,4 +1,4 @@
-﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Models;
 using Visual_Inventory_System.Services;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
@@ -811,6 +811,15 @@ namespace Visual_Inventory_System.Controllers
         {
             _currentUser.Clear();
             return RedirectToAction("Identify");
+        }
+
+        // Full roster page for the "Total Items" dashboard stat. Deep-linking into
+        // a specific item's Handle Stock panel reuses the existing Omni search
+        // route (/Home/Index?omniSearch=ID) rather than duplicating that JS here.
+        public IActionResult AllItems()
+        {
+            var items = _inventoryService.GetAll().OrderBy(i => i.ItemId).ToList();
+            return View(items);
         }
 
         public IActionResult Privacy() => View();

@@ -30,10 +30,11 @@ namespace Visual_Inventory_System.Data
             modelBuilder.Entity<InventoryItem>(b =>
             {
                 // Rheem PN is a business identifier like ItemId: no two items
-                // may share one. Partial index so legacy blanks ("") coexist.
+                // may share one. Partial index so blanks and the shared "N/A"
+                // sentinel (legacy blanks were folded into "N/A") both coexist.
                 b.HasIndex(i => i.RheemPartNumber)
                  .IsUnique()
-                 .HasFilter("\"RheemPartNumber\" <> ''");
+                 .HasFilter("\"RheemPartNumber\" <> '' AND \"RheemPartNumber\" <> 'N/A'");
             });
 
             modelBuilder.Entity<ItemVariant>(b =>

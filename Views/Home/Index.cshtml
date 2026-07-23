@@ -1,4 +1,4 @@
-﻿@using Visual_Inventory_System.Services
+@using Visual_Inventory_System.Services
 @inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @functions {
     string GetHoloTitle(Visual_Inventory_System.Models.SearchResult result)
@@ -55,6 +55,12 @@
     var allItems = invSvc?.GetAll() ?? new List<Visual_Inventory_System.Models.InventoryItem>();
 
     var lowStockItems = allItems.Where(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold).OrderBy(i => i.Quantity).ToList();
+    var outOfStockItems = allItems.Where(i => i.Quantity == 0).OrderBy(i => i.ItemName).ToList();
+
+    // "N/A" and blank are the same state (legacy blanks were folded into "N/A" by
+    // migration) -- one check used everywhere an item's PN status matters.
+    Func<string, bool> needsRheemPn = pn => string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
+    var pnBacklogItems = allItems.Where(i => needsRheemPn(i.RheemPartNumber)).OrderBy(i => i.ItemName).ToList();
     var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
 
     // A location segment only "counts" if it's present and not the 0 placeholder.
@@ -741,7 +747,7 @@
 
         <!-- Corrected Stats Dashboard -->
         <div class="map-stats-bar">
-            <div class="stat-block">
+            <div class="stat-block" style="cursor:pointer;" onclick="window.location='/Home/AllItems'" title="View all items in inventory">
                 <i class="bi bi-box-seam stat-icon text-bright-white"></i>
                 <div class="stat-text">
                     <span class="stat-value text-bright-white">@allItems.Count()</span>
@@ -756,18 +762,25 @@
                     <span class="stat-label">Active Locations</span>
                 </div>
             </div>
-            <div class="stat-block">
+            <div class="stat-block" style="cursor:pointer;" onclick="new bootstrap.Modal(document.getElementById('lowStockPreviewModal')).show()" title="View low stock items">
                 <i class="bi bi-exclamation-triangle-fill stat-icon text-warning"></i>
                 <div class="stat-text">
                     <span class="stat-value text-warning">@lowStockItems.Count</span>
                     <span class="stat-label">Low Stock</span>
                 </div>
             </div>
-            <div class="stat-block">
+            <div class="stat-block" style="cursor:pointer;" onclick="new bootstrap.Modal(document.getElementById('outOfStockPreviewModal')).show()" title="View out of stock items">
                 <i class="bi bi-x-octagon-fill stat-icon text-danger"></i>
                 <div class="stat-text">
                     <span class="stat-value text-danger">@allItems.Count(i => i.Quantity == 0)</span>
                     <span class="stat-label">Out of Stock</span>
+                </div>
+            </div>
+            <div class="stat-block" style="cursor:pointer;" onclick="new bootstrap.Modal(document.getElementById('pnBacklogModal')).show()" title="View items needing a Rheem part number">
+                <i class="bi bi-question-diamond-fill stat-icon" style="color:#94A3B8;"></i>
+                <div class="stat-text">
+                    <span class="stat-value" style="color:#94A3B8;">@pnBacklogItems.Count</span>
+                    <span class="stat-label">Needs PN</span>
                 </div>
             </div>
         </div>
@@ -930,7 +943,7 @@
                                     @* Rheem PN is the PRIMARY visual identifier: sits on top,
                                        a touch heavier than the item name below it. The item
                                        name line keeps its exact old format, just pushed down. *@
-                                    @if (!string.IsNullOrWhiteSpace(item.RheemPartNumber))
+                                    @if (!needsRheemPn(item.RheemPartNumber))
                                     {
                                         <strong class="text-white fs-4 d-block" style="letter-spacing: 0.5px;">@item.RheemPartNumber</strong>
                                     }
@@ -1017,6 +1030,118 @@
 }
 
 <!-- 5. ALL MODALS -->
+<!-- LOW STOCK PREVIEW (dashboard stat click) -->
+<div class="modal fade" id="lowStockPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>Low Stock (@lowStockItems.Count)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 60vh; overflow-y: auto;">
+                @if (!lowStockItems.Any())
+                {
+                    <p class="text-light-gray mb-0">Nothing is currently at or below its alert threshold.</p>
+                }
+                else
+                {
+                    <table class="table table-hover align-middle table-sm">
+                        <thead><tr><th>ID</th><th>Item</th><th>Team</th><th>Qty</th><th>Threshold</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var it in lowStockItems)
+                            {
+                                <tr>
+                                    <td>@it.ItemId</td>
+                                    <td>@it.ItemName</td>
+                                    <td class="text-light-gray">@it.Team</td>
+                                    <td class="text-warning fw-bold">@it.Quantity</td>
+                                    <td class="text-light-gray">@it.AlertThreshold</td>
+                                    <td><button type="button" class="btn btn-sm btn-outline-info" onclick="jumpToHandleStock('@it.ItemId','lowStockPreviewModal')">Handle Stock</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- OUT OF STOCK PREVIEW (dashboard stat click) -->
+<div class="modal fade" id="outOfStockPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-x-octagon-fill me-2 text-danger"></i>Out of Stock (@outOfStockItems.Count)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 60vh; overflow-y: auto;">
+                @if (!outOfStockItems.Any())
+                {
+                    <p class="text-light-gray mb-0">Nothing is currently at zero quantity.</p>
+                }
+                else
+                {
+                    <table class="table table-hover align-middle table-sm">
+                        <thead><tr><th>ID</th><th>Item</th><th>Team</th><th>Location</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var it in outOfStockItems)
+                            {
+                                <tr>
+                                    <td>@it.ItemId</td>
+                                    <td>@it.ItemName</td>
+                                    <td class="text-light-gray">@it.Team</td>
+                                    <td class="text-light-gray">@it.FdaString</td>
+                                    <td><button type="button" class="btn btn-sm btn-outline-info" onclick="jumpToHandleStock('@it.ItemId','outOfStockPreviewModal')">Handle Stock</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- NEEDS RHEEM PN BACKLOG (dashboard stat click) -->
+<div class="modal fade" id="pnBacklogModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-question-diamond-fill me-2" style="color:#94A3B8;"></i>Needs a Rheem Part Number (@pnBacklogItems.Count)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 60vh; overflow-y: auto;">
+                <p class="text-light-gray small mb-3">
+                    Blank and "N/A" both land here. Click Handle Stock, then Edit Details, to fill in the real part number off the physical label.
+                </p>
+                @if (!pnBacklogItems.Any())
+                {
+                    <p class="text-light-gray mb-0">Everything's got a real part number. Nice.</p>
+                }
+                else
+                {
+                    <table class="table table-hover align-middle table-sm">
+                        <thead><tr><th>ID</th><th>Item</th><th>Team</th><th>Current PN</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var it in pnBacklogItems)
+                            {
+                                <tr>
+                                    <td>@it.ItemId</td>
+                                    <td>@it.ItemName</td>
+                                    <td class="text-light-gray">@it.Team</td>
+                                    <td class="text-light-gray">@(string.IsNullOrWhiteSpace(it.RheemPartNumber) ? "(blank)" : it.RheemPartNumber)</td>
+                                    <td><button type="button" class="btn btn-sm btn-outline-info" onclick="jumpToHandleStock('@it.ItemId','pnBacklogModal')">Handle Stock</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="confirmSubmitModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1160,6 +1285,12 @@
                     <div id="stock-edit-div" class="mb-3" style="display:none;">
                         <div class="mb-2">
                             <label class="form-label small fw-bold text-light-gray">Rheem Part Number</label>
+                            <div class="btn-group btn-group-sm mb-2 d-flex" role="group" aria-label="Rheem PN mode">
+                                <input type="radio" class="btn-check" name="editRpnMode" id="edit-rpn-mode-real" autocomplete="off" disabled>
+                                <label class="btn btn-outline-light" for="edit-rpn-mode-real">Has a Part #</label>
+                                <input type="radio" class="btn-check" name="editRpnMode" id="edit-rpn-mode-na" autocomplete="off" disabled>
+                                <label class="btn btn-outline-secondary" for="edit-rpn-mode-na">N/A</label>
+                            </div>
                             <input type="text" name="newRheemPart" id="edit-rpn" class="form-control fw-bold" disabled placeholder="From the physical Rheem label" />
                             <small class="text-warning mt-1" style="font-size:10px; display:none;" id="edit-rpn-warn"></small>
                         </div>
@@ -1434,6 +1565,12 @@
                             @* REQUIRED (leadership): every new item carries the PN off the
                                physical Rheem label. Server rejects blanks and duplicates;
                                reg-rpn-warn gives the live "already exists" heads-up. *@
+                            <div class="btn-group btn-group-sm mb-2 d-flex" role="group" aria-label="Rheem PN mode">
+                                <input type="radio" class="btn-check" name="regRpnMode" id="reg-rpn-mode-real" autocomplete="off" checked>
+                                <label class="btn btn-outline-light" for="reg-rpn-mode-real">Has a Part #</label>
+                                <input type="radio" class="btn-check" name="regRpnMode" id="reg-rpn-mode-na" autocomplete="off">
+                                <label class="btn btn-outline-secondary" for="reg-rpn-mode-na">N/A</label>
+                            </div>
                             <input type="text" name="RheemPartNumber" id="reg-rpn" class="form-control fw-bold" required placeholder="From the label" />
                             <small class="text-warning" style="font-size:10px; display:none;" id="reg-rpn-warn"></small>
                         </div>
@@ -1659,6 +1796,23 @@
             alertsModal.hide();
         } else {
             confirmModal.show();
+        }
+    }
+
+    // Closes whichever preview modal (Low Stock / Out of Stock / Needs PN) is
+    // open, waits for the close transition, then opens Modify Stock for that
+    // item -- avoids two Bootstrap modals stacking backdrops.
+    function jumpToHandleStock(itemId, modalId) {
+        const cur = document.getElementById(modalId);
+        const inst = cur ? bootstrap.Modal.getInstance(cur) : null;
+        if (inst) {
+            cur.addEventListener('hidden.bs.modal', function h() {
+                cur.removeEventListener('hidden.bs.modal', h);
+                handleStock(itemId);
+            });
+            inst.hide();
+        } else {
+            handleStock(itemId);
         }
     }
 
@@ -1901,7 +2055,7 @@
         const editOn = (action === 'Edit Details');
         if (editDiv) {
             editDiv.style.display = editOn ? 'block' : 'none';
-            ['edit-rpn', 'edit-desc', 'edit-brand'].forEach(function (id) {
+            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !editOn;
             });
@@ -1963,9 +2117,17 @@
         const brand = document.getElementById('edit-brand');
         const brandHelp = document.getElementById('edit-brand-help');
         const warn = document.getElementById('edit-rpn-warn');
+        const rpnReal = document.getElementById('edit-rpn-mode-real');
+        const rpnNa = document.getElementById('edit-rpn-mode-na');
         if (!rpn || !desc || !brand) return;
 
-        rpn.value = item ? (item.rpn || '') : '';
+        // "N/A" and blank are the same state -- both land on the N/A toggle,
+        // readOnly (still posts "N/A"); anything else is a real PN, editable.
+        const rawRpn = item ? (item.rpn || '') : '';
+        const isNa = !rawRpn || rawRpn.trim().toUpperCase() === 'N/A';
+        rpn.value = isNa ? 'N/A' : rawRpn;
+        rpn.readOnly = isNa;
+        if (rpnReal && rpnNa) { rpnNa.checked = isNa; rpnReal.checked = !isNa; }
         desc.value = item ? (item.desc || '') : '';
         if (warn) warn.style.display = 'none';
 
@@ -1979,12 +2141,14 @@
     }
 
     // Live duplicate check as the PN is typed: warn if another item owns it.
+    // "N/A" is exempt -- it's the shared sentinel, never a real duplicate.
     (function bindRpnDupCheck() {
         const rpn = document.getElementById('edit-rpn');
         const warn = document.getElementById('edit-rpn-warn');
         if (!rpn || !warn) return;
         rpn.addEventListener('input', function () {
             const val = String(rpn.value || '').trim().toLowerCase();
+            if (val === 'n/a') { warn.style.display = 'none'; return; }
             const me = (document.getElementById('stock-item-id') || {}).value || '';
             const hit = val && itemsList.find(function (i) {
                 return i.id !== me && i.rpn && i.rpn.trim().toLowerCase() === val;
@@ -1996,6 +2160,31 @@
                 warn.style.display = 'none';
             }
         });
+    })();
+
+    // N/A <-> Has-a-Part# toggle for Edit Details. N/A makes the field
+    // readOnly (not disabled, so it still posts "N/A"); switching back to
+    // Has-a-Part# clears the sentinel and focuses the box for typing.
+    (function bindEditRpnMode() {
+        const real = document.getElementById('edit-rpn-mode-real');
+        const na = document.getElementById('edit-rpn-mode-na');
+        const rpn = document.getElementById('edit-rpn');
+        const warn = document.getElementById('edit-rpn-warn');
+        if (!real || !na || !rpn) return;
+
+        function apply() {
+            if (na.checked) {
+                rpn.value = 'N/A';
+                rpn.readOnly = true;
+                if (warn) warn.style.display = 'none';
+            } else {
+                if (rpn.value.trim().toUpperCase() === 'N/A') rpn.value = '';
+                rpn.readOnly = false;
+                rpn.focus();
+            }
+        }
+        real.addEventListener('change', apply);
+        na.addEventListener('change', apply);
     })();
 
     // ---- Thermocoupled (motors only) -------------------------------------
@@ -2634,6 +2823,7 @@
         if (!rpn || !warn) return;
         rpn.addEventListener('input', function () {
             const val = String(rpn.value || '').trim().toLowerCase();
+            if (val === 'n/a') { warn.style.display = 'none'; return; }
             const hit = val && itemsList.find(function (i) {
                 return i.rpn && i.rpn.trim().toLowerCase() === val;
             });
@@ -2644,6 +2834,32 @@
                 warn.style.display = 'none';
             }
         });
+    })();
+
+    // N/A <-> Has-a-Part# toggle for new registrations. Defaults to Has-a-Part#
+    // since a PN is normally expected; N/A is the deliberate opt-out.
+    (function bindRegRpnMode() {
+        const real = document.getElementById('reg-rpn-mode-real');
+        const na = document.getElementById('reg-rpn-mode-na');
+        const rpn = document.getElementById('reg-rpn');
+        const warn = document.getElementById('reg-rpn-warn');
+        if (!real || !na || !rpn) return;
+
+        function apply() {
+            if (na.checked) {
+                rpn.value = 'N/A';
+                rpn.readOnly = true;
+                rpn.required = false;
+                if (warn) warn.style.display = 'none';
+            } else {
+                if (rpn.value.trim().toUpperCase() === 'N/A') rpn.value = '';
+                rpn.readOnly = false;
+                rpn.required = true;
+                rpn.focus();
+            }
+        }
+        real.addEventListener('change', apply);
+        na.addEventListener('change', apply);
     })();
 
     (function() {

@@ -316,6 +316,7 @@ namespace Visual_Inventory_System.Services
         {
             if (string.IsNullOrWhiteSpace(rheemPartNumber)) return null;
             var pn = rheemPartNumber.Trim().ToLower();
+            if (pn == "n/a") return null; // shared "no PN yet" sentinel -- never a real owner
             return _db.InventoryItems.AsNoTracking()
                 .FirstOrDefault(i => i.RheemPartNumber.ToLower() == pn);
         }
@@ -347,10 +348,13 @@ namespace Visual_Inventory_System.Services
                     if (pn.Length > 0)
                     {
                         var pnLower = pn.ToLower();
-                        var owner = _db.InventoryItems.AsNoTracking()
-                            .FirstOrDefault(i => i.ItemId != itemId && i.RheemPartNumber.ToLower() == pnLower);
-                        if (owner != null)
-                            return (false, $"Rheem part number '{pn}' is already taken by {owner.ItemId} ({owner.ItemName}).");
+                        if (pnLower != "n/a") // shared sentinel -- never checked for a duplicate owner
+                        {
+                            var owner = _db.InventoryItems.AsNoTracking()
+                                .FirstOrDefault(i => i.ItemId != itemId && i.RheemPartNumber.ToLower() == pnLower);
+                            if (owner != null)
+                                return (false, $"Rheem part number '{pn}' is already taken by {owner.ItemId} ({owner.ItemName}).");
+                        }
                     }
                     changes.Add(string.IsNullOrEmpty(item.RheemPartNumber)
                         ? $"Rheem PN set to '{pn}'"
