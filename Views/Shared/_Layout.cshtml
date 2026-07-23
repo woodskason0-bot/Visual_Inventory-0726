@@ -1,7 +1,8 @@
-﻿@inject Visual_Inventory_System.Data.AppDbContext Db
+@inject Visual_Inventory_System.Data.AppDbContext Db
 @inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @inject Visual_Inventory_System.Services.OrderService OrderSvc
 @inject Visual_Inventory_System.Services.NotificationService Notifications
+@inject Visual_Inventory_System.Services.SuperuserGateService SuperuserGate
 @{
     bool orderMode = false;
     try { orderMode = OrderSvc.GetCurrentDraft().Entries.Any(); } catch { orderMode = false; }
@@ -220,6 +221,12 @@
                         <li class="nav-item ms-3">
                             <a class="nav-link @(currentAction == "MyOrders" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="MyOrders">My Orders</a>
                         </li>
+                        @if (signedIn && string.Equals(visUser, SuperuserGate.SuperuserName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            <li class="nav-item ms-3">
+                                <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Settings" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Settings" asp-action="Index"><i class="bi bi-gear-fill"></i> Settings</a>
+                            </li>
+                        }
                     </ul>
 
                     <div class="d-flex align-items-center border-start border-secondary ps-4">

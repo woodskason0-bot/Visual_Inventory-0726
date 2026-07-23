@@ -1,4 +1,4 @@
-﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Visual_Inventory_System.Data
@@ -19,6 +19,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<User> Users { get; set; } = null!;
         public DbSet<Notification> Notifications { get; set; } = null!;
         public DbSet<VisTask> VisTasks { get; set; } = null!;
+        public DbSet<AppSetting> AppSettings { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -64,6 +65,12 @@ namespace Visual_Inventory_System.Data
                  .WithMany(o => o.Items)
                  .HasForeignKey(oi => oi.OrderId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<AppSetting>(b =>
+            {
+                // One row per key -- UpdateSetting() upserts on this.
+                b.HasIndex(s => s.Key).IsUnique();
             });
         }
     }

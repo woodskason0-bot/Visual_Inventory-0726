@@ -1,0 +1,30 @@
+@{
+    ViewData["Title"] = "Settings - Unlock";
+}
+
+<div class="d-flex justify-content-center align-items-start" style="min-height: 70vh; padding-top: 8vh;">
+    <div class="grid-card p-4 p-md-5" style="width: 100%; max-width: 420px;">
+        <div class="text-center mb-4">
+            <i class="bi bi-shield-lock-fill" style="font-size: 2.4rem; color: var(--vis-red);"></i>
+            <h3 class="text-white fw-bold mt-2 mb-1">App Settings</h3>
+            <p class="text-light-gray small mb-0">
+                Enter the passcode to unlock this session. This is separate from
+                your access level and isn't stored in the database.
+            </p>
+        </div>
+
+        <form asp-controller="Settings" asp-action="Unlock" method="post">
+            @Html.AntiForgeryToken()
+
+            <label class="form-label small fw-bold text-light-gray">Passcode</label>
+            <input type="password" name="passcode"
+                   class="form-control form-control-lg text-white fw-bold mb-3"
+                   style="background-color: #14151A; border-color: #3D4351;"
+                   placeholder="Enter passcode" autocomplete="off" autofocus required />
+
+            <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">
+                <i class="bi bi-unlock-fill me-1"></i>Unlock
+            </button>
+        </form>
+    </div>
+</div>

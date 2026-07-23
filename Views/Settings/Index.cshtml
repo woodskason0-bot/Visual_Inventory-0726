@@ -1,0 +1,153 @@
+@using Visual_Inventory_System.Models
+@using Visual_Inventory_System.Services
+@{
+    ViewData["Title"] = "App Settings";
+    var users = ViewBag.Users as List<User> ?? new List<User>();
+    var settings = ViewBag.AppSettings as List<AppSetting> ?? new List<AppSetting>();
+}
+
+<style>
+    .settings-wrap { max-width: 1100px; margin: 1.5rem auto; }
+
+    .settings-card {
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    }
+
+    .settings-card table { color: var(--vis-text); margin-bottom: 0; }
+    .settings-card thead th {
+        background-color: #14151A;
+        color: #CBD5E1;
+        border-color: var(--vis-card-border) !important;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.4px;
+    }
+    .settings-card tbody td {
+        border-color: var(--vis-card-border) !important;
+        vertical-align: middle;
+    }
+    .settings-card select.form-select-sm, .settings-card input.form-control-sm {
+        background-color: #14151A;
+        color: #fff;
+        border-color: #3D4351;
+    }
+</style>
+
+<div class="settings-wrap px-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold mb-0 text-white">
+            <i class="bi bi-gear-fill me-2" style="color: var(--vis-red);"></i>App Settings
+        </h2>
+        <form asp-controller="Settings" asp-action="Lock" method="post">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-lock-fill me-1"></i>Lock
+            </button>
+        </form>
+    </div>
+
+    <!-- USERS & ACCESS -->
+    <div class="settings-card p-4 mb-4">
+        <h5 class="text-white fw-bold mb-3">Users &amp; Access</h5>
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Login</th>
+                    <th>Team</th>
+                    <th>Access Level</th>
+                    <th>Active</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var u in users)
+                {
+                    <tr>
+                        <td>@u.DisplayName</td>
+                        <td class="text-dim">@u.UserName</td>
+                        <td class="text-dim">@(string.IsNullOrEmpty(u.Team) ? "All" : u.Team)</td>
+                        <td>
+                            <form asp-controller="Settings" asp-action="UpdateAccessLevel" method="post" class="d-flex gap-2">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="userId" value="@u.Id" />
+                                <select name="newLevel" class="form-select form-select-sm" style="width: 140px;">
+                                    @foreach (var lvl in new[] { AccessLevels.Viewer, AccessLevels.Standard, AccessLevels.Engineer, AccessLevels.Management, AccessLevels.Admin })
+                                    {
+                                        if (lvl == u.AccessLevel)
+                                        {
+                                            <option value="@lvl" selected>@AccessLevels.Name(lvl)</option>
+                                        }
+                                        else
+                                        {
+                                            <option value="@lvl">@AccessLevels.Name(lvl)</option>
+                                        }
+                                    }
+                                </select>
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Save</button>
+                            </form>
+                        </td>
+                        <td>
+                            <form asp-controller="Settings" asp-action="ToggleActive" method="post">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="userId" value="@u.Id" />
+                                <button type="submit" class="btn btn-sm @(u.IsActive ? "btn-outline-light" : "btn-outline-secondary")">
+                                    @(u.IsActive ? "Active" : "Hidden")
+                                </button>
+                            </form>
+                        </td>
+                        <td></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <!-- APP SETTINGS (generic key/value) -->
+    <div class="settings-card p-4">
+        <h5 class="text-white fw-bold mb-1">Config Toggles</h5>
+        <p class="text-dim small mb-3">
+            Add or change a key/value setting. No migration needed -- services read these by key.
+        </p>
+        <table class="table table-hover align-middle mb-4">
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Value</th>
+                    <th>Last Updated</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var s in settings)
+                {
+                    <tr>
+                        <td class="fw-bold">@s.Key</td>
+                        <td colspan="3">
+                            <form asp-controller="Settings" asp-action="UpdateSetting" method="post" class="d-flex gap-2 align-items-center">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="key" value="@s.Key" />
+                                <input type="text" name="value" value="@s.Value" class="form-control form-control-sm" style="max-width: 260px;" />
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Save</button>
+                                <span class="text-dim small ms-2">
+                                    @(s.UpdatedAt.HasValue ? s.UpdatedAt.Value.ToLocalTime().ToString("g") : "-") by @s.UpdatedBy
+                                </span>
+                            </form>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <h6 class="text-white fw-bold mb-2">Add New Setting</h6>
+        <form asp-controller="Settings" asp-action="UpdateSetting" method="post" class="d-flex gap-2">
+            @Html.AntiForgeryToken()
+            <input type="text" name="key" class="form-control form-control-sm" placeholder="Key (e.g. EnforceRheemPartNumber)" style="max-width: 300px;" required />
+            <input type="text" name="value" class="form-control form-control-sm" placeholder="Value" style="max-width: 200px;" />
+            <button type="submit" class="btn btn-sm btn-primary">Add</button>
+        </form>
+    </div>
+</div>

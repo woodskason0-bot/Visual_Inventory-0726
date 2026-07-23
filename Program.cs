@@ -23,6 +23,7 @@ builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<CurrentUserService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<SuperuserGateService>();
 
 // Configure Session (The "Locker")
 builder.Services.AddDistributedMemoryCache();
