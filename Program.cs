@@ -95,21 +95,65 @@ using (var scope = app.Services.CreateScope())
                 ("James Masters",   AccessLevels.Management)
             };
 
+            var newlySeeded = new List<Visual_Inventory_System.Models.User>();
             foreach (var (full, level) in seedUsers)
             {
                 var parts = full.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length < 2) continue;
-                db.Users.Add(new Visual_Inventory_System.Models.User
+                var seededUser = new Visual_Inventory_System.Models.User
                 {
                     DisplayName = string.Join(" ", parts),
                     UserName = parts[0] + "." + parts[parts.Length - 1], // First.Last
                     Theme = "dark",
                     IsActive = true,
                     AccessLevel = level
+                };
+                db.Users.Add(seededUser);
+                newlySeeded.Add(seededUser);
+            }
+            db.SaveChanges(); // assigns Ids before the subscription pass below
+
+            // Standard tier used to mean "gets pickup alerts" for free (old
+            // AccessLevel-band behavior). Preserve that for anyone seeded at
+            // Standard now that alerts are an individual opt-in.
+            foreach (var u in newlySeeded.Where(u => u.AccessLevel == AccessLevels.Standard))
+            {
+                db.NotificationSubscriptions.Add(new Visual_Inventory_System.Models.NotificationSubscription
+                {
+                    UserId = u.Id,
+                    Category = "PickupRequested",
+                    Enabled = true
                 });
             }
             db.SaveChanges();
             Console.WriteLine(">>> Seeded starter user roster.");
+        }
+        // -----------------------------------------
+
+        // --- BACKFILL: existing Standard-tier users keep their pickup alerts ---
+        // Runs every launch but is a no-op after the first pass -- only inserts
+        // a subscription row where one is missing, so it can't create duplicates
+        // or override anyone who has since turned their alerts off on purpose.
+        var standardUserIds = db.Users
+            .Where(u => u.AccessLevel == AccessLevels.Standard)
+            .Select(u => u.Id)
+            .ToList();
+        var missingSub = standardUserIds
+            .Where(id => !db.NotificationSubscriptions.Any(s => s.UserId == id && s.Category == "PickupRequested"))
+            .ToList();
+        if (missingSub.Count > 0)
+        {
+            foreach (var id in missingSub)
+            {
+                db.NotificationSubscriptions.Add(new Visual_Inventory_System.Models.NotificationSubscription
+                {
+                    UserId = id,
+                    Category = "PickupRequested",
+                    Enabled = true
+                });
+            }
+            db.SaveChanges();
+            Console.WriteLine($">>> Backfilled PickupRequested subscription for {missingSub.Count} existing Standard-tier user(s).");
         }
         // -----------------------------------------
     }

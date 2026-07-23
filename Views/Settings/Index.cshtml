@@ -4,6 +4,7 @@
     ViewData["Title"] = "App Settings";
     var users = ViewBag.Users as List<User> ?? new List<User>();
     var settings = ViewBag.AppSettings as List<AppSetting> ?? new List<AppSetting>();
+    var pickupSubs = ViewBag.PickupSubscriptions as Dictionary<int, bool> ?? new Dictionary<int, bool>();
 }
 
 <style>
@@ -60,12 +61,14 @@
                     <th>Team</th>
                     <th>Access Level</th>
                     <th>Active</th>
+                    <th>Pickup Alerts</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var u in users)
                 {
+                    bool subscribed = pickupSubs.TryGetValue(u.Id, out var en) && en;
                     <tr>
                         <td>@u.DisplayName</td>
                         <td class="text-dim">@u.UserName</td>
@@ -99,11 +102,43 @@
                                 </button>
                             </form>
                         </td>
-                        <td></td>
+                        <td>
+                            <form asp-controller="Settings" asp-action="UpdateNotificationSubscription" method="post">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="userId" value="@u.Id" />
+                                <input type="hidden" name="category" value="PickupRequested" />
+                                <input type="hidden" name="enabled" value="@(!subscribed ? "true" : "false")" />
+                                <button type="submit" class="btn btn-sm @(subscribed ? "btn-outline-success" : "btn-outline-secondary")">
+                                    @(subscribed ? "On" : "Off")
+                                </button>
+                            </form>
+                        </td>
+                        <td>
+                            <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteUserModal-@u.Id" title="Remove @u.DisplayName">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
                     </tr>
                 }
             </tbody>
         </table>
+
+        <h6 class="text-white fw-bold mb-2 mt-4">Add New User</h6>
+        <form asp-controller="Settings" asp-action="AddUser" method="post" class="d-flex gap-2 flex-wrap">
+            @Html.AntiForgeryToken()
+            <input type="text" name="displayName" class="form-control form-control-sm" placeholder="First Last"
+                   style="max-width: 200px;" required pattern="^[A-Za-z'-]+\s[A-Za-z'-]+$"
+                   title="Enter as First Last, e.g. Jane Doe" />
+            <input type="text" name="team" class="form-control form-control-sm" placeholder="Team (optional)" style="max-width: 160px;" />
+            <select name="accessLevel" class="form-select form-select-sm" style="max-width: 160px;">
+                <option value="1">Viewer</option>
+                <option value="2" selected>Standard</option>
+                <option value="3">Engineer</option>
+                <option value="4">Management</option>
+                <option value="5">Admin</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary">Add User</button>
+        </form>
     </div>
 
     <!-- APP SETTINGS (generic key/value) -->
@@ -151,3 +186,35 @@
         </form>
     </div>
 </div>
+
+<!-- DELETE USER CONFIRM MODALS -->
+@foreach (var u in users)
+{
+    <div class="modal fade" id="deleteUserModal-@u.Id" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+                <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                    <h5 class="modal-title fw-bold text-white">Remove @u.DisplayName?</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form asp-controller="Settings" asp-action="DeleteUser" method="post">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <div class="modal-body text-white">
+                        <p class="small">
+                            This permanently removes @u.DisplayName (@u.UserName) from the roster.
+                            Their past transactions and orders keep their name in the log, but they'll
+                            need to be re-added here to sign in again.
+                        </p>
+                        <label class="form-label small fw-bold text-light-gray">Type "@u.DisplayName" to confirm</label>
+                        <input type="text" name="confirmName" class="form-control form-control-sm" required autocomplete="off" />
+                    </div>
+                    <div class="modal-footer" style="border-top: 1px solid var(--vis-card-border);">
+                        <button type="button" class="btn btn-outline-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger btn-sm">Delete Permanently</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+}

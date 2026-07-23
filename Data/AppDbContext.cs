@@ -20,6 +20,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<Notification> Notifications { get; set; } = null!;
         public DbSet<VisTask> VisTasks { get; set; } = null!;
         public DbSet<AppSetting> AppSettings { get; set; } = null!;
+        public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -71,6 +72,17 @@ namespace Visual_Inventory_System.Data
             {
                 // One row per key -- UpdateSetting() upserts on this.
                 b.HasIndex(s => s.Key).IsUnique();
+            });
+
+            modelBuilder.Entity<NotificationSubscription>(b =>
+            {
+                // One row per (user, category) -- UpdateNotificationSubscription() upserts on this.
+                b.HasIndex(s => new { s.UserId, s.Category }).IsUnique();
+
+                b.HasOne(s => s.User)
+                 .WithMany()
+                 .HasForeignKey(s => s.UserId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

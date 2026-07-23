@@ -61,6 +61,9 @@ namespace Visual_Inventory_System.Controllers
         {
             ViewBag.Users = _db.Users.OrderBy(u => u.DisplayName).ToList();
             ViewBag.AppSettings = _db.AppSettings.OrderBy(s => s.Key).ToList();
+            ViewBag.PickupSubscriptions = _db.NotificationSubscriptions
+                .Where(s => s.Category == "PickupRequested")
+                .ToDictionary(s => s.UserId, s => s.Enabled);
             return View();
         }
 
@@ -130,6 +133,148 @@ namespace Visual_Inventory_System.Controllers
 
             _db.SaveChanges();
             TempData["Success"] = $"{user.DisplayName} is now {(user.IsActive ? "active" : "hidden")}.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddUser(string displayName, string? team, int accessLevel)
+        {
+            displayName = (displayName ?? "").Trim();
+            var parts = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2)
+            {
+                TempData["Error"] = "Enter a full name (First Last) to add a user.";
+                return RedirectToAction("Index");
+            }
+
+            if (accessLevel < AccessLevels.Viewer || accessLevel > AccessLevels.Admin)
+            {
+                TempData["Error"] = "Invalid access level.";
+                return RedirectToAction("Index");
+            }
+
+            // Same First.Last convention as the Program.cs seed list and Identify.
+            string userName = parts[0] + "." + parts[parts.Length - 1];
+            string normalizedDisplay = string.Join(" ", parts);
+
+            var existing = _db.Users.FirstOrDefault(u => u.UserName.ToLower() == userName.ToLower());
+            if (existing != null)
+            {
+                TempData["Error"] = $"'{userName}' already exists ({existing.DisplayName}).";
+                return RedirectToAction("Index");
+            }
+
+            var newUser = new User
+            {
+                DisplayName = normalizedDisplay,
+                UserName = userName,
+                Team = string.IsNullOrWhiteSpace(team) ? null : team.Trim(),
+                Theme = "dark",
+                IsActive = true,
+                AccessLevel = accessLevel
+            };
+            _db.Users.Add(newUser);
+            _db.SaveChanges(); // need newUser.Id before adding a subscription row
+
+            // Matches today's implicit behavior: Standard tier used to mean pickup
+            // alerts came along for free. Keep that true for anyone added at Standard.
+            if (accessLevel == AccessLevels.Standard)
+            {
+                _db.NotificationSubscriptions.Add(new NotificationSubscription
+                {
+                    UserId = newUser.Id,
+                    Category = "PickupRequested",
+                    Enabled = true
+                });
+            }
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "User Added",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{newUser.DisplayName} ({newUser.UserName}) added as {AccessLevels.Name(accessLevel)}.",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"{newUser.DisplayName} added.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult DeleteUser(int userId, string confirmName)
+        {
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null)
+            {
+                TempData["Error"] = "User not found.";
+                return RedirectToAction("Index");
+            }
+
+            if (!string.Equals((confirmName ?? "").Trim(), user.DisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                TempData["Error"] = "Name didn't match -- nothing was deleted.";
+                return RedirectToAction("Index");
+            }
+
+            string display = user.DisplayName;
+            string login = user.UserName;
+
+            // Hard delete. Safe: TransactionLog/Order/VisTask snapshot the actor's
+            // name as plain text (not a foreign key), so history is unaffected.
+            // NotificationSubscriptions for this user cascade-delete with the row.
+            _db.Users.Remove(user);
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "User Removed",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{display} ({login}) removed from the roster.",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"{display} removed.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult UpdateNotificationSubscription(int userId, string category, bool enabled)
+        {
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null)
+            {
+                TempData["Error"] = "User not found.";
+                return RedirectToAction("Index");
+            }
+
+            var sub = _db.NotificationSubscriptions.FirstOrDefault(s => s.UserId == userId && s.Category == category);
+            if (sub == null)
+            {
+                sub = new NotificationSubscription { UserId = userId, Category = category };
+                _db.NotificationSubscriptions.Add(sub);
+            }
+            sub.Enabled = enabled;
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Notification Subscription Changed",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{user.DisplayName}: {category} -> {(enabled ? "On" : "Off")}",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"{user.DisplayName}'s {category} alerts are now {(enabled ? "on" : "off")}.";
             return RedirectToAction("Index");
         }
 

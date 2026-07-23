@@ -71,6 +71,39 @@ namespace Visual_Inventory_System.Services
             _db.SaveChanges();
         }
 
+        /// <summary>
+        /// Fan out to everyone individually subscribed to this category (via the
+        /// Settings checkbox), regardless of AccessLevel. Use this instead of
+        /// CreateForLevel for anything that should be a personal opt-in rather
+        /// than a side effect of someone's access tier.
+        /// </summary>
+        public void CreateForSubscribers(string category, string message, string? linkUrl = null, string? excludeUserName = null)
+        {
+            var recipients = _db.Users
+                .Where(u => u.IsActive)
+                .Join(_db.NotificationSubscriptions.Where(s => s.Category == category && s.Enabled),
+                      u => u.Id, s => s.UserId, (u, s) => u.UserName)
+                .ToList();
+
+            var now = DateTime.UtcNow;
+            foreach (var name in recipients)
+            {
+                if (!string.IsNullOrWhiteSpace(excludeUserName)
+                    && string.Equals(name, excludeUserName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                _db.Notifications.Add(new Notification
+                {
+                    RecipientUserName = name,
+                    Category = category,
+                    Message = message,
+                    LinkUrl = linkUrl,
+                    CreatedAt = now
+                });
+            }
+            _db.SaveChanges();
+        }
+
         /// <summary>Active (not dismissed) notifications for a person, newest first.</summary>
         public List<Notification> GetActiveFor(string userName)
         {

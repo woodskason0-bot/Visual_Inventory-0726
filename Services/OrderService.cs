@@ -175,8 +175,10 @@ namespace Visual_Inventory_System.Services
             // is waiting. Best-effort: a notification hiccup must never fail a real order.
             try
             {
-                _notifications.CreateForLevel(
-                AccessLevels.Standard, AccessLevels.Standard,
+                // Individual opt-in now (Settings -> Pickup Alerts checkbox), not tied to
+                // access tier -- so promoting someone off Standard no longer silently
+                // cuts them off from alerts they'd deliberately turned on.
+                _notifications.CreateForSubscribers(
                 "PickupRequested",
                 $"New pickup requested: Order #{newOrderId} from {requester} ({itemCount} item{(itemCount == 1 ? "" : "s")}).",
                 "/Home/PickupQueue",
