@@ -19,6 +19,28 @@ namespace Visual_Inventory_System.Services
         }
 
         // ============================
+        // LINE-BASED VISIBILITY
+        // ============================
+        // Applied to browsing/search surfaces only (GetAll, Search, ExportToCsv)
+        // -- NOT to GetById, FindByRheemPart, or the quantity-math helpers,
+        // which need to see the true, whole-org picture so lookups, duplicate
+        // checks, and Engineer+ cross-Line reassignment keep working.
+        private IQueryable<InventoryItem> ApplyLineVisibility(IQueryable<InventoryItem> query)
+        {
+            // Level 5 sees everything, regardless of Line.
+            if (_currentUser.Level >= AccessLevels.Admin) return query;
+
+            var myLine = (_currentUser.Line ?? "").Trim();
+            // Not yet assigned a Line -- fail OPEN, not closed, so nobody's
+            // dashboard looks broken while rollout is still in progress.
+            if (myLine.Length == 0) return query;
+
+            var myLineLower = myLine.ToLower();
+            // Blank item Line -- also fails open (not yet assigned to any Line).
+            return query.Where(i => i.Line == "" || i.Line.ToLower() == myLineLower);
+        }
+
+        // ============================
         // NEW ITEM REGISTRY LOGIC
         // ============================
         public string GetNextItemId()
@@ -125,7 +147,7 @@ namespace Visual_Inventory_System.Services
                 ActionType = "New Registry",
                 ItemId = newItem.ItemId,
                 QuantityChange = qty,
-                Details = $"Registered to {newItem.Group}/{newItem.Team}",
+                Details = $"Registered to {newItem.Group}/{newItem.Team} (Line: {(string.IsNullOrEmpty(newItem.Line) ? "unassigned" : newItem.Line)})",
                 User = newItem.UpdatedBy
             });
 
@@ -143,9 +165,9 @@ namespace Visual_Inventory_System.Services
             // Include variants: results feed the holoviewer, which reads the
             // Quantity/location pass-throughs -- without variants loaded those
             // silently read 0/blank.
-            var query = _db.InventoryItems.AsNoTracking()
+            var query = ApplyLineVisibility(_db.InventoryItems.AsNoTracking()
                 .Include(i => i.Variants)
-                .AsQueryable();
+                .AsQueryable());
 
             bool isFilterActive = false;
 
@@ -200,9 +222,9 @@ namespace Visual_Inventory_System.Services
         public byte[] ExportToCsv(string? group, string? team, string? type, string? brand, string? fdaString,
                                   bool expAvailable, bool expAlerts, bool expScrap, bool expOwnership, string expTimeFrame)
         {
-            var query = _db.InventoryItems.AsNoTracking()
+            var query = ApplyLineVisibility(_db.InventoryItems.AsNoTracking()
                 .Include(i => i.Variants)
-                .AsQueryable();
+                .AsQueryable());
 
             // 1. STRICT AND LOGIC (The Top Half of the Wizard)
             if (!string.IsNullOrWhiteSpace(group)) query = query.Where(i => i.Group.ToLower() == group.ToLower());
@@ -304,7 +326,7 @@ namespace Visual_Inventory_System.Services
         public int GetTotalDbCount() => _db.InventoryItems.Count();
 
         public IEnumerable<InventoryItem> GetAll() =>
-            _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToList();
+            ApplyLineVisibility(_db.InventoryItems.AsNoTracking().Include(i => i.Variants)).ToList();
 
         public InventoryItem? GetById(string itemId) =>
             _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
@@ -333,8 +355,11 @@ namespace Visual_Inventory_System.Services
         //                is not one already").
         // Variants are untouched -- identity lives on the family record.
         // Returns (ok, message); logs an "Edit Details" transaction on success.
-        public (bool ok, string message) UpdateItemDetails(string itemId, string? rheemPartNumber, string? description, string? brand)
+        public (bool ok, string message) UpdateItemDetails(string itemId, string? rheemPartNumber, string? description, string? brand, string? line = null)
         {
+            // Deliberately NOT Line-filtered: an Engineer+ reassigning ownership
+            // has to be able to find and act on an item outside their own Line --
+            // that's the entire point of reassignment.
             var item = _db.InventoryItems.FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return (false, $"Item {itemId} not found.");
 
@@ -380,6 +405,21 @@ namespace Visual_Inventory_System.Services
                 {
                     // Existing brand stays; tell the caller instead of silently dropping.
                     return (false, $"{itemId} already has brand '{item.Brand}' -- brand can only be added when blank.");
+                }
+            }
+
+            if (line != null)
+            {
+                string newLine = line.Trim();
+                if (newLine != item.Line)
+                {
+                    if (newLine.Length > 0 && !OrgStructure.IsValidLine(newLine))
+                        return (false, $"'{newLine}' isn't a recognized Line.");
+
+                    changes.Add(string.IsNullOrEmpty(item.Line)
+                        ? $"Line set to '{newLine}'"
+                        : $"Line '{item.Line}' -> '{newLine}'");
+                    item.Line = newLine;
                 }
             }
 

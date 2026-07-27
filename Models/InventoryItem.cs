@@ -48,6 +48,14 @@ namespace Visual_Inventory_System.Models
         public string Group { get; set; } = "";
         public string ProjectCode { get; set; } = "";
 
+        // Owning Line -- one of OrgStructure.AllLines (e.g. "International").
+        // Supersedes Team/Group/ProjectCode as the thing that actually gates
+        // visibility; those three stay in place untouched (still feed ID
+        // generation and legacy email routing) but no longer decide who can
+        // see this item. "" = not yet assigned, fails OPEN (visible to all)
+        // until an Engineer+ assigns one via Edit Details.
+        public string Line { get; set; } = "";
+
         // Item-TOTAL alert threshold (fires on the sum across all locations).
         public int AlertThreshold { get; set; } = 0;
 

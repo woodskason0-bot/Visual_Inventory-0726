@@ -60,10 +60,10 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult Index()
         {
             ViewBag.Users = _db.Users.OrderBy(u => u.DisplayName).ToList();
-            ViewBag.AppSettings = _db.AppSettings.OrderBy(s => s.Key).ToList();
             ViewBag.PickupSubscriptions = _db.NotificationSubscriptions
                 .Where(s => s.Category == "PickupRequested")
                 .ToDictionary(s => s.UserId, s => s.Enabled);
+            ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
             return View();
         }
 
@@ -138,7 +138,43 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public IActionResult AddUser(string displayName, string? team, int accessLevel)
+        public IActionResult UpdateLine(int userId, string line)
+        {
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null)
+            {
+                TempData["Error"] = "User not found.";
+                return RedirectToAction("Index");
+            }
+
+            line = (line ?? "").Trim();
+            if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+            {
+                TempData["Error"] = $"'{line}' isn't a recognized Line.";
+                return RedirectToAction("Index");
+            }
+
+            string oldLine = user.Line ?? "";
+            user.Line = line.Length > 0 ? line : null;
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Line Changed",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{user.DisplayName}: '{(oldLine.Length > 0 ? oldLine : "unassigned")}' -> '{(line.Length > 0 ? line : "unassigned")}'",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"{user.DisplayName}'s Line is now {(line.Length > 0 ? line : "unassigned")}.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddUser(string displayName, string? team, int accessLevel, string? line)
         {
             displayName = (displayName ?? "").Trim();
             var parts = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -151,6 +187,13 @@ namespace Visual_Inventory_System.Controllers
             if (accessLevel < AccessLevels.Viewer || accessLevel > AccessLevels.Admin)
             {
                 TempData["Error"] = "Invalid access level.";
+                return RedirectToAction("Index");
+            }
+
+            line = (line ?? "").Trim();
+            if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+            {
+                TempData["Error"] = $"'{line}' isn't a recognized Line.";
                 return RedirectToAction("Index");
             }
 
@@ -170,6 +213,7 @@ namespace Visual_Inventory_System.Controllers
                 DisplayName = normalizedDisplay,
                 UserName = userName,
                 Team = string.IsNullOrWhiteSpace(team) ? null : team.Trim(),
+                Line = line.Length > 0 ? line : null,
                 Theme = "dark",
                 IsActive = true,
                 AccessLevel = accessLevel
@@ -276,42 +320,5 @@ namespace Visual_Inventory_System.Controllers
             _db.SaveChanges();
             TempData["Success"] = $"{user.DisplayName}'s {category} alerts are now {(enabled ? "on" : "off")}.";
             return RedirectToAction("Index");
-        }
-
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-        public IActionResult UpdateSetting(string key, string value)
-        {
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                TempData["Error"] = "Setting needs a key.";
-                return RedirectToAction("Index");
-            }
-
-            var setting = _db.AppSettings.FirstOrDefault(s => s.Key == key.Trim());
-            if (setting == null)
-            {
-                setting = new AppSetting { Key = key.Trim() };
-                _db.AppSettings.Add(setting);
-            }
-
-            setting.Value = (value ?? "").Trim();
-            setting.UpdatedAt = DateTime.UtcNow;
-            setting.UpdatedBy = _currentUser.Name;
-
-            _db.TransactionLogs.Add(new TransactionLog
-            {
-                Timestamp = DateTime.UtcNow,
-                ActionType = "App Setting Changed",
-                ItemId = "",
-                QuantityChange = 0,
-                Details = $"{setting.Key} -> '{setting.Value}'",
-                User = _currentUser.Name
-            });
-
-            _db.SaveChanges();
-            TempData["Success"] = $"'{key}' updated.";
-            return RedirectToAction("Index");
-        }
-    }
+        }    }
 }

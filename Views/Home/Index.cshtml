@@ -1303,6 +1303,21 @@
                             <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
                             <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
                         </div>
+                        <div class="row g-2 mb-1">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold text-light-gray">Branch</label>
+                                <select id="edit-line-branch" class="form-select" disabled>
+                                    <option value="">-- Branch --</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold text-light-gray">Line</label>
+                                <select name="newLine" id="edit-line" class="form-select" disabled>
+                                    <option value="">Unassigned</option>
+                                </select>
+                                <small class="text-light-gray d-block mt-1" style="font-size:10px;">Reassigning takes effect immediately -- no transfer window.</small>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
@@ -1556,6 +1571,22 @@
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Project Code</label>
                             <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="7166" readonly />
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Branch</label>
+                            <select id="reg-line-branch" class="form-select">
+                                <option value="">-- Branch --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold text-light-gray">Line</label>
+                            <select name="Line" id="reg-line" class="form-select">
+                                <option value="">Unassigned</option>
+                            </select>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">Who can see this item. Blank = visible to everyone.</small>
                         </div>
                     </div>
 
@@ -2055,7 +2086,7 @@
         const editOn = (action === 'Edit Details');
         if (editDiv) {
             editDiv.style.display = editOn ? 'block' : 'none';
-            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
+            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na', 'edit-line-branch', 'edit-line'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !editOn;
             });
@@ -2138,7 +2169,62 @@
         if (brandHelp) brandHelp.textContent = hasBrand
             ? 'This item already has a brand — it can\'t be changed here.'
             : 'Brand can only be ADDED when the item has none.';
+
+        populateEditLinePickers(item ? (item.line || '') : '');
     }
+
+    // ---- Edit Details: Branch/Line cascade ---------------------------------
+    // Line reassignment is instant/complete (no transfer window) -- location
+    // and ownership are decoupled, so this just overwrites item.Line.
+    function branchForLine(line) {
+        for (var branch in orgStructure) {
+            if (orgStructure[branch].indexOf(line) !== -1) return branch;
+        }
+        return "";
+    }
+
+    function populateEditBranches() {
+        const branchSelect = document.getElementById('edit-line-branch');
+        if (!branchSelect) return;
+        branchSelect.innerHTML = '<option value="">-- Branch --</option>';
+        Object.keys(orgStructure).forEach(function (branch) {
+            const opt = document.createElement('option');
+            opt.value = branch;
+            opt.textContent = branch;
+            branchSelect.appendChild(opt);
+        });
+    }
+
+    function populateEditLines(branch, selectedLine) {
+        const lineSelect = document.getElementById('edit-line');
+        if (!lineSelect) return;
+        lineSelect.innerHTML = '<option value="">Unassigned</option>';
+        const lines = orgStructure[branch] || [];
+        lines.forEach(function (line) {
+            const opt = document.createElement('option');
+            opt.value = line;
+            opt.textContent = line;
+            if (line === selectedLine) opt.selected = true;
+            lineSelect.appendChild(opt);
+        });
+    }
+
+    function populateEditLinePickers(currentLine) {
+        const branchSelect = document.getElementById('edit-line-branch');
+        if (!branchSelect) return;
+        populateEditBranches();
+        const currentBranch = branchForLine(currentLine);
+        if (currentBranch) branchSelect.value = currentBranch;
+        populateEditLines(currentBranch, currentLine);
+    }
+
+    (function bindEditLineBranch() {
+        const branchSelect = document.getElementById('edit-line-branch');
+        if (!branchSelect) return;
+        branchSelect.addEventListener('change', function () {
+            populateEditLines(branchSelect.value, '');
+        });
+    })();
 
     // Live duplicate check as the PN is typed: warn if another item owns it.
     // "N/A" is exempt -- it's the shared sentinel, never a real duplicate.
@@ -2755,6 +2841,7 @@
     });
 
     const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
 
     function bindAutocomplete(inputId, listId, idOutputId, isAlertModal) {
         const searchInput = document.getElementById(inputId);
@@ -2878,6 +2965,28 @@
         if (teamSel && codeInput) {
             teamSel.addEventListener('change', function() {
                 codeInput.value = this.options[this.selectedIndex].getAttribute('data-code');
+            });
+        }
+
+        // ---- Registration: Branch/Line cascade -----------------------------
+        const regLineBranch = document.getElementById('reg-line-branch');
+        const regLine = document.getElementById('reg-line');
+        if (regLineBranch && regLine) {
+            Object.keys(orgStructure).forEach(function (branch) {
+                const opt = document.createElement('option');
+                opt.value = branch;
+                opt.textContent = branch;
+                regLineBranch.appendChild(opt);
+            });
+            regLineBranch.addEventListener('change', function () {
+                regLine.innerHTML = '<option value="">Unassigned</option>';
+                const lines = orgStructure[regLineBranch.value] || [];
+                lines.forEach(function (line) {
+                    const opt = document.createElement('option');
+                    opt.value = line;
+                    opt.textContent = line;
+                    regLine.appendChild(opt);
+                });
             });
         }
 

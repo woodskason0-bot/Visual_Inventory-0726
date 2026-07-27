@@ -63,6 +63,7 @@ namespace Visual_Inventory_System.Controllers
                 name = i.ItemName,
                 // Identity fields the Modify Stock "Edit Details" pane prefills.
                 rpn = i.RheemPartNumber,
+                line = i.Line,
                 brand = i.Brand,
                 desc = i.Description,
                 threshold = i.AlertThreshold,
@@ -95,6 +96,7 @@ namespace Visual_Inventory_System.Controllers
                 }).ToList()
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
+            ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
 
             var currentDraft = _orderService.GetCurrentDraft();
             var draftEntries = currentDraft.Entries;
@@ -227,7 +229,8 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
-            string? newRheemPart = null, string? newDescription = null, string? newBrand = null)
+            string? newRheemPart = null, string? newDescription = null, string? newBrand = null,
+            string? newLine = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return RedirectToAction("Index");
 
@@ -247,7 +250,7 @@ namespace Visual_Inventory_System.Controllers
             // Identity edits never touch quantities/variants -- separate path.
             if (string.Equals(actionType, "Edit Details", StringComparison.OrdinalIgnoreCase))
             {
-                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand);
+                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, newLine);
                 if (ok) TempData["Success"] = $"{itemId}: {message}";
                 else TempData["Error"] = message;
                 return RedirectToAction("Index");
@@ -310,6 +313,12 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Group ??= "Commercial";
                 newItem.Team ??= "Samurai";
                 newItem.ProjectCode ??= "7166";
+                newItem.Line ??= "";
+                if (newItem.Line.Length > 0 && !OrgStructure.IsValidLine(newItem.Line))
+                {
+                    TempData["Error"] = $"'{newItem.Line}' isn't a recognized Line.";
+                    return RedirectToAction("Index");
+                }
 
                 // --- ITEM ID (server-authoritative) ---
                 // The form's ID box is a read-only preview; the real ID is assigned
@@ -798,6 +807,7 @@ namespace Visual_Inventory_System.Controllers
             var known = _db.Users.FirstOrDefault(u => u.UserName == normalized && u.IsActive);
             _currentUser.SetLevel(known?.AccessLevel ?? AccessLevels.Viewer);
             _currentUser.SetTheme(known?.Theme ?? "dark");
+            _currentUser.SetLine(known?.Line ?? "");
 
             if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
                 return Redirect(returnUrl);

@@ -13,6 +13,7 @@ namespace Visual_Inventory_System.Services
         public const string SessionKey = "_CurrentUser";
         public const string LevelKey = "_Level";
         public const string ThemeKey = "_Theme";
+        public const string LineKey = "_Line";
 
         private readonly IHttpContextAccessor _ctx;
 
@@ -37,6 +38,16 @@ namespace Visual_Inventory_System.Services
                 ? s
                 : "dark";
 
+        /// <summary>
+        /// Fixed org placement (one of OrgStructure.AllLines), or "" if not yet
+        /// assigned. Blank fails OPEN in visibility filtering -- see everything
+        /// until Settings assigns a real Line.
+        /// </summary>
+        public string Line =>
+            _ctx.HttpContext?.Session?.GetString(LineKey) is string s && !string.IsNullOrWhiteSpace(s)
+                ? s
+                : "";
+
         public bool IsSet =>
             !string.IsNullOrWhiteSpace(_ctx.HttpContext?.Session?.GetString(SessionKey));
 
@@ -49,11 +60,15 @@ namespace Visual_Inventory_System.Services
         public void SetTheme(string theme) =>
             _ctx.HttpContext?.Session?.SetString(ThemeKey, theme);
 
+        public void SetLine(string line) =>
+            _ctx.HttpContext?.Session?.SetString(LineKey, line ?? "");
+
         public void Clear()
         {
             _ctx.HttpContext?.Session?.Remove(SessionKey);
             _ctx.HttpContext?.Session?.Remove(LevelKey);
             _ctx.HttpContext?.Session?.Remove(ThemeKey);
+            _ctx.HttpContext?.Session?.Remove(LineKey);
         }
     }
 }

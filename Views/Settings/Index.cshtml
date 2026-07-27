@@ -3,8 +3,8 @@
 @{
     ViewData["Title"] = "App Settings";
     var users = ViewBag.Users as List<User> ?? new List<User>();
-    var settings = ViewBag.AppSettings as List<AppSetting> ?? new List<AppSetting>();
     var pickupSubs = ViewBag.PickupSubscriptions as Dictionary<int, bool> ?? new Dictionary<int, bool>();
+    var orgStructureJson = ViewBag.OrgStructureJson as string ?? "{}";
 }
 
 <style>
@@ -59,6 +59,7 @@
                     <th>Name</th>
                     <th>Login</th>
                     <th>Team</th>
+                    <th>Line</th>
                     <th>Access Level</th>
                     <th>Active</th>
                     <th>Pickup Alerts</th>
@@ -73,6 +74,19 @@
                         <td>@u.DisplayName</td>
                         <td class="text-dim">@u.UserName</td>
                         <td class="text-dim">@(string.IsNullOrEmpty(u.Team) ? "All" : u.Team)</td>
+                        <td>
+                            <form asp-controller="Settings" asp-action="UpdateLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@u.Line">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="userId" value="@u.Id" />
+                                <select class="form-select form-select-sm branch-select" style="width: 150px;">
+                                    <option value="">-- Branch --</option>
+                                </select>
+                                <select name="line" class="form-select form-select-sm line-select" style="width: 170px;">
+                                    <option value="">Unassigned</option>
+                                </select>
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Save</button>
+                            </form>
+                        </td>
                         <td>
                             <form asp-controller="Settings" asp-action="UpdateAccessLevel" method="post" class="d-flex gap-2">
                                 @Html.AntiForgeryToken()
@@ -124,12 +138,18 @@
         </table>
 
         <h6 class="text-white fw-bold mb-2 mt-4">Add New User</h6>
-        <form asp-controller="Settings" asp-action="AddUser" method="post" class="d-flex gap-2 flex-wrap">
+        <form id="addUserForm" asp-controller="Settings" asp-action="AddUser" method="post" class="d-flex gap-2 flex-wrap">
             @Html.AntiForgeryToken()
             <input type="text" name="displayName" class="form-control form-control-sm" placeholder="First Last"
                    style="max-width: 200px;" required pattern="^[A-Za-z'-]+\s[A-Za-z'-]+$"
                    title="Enter as First Last, e.g. Jane Doe" />
             <input type="text" name="team" class="form-control form-control-sm" placeholder="Team (optional)" style="max-width: 160px;" />
+            <select class="form-select form-select-sm branch-select" style="max-width: 160px;">
+                <option value="">-- Branch --</option>
+            </select>
+            <select name="line" class="form-select form-select-sm line-select" style="max-width: 180px;">
+                <option value="">Unassigned</option>
+            </select>
             <select name="accessLevel" class="form-select form-select-sm" style="max-width: 160px;">
                 <option value="1">Viewer</option>
                 <option value="2" selected>Standard</option>
@@ -138,51 +158,6 @@
                 <option value="5">Admin</option>
             </select>
             <button type="submit" class="btn btn-sm btn-primary">Add User</button>
-        </form>
-    </div>
-
-    <!-- APP SETTINGS (generic key/value) -->
-    <div class="settings-card p-4">
-        <h5 class="text-white fw-bold mb-1">Config Toggles</h5>
-        <p class="text-dim small mb-3">
-            Add or change a key/value setting. No migration needed -- services read these by key.
-        </p>
-        <table class="table table-hover align-middle mb-4">
-            <thead>
-                <tr>
-                    <th>Key</th>
-                    <th>Value</th>
-                    <th>Last Updated</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var s in settings)
-                {
-                    <tr>
-                        <td class="fw-bold">@s.Key</td>
-                        <td colspan="3">
-                            <form asp-controller="Settings" asp-action="UpdateSetting" method="post" class="d-flex gap-2 align-items-center">
-                                @Html.AntiForgeryToken()
-                                <input type="hidden" name="key" value="@s.Key" />
-                                <input type="text" name="value" value="@s.Value" class="form-control form-control-sm" style="max-width: 260px;" />
-                                <button type="submit" class="btn btn-sm btn-outline-danger">Save</button>
-                                <span class="text-dim small ms-2">
-                                    @(s.UpdatedAt.HasValue ? s.UpdatedAt.Value.ToLocalTime().ToString("g") : "-") by @s.UpdatedBy
-                                </span>
-                            </form>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-
-        <h6 class="text-white fw-bold mb-2">Add New Setting</h6>
-        <form asp-controller="Settings" asp-action="UpdateSetting" method="post" class="d-flex gap-2">
-            @Html.AntiForgeryToken()
-            <input type="text" name="key" class="form-control form-control-sm" placeholder="Key (e.g. EnforceRheemPartNumber)" style="max-width: 300px;" required />
-            <input type="text" name="value" class="form-control form-control-sm" placeholder="Value" style="max-width: 200px;" />
-            <button type="submit" class="btn btn-sm btn-primary">Add</button>
         </form>
     </div>
 </div>
@@ -218,3 +193,60 @@
         </div>
     </div>
 }
+
+<script>
+    (function () {
+        var orgStructure = @Html.Raw(orgStructureJson);
+
+        function populateBranches(branchSelect) {
+            branchSelect.innerHTML = '<option value="">-- Branch --</option>';
+            Object.keys(orgStructure).forEach(function (branch) {
+                var opt = document.createElement('option');
+                opt.value = branch;
+                opt.textContent = branch;
+                branchSelect.appendChild(opt);
+            });
+        }
+
+        function populateLines(lineSelect, branch, selectedLine) {
+            lineSelect.innerHTML = '<option value="">Unassigned</option>';
+            var lines = orgStructure[branch] || [];
+            lines.forEach(function (line) {
+                var opt = document.createElement('option');
+                opt.value = line;
+                opt.textContent = line;
+                if (line === selectedLine) opt.selected = true;
+                lineSelect.appendChild(opt);
+            });
+        }
+
+        function branchForLine(line) {
+            for (var branch in orgStructure) {
+                if (orgStructure[branch].indexOf(line) !== -1) return branch;
+            }
+            return "";
+        }
+
+        function wireLinePicker(container) {
+            var branchSelect = container.querySelector('.branch-select');
+            var lineSelect = container.querySelector('.line-select');
+            if (!branchSelect || !lineSelect) return;
+
+            populateBranches(branchSelect);
+
+            var currentLine = container.getAttribute('data-current-line') || '';
+            var currentBranch = branchForLine(currentLine);
+            if (currentBranch) branchSelect.value = currentBranch;
+            populateLines(lineSelect, currentBranch, currentLine);
+
+            branchSelect.addEventListener('change', function () {
+                populateLines(lineSelect, branchSelect.value, '');
+            });
+        }
+
+        document.querySelectorAll('.line-picker').forEach(wireLinePicker);
+
+        var addUserForm = document.getElementById('addUserForm');
+        if (addUserForm) wireLinePicker(addUserForm);
+    })();
+</script>

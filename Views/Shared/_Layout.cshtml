@@ -11,17 +11,12 @@
     string theme = CurrentUser.Theme;
     string visUser = signedIn ? CurrentUser.Name : "";
 
-    // Supervisor low-stock summary is scoped to the viewer's team:
-    //   team set  (e.g. Conner=Samurai, James=Ninja) -> only that team's low-stock count
-    //   team null (Kevin / Admin / management)        -> all teams
-    // try/catch so a database missing the Users.Team column still renders
-    // (it just falls back to the all-teams count instead of throwing).
-    string? myTeam = null;
-    if (signedIn)
-    {
-        try { myTeam = Db.Users.Where(u => u.UserName == visUser).Select(u => u.Team).FirstOrDefault(); }
-        catch { myTeam = null; }
-    }
+    // Supervisor low-stock summary is scoped to the viewer's Line, same
+    // convention as InventoryService.ApplyLineVisibility:
+    //   Admin (Level 5)      -> all Lines, no filter
+    //   Line set             -> that Line's low-stock count, plus unassigned items
+    //   Line blank (default) -> fails OPEN, all Lines (matches rollout safety posture)
+    string myLine = signedIn ? CurrentUser.Line : "";
 
     int alertCount = 0;
     try
@@ -31,7 +26,12 @@
         // sums each item's active variants database-side.
         var alertQ = Db.InventoryItems.Where(i => i.AlertThreshold > 0
             && (i.Variants.Where(v => !v.IsRetired).Sum(v => (int?)v.Quantity) ?? 0) <= i.AlertThreshold);
-        if (!string.IsNullOrWhiteSpace(myTeam)) alertQ = alertQ.Where(i => i.Team == myTeam);
+        if (signedIn && CurrentUser.Level < Visual_Inventory_System.Services.AccessLevels.Admin
+            && !string.IsNullOrWhiteSpace(myLine))
+        {
+            var myLineLower = myLine.Trim().ToLower();
+            alertQ = alertQ.Where(i => i.Line == "" || i.Line.ToLower() == myLineLower);
+        }
         alertCount = alertQ.Count();
     }
     catch { alertCount = 0; }
