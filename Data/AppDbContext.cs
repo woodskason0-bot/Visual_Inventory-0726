@@ -21,6 +21,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<VisTask> VisTasks { get; set; } = null!;
         public DbSet<AppSetting> AppSettings { get; set; } = null!;
         public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
+        public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -10,6 +10,9 @@ namespace Visual_Inventory_System.Models.ViewModels
         // Rheem PN off the physical label -- shown so the pickup person can
         // verify the box in hand matches the line item. "" = not captured yet.
         public string RheemPartNumber { get; set; } = string.Empty;
+        // Drives the per-unit Lab#/Serial# capture rows on the pickup form --
+        // only rendered when this equals "Compressor" (InventoryService.IsCompressorType).
+        public string? Type { get; set; }
         public int Quantity { get; set; }
         public int AvailableForThisOrder { get; set; }
 

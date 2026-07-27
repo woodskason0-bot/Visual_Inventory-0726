@@ -496,6 +496,28 @@ namespace Visual_Inventory_System.Services
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().ToLowerInvariant().EndsWith("control");
 
+        // Compressor mini-variant tracking is exact-match, not suffix-match --
+        // "Compressor" is the one literal Type value the existing sidebar quick
+        // filter already uses (filterType=Compressor), so this stays in lockstep
+        // with that rather than inventing a second convention.
+        public static bool IsCompressorType(string? type) =>
+            !string.IsNullOrWhiteSpace(type)
+            && type.Trim().Equals("Compressor", System.StringComparison.OrdinalIgnoreCase);
+
+        // All logged CompressorUnit rows, grouped by ItemId, newest first.
+        // Forward-only log -- starts empty, fills in as pickups happen. Used
+        // by the Compressors quick-filter modal to show what's been captured
+        // so far under each model's current on-hand quantity.
+        public Dictionary<string, List<CompressorUnit>> GetCompressorUnitsGrouped()
+        {
+            return _db.CompressorUnits
+                .AsNoTracking()
+                .OrderByDescending(c => c.PickedUpAt)
+                .ToList()
+                .GroupBy(c => c.ItemId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
         // How many units of an order line are LOANABLE (library books, expected
         // back): a Control loans its whole quantity; a Motor loans only its TC
         // subset; everything else loans nothing. Drives LoanOutstanding at pickup.

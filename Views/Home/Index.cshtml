@@ -61,6 +61,14 @@
     // migration) -- one check used everywhere an item's PN status matters.
     Func<string, bool> needsRheemPn = pn => string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
     var pnBacklogItems = allItems.Where(i => needsRheemPn(i.RheemPartNumber)).OrderBy(i => i.ItemName).ToList();
+
+    // Compressor mini-variant tracking: models you can see (Line-filtered,
+    // same as allItems above), each with whatever lab/serial units have been
+    // logged at pickup so far. Forward-only log -- starts empty per model.
+    var compressorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsCompressorType(i.Type))
+        .OrderBy(i => i.ItemName).ToList();
+    var compressorUnitsByItem = invSvc?.GetCompressorUnitsGrouped()
+        ?? new Dictionary<string, List<Visual_Inventory_System.Models.CompressorUnit>>();
     var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
 
     // A location segment only "counts" if it's present and not the 0 placeholder.
@@ -804,7 +812,7 @@
     <div class="grid-item r2 c6 row-span-3 grid-card d-flex flex-column gap-1">
         <label class="small fw-bold border-bottom mb-2 p-1">Quick Filters</label>
         <a href="/Home/Index?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
-        <a href="/Home/Index?mode=Filter&filterType=Compressor" class="btn btn-sm btn-outline-primary py-2">Compressors</a>
+        <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
         <a href="/Home/Index?mode=Filter&filterType=Motor" class="btn btn-sm btn-outline-primary py-2">Motors</a>
         <hr class="my-1" />
         <a href="/Home/Index?mode=Omni&omniSearch=Commercial" class="btn btn-sm btn-outline-secondary py-1">Commercial</a>
@@ -1097,6 +1105,74 @@
                             }
                         </tbody>
                     </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- COMPRESSOR REGISTRY (sidebar Compressors quick filter) -->
+<div class="modal fade" id="compressorRegistryModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-cpu-fill me-2 text-primary"></i>Compressors (@compressorItems.Count model@(compressorItems.Count == 1 ? "" : "s"))</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 65vh; overflow-y: auto;">
+                <p class="text-light-gray small mb-3">
+                    Lab #/Serial # are logged as units are picked up -- this is a running log,
+                    not a full map of current stock. A model showing Qty 12 may only have a
+                    few units listed below for a while; that gap closes as more get logged.
+                </p>
+                @if (!compressorItems.Any())
+                {
+                    <p class="text-light-gray mb-0">No compressor models visible to you yet.</p>
+                }
+                else
+                {
+                    @foreach (var it in compressorItems)
+                    {
+                        var units = compressorUnitsByItem.TryGetValue(it.ItemId, out var u) ? u : new List<Visual_Inventory_System.Models.CompressorUnit>();
+                        var collapseId = "compUnits-" + it.ItemId.Replace(" ", "");
+                        <div class="mb-2 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                                 data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                <div>
+                                    <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
+                                    <span class="text-light-gray ms-2" style="font-size:11px;">@(string.IsNullOrEmpty(it.Line) ? "" : $"[{it.Line}]")</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary me-2">Qty @it.Quantity</span>
+                                    <span class="badge bg-secondary">@units.Count logged</span>
+                                    <i class="bi bi-chevron-down ms-1"></i>
+                                </div>
+                            </div>
+                            <div class="collapse mt-2" id="@collapseId">
+                                @if (!units.Any())
+                                {
+                                    <p class="text-light-gray small mb-0">No units logged yet for this model.</p>
+                                }
+                                else
+                                {
+                                    <table class="table table-sm table-hover align-middle mb-0">
+                                        <thead><tr><th>Lab #</th><th>Serial #</th><th>Picked Up</th><th>By</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var cu in units)
+                                            {
+                                                <tr>
+                                                    <td class="@(cu.LabNumber == null ? "text-warning" : "")">@(cu.LabNumber ?? "(missing)")</td>
+                                                    <td class="@(cu.SerialNumber == null ? "text-warning" : "")">@(cu.SerialNumber ?? "(missing)")</td>
+                                                    <td class="text-light-gray small">@cu.PickedUpAt.ToLocalTime()</td>
+                                                    <td class="text-light-gray small">@cu.PickedUpBy.Replace('.', ' ')</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </div>
+                        </div>
+                    }
                 }
             </div>
         </div>

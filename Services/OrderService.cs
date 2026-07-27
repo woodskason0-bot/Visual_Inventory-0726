@@ -187,7 +187,11 @@ namespace Visual_Inventory_System.Services
             catch { /* swallow: the order is already safely submitted */ }
         }
 
-        public void PickUpOrder(int orderId, Dictionary<int, int>? variantChoices = null)
+        // compressorUnits: orderItemId -> list of (LabNumber, SerialNumber) pairs,
+        // one entry per physical unit being pulled on that line. Both soft --
+        // null/blank in either slot just means that unit's field wasn't given.
+        public void PickUpOrder(int orderId, Dictionary<int, int>? variantChoices = null,
+            Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits = null)
         {
             // Captured inside the tx, used for the post-commit ping to the requester.
             string? requesterToNotify = null;
@@ -260,6 +264,47 @@ namespace Visual_Inventory_System.Services
                             : InventoryService.IsMotorType(inv.Type) ? pulledTc
                             : 0;
 
+                        // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
+                        // physical unit actually pulled (pulledQty, not the ordered
+                        // qty -- a short pickup can't log units that never left the
+                        // shelf). Lab#/Serial# are both soft: whatever pairs were
+                        // posted for this line get used in order; anything past the
+                        // posted count (or left blank) just logs null/null. Missing
+                        // values are summarized onto the pickup log line below, not
+                        // blocked here.
+                        int missingLab = 0, missingSerial = 0;
+                        if (InventoryService.IsCompressorType(inv.Type) && pulledQty > 0)
+                        {
+                            List<(string? Lab, string? Serial)>? pairs = null;
+                            compressorUnits?.TryGetValue(it.Id, out pairs);
+                            var now = System.DateTime.UtcNow;
+                            for (int u = 0; u < pulledQty; u++)
+                            {
+                                string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
+                                string? serial = (pairs != null && u < pairs.Count) ? pairs[u].Serial : null;
+                                lab = string.IsNullOrWhiteSpace(lab) ? null : lab.Trim();
+                                serial = string.IsNullOrWhiteSpace(serial) ? null : serial.Trim();
+                                if (lab == null) missingLab++;
+                                if (serial == null) missingSerial++;
+
+                                _db.CompressorUnits.Add(new CompressorUnit
+                                {
+                                    ItemId = it.ItemId,
+                                    OrderId = orderId,
+                                    OrderItemId = it.Id,
+                                    LabNumber = lab,
+                                    SerialNumber = serial,
+                                    PickedUpAt = now,
+                                    PickedUpBy = _currentUser.Name
+                                });
+                            }
+                        }
+
+                        var flagParts = new List<string>();
+                        if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
+                        if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
+                        string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
+
                         // LOG THE PICKUP HERE! Details snapshot the actual pull
                         // locations at this moment -- variant numbers can be
                         // reused later, so the log must not rely on lookups.
@@ -269,9 +314,9 @@ namespace Visual_Inventory_System.Services
                             ActionType = "Order Picked Up",
                             ItemId = it.ItemId,
                             QuantityChange = -it.Quantity,
-                            Details = pulls.Count > 0
+                            Details = (pulls.Count > 0
                                 ? $"Order #{orderId} — pulled {string.Join(", ", pulls)}"
-                                : $"Order #{orderId}",
+                                : $"Order #{orderId}") + compressorFlag,
                             User = _currentUser.Name
                         });
                     }

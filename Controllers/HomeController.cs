@@ -570,6 +570,7 @@ namespace Visual_Inventory_System.Controllers
                         ItemId = it.ItemId,
                         ItemName = itemEntity?.ItemName ?? "Unknown",
                         RheemPartNumber = itemEntity?.RheemPartNumber ?? "",
+                        Type = itemEntity?.Type,
                         Quantity = it.Quantity,
                         AvailableForThisOrder = availForThis,
                         RequestedVariantId = it.RequestedVariantId,
@@ -695,7 +696,31 @@ namespace Visual_Inventory_System.Controllers
                     }
                 }
 
-                _orderService.PickUpOrder(orderId, choices.Count > 0 ? choices : null);
+                // Compressor mini-variants: compLab_{orderItemId}_{n} / compSerial_{orderItemId}_{n},
+                // n = 0-based unit index on that line. Both soft -- blank posts through as null.
+                var compressorUnits = new Dictionary<int, List<(string? Lab, string? Serial)>>();
+                foreach (var key in Request.Form.Keys)
+                {
+                    if (!key.StartsWith("compLab_")) continue;
+                    var rest = key.Substring("compLab_".Length);
+                    var parts = rest.Split('_');
+                    if (parts.Length != 2) continue;
+                    if (!int.TryParse(parts[0], out int oiId) || !int.TryParse(parts[1], out int unitIdx)) continue;
+
+                    string? lab = Request.Form[key].ToString();
+                    string? serial = Request.Form[$"compSerial_{oiId}_{unitIdx}"].ToString();
+
+                    if (!compressorUnits.TryGetValue(oiId, out var list))
+                    {
+                        list = new List<(string?, string?)>();
+                        compressorUnits[oiId] = list;
+                    }
+                    while (list.Count <= unitIdx) list.Add((null, null));
+                    list[unitIdx] = (lab, serial);
+                }
+
+                _orderService.PickUpOrder(orderId, choices.Count > 0 ? choices : null,
+                    compressorUnits.Count > 0 ? compressorUnits : null);
                 TempData["Success"] = "Order completed.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
