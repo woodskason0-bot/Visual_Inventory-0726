@@ -1366,9 +1366,15 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold text-light-gray">New Team</label>
+                            @* Pass 7A: data-driven from the Teams table, and blank is
+                               allowed -- team is optional now. The project code follows
+                               whichever team is chosen, resolved server-side. *@
                             <select name="newTeam" class="form-select">
-                                <option value="Samurai">Samurai (7166)</option>
-                                <option value="Ninja">Ninja (7165)</option>
+                                <option value="">N/A — no team</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(string.IsNullOrWhiteSpace(t.ProjectCode) ? "" : $" ({t.ProjectCode})")</option>
+                                }
                             </select>
                         </div>
                     </div>
@@ -1649,24 +1655,31 @@
                     </div>
 
                     <div class="row g-3 mb-3">
+                        @* Group removed in Pass 7A -- derived server-side from the
+                           registering user's Line (OrgStructure.GroupFor). It only
+                           feeds the ItemId prefix, and pinning it to the creator means
+                           a later Line change can't make an existing id wrong. *@
+@* Pass 7A: Team is OPTIONAL and data-driven from the Teams table.
+                           N/A is the default -- a team is a reporting label, not a
+                           permission; visibility belongs to Line. Group is no longer
+                           asked for at all: it's derived server-side from the Line of
+                           whoever is signed in, and only exists to mint the ItemId
+                           prefix. *@
                         <div class="col-md-4">
-                            <label class="form-label small fw-bold text-light-gray">Group</label>
-                            <select name="Group" id="reg-group" class="form-select">
-                                <option value="Commercial">Commercial</option>
-                                <option value="Residential">Residential</option>
-                                <option value="International">International</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            <label class="form-label small fw-bold text-light-gray">Team / Project <span class="text-light-gray">(optional)</span></label>
                             <select name="Team" id="reg-team" class="form-select">
-                                <option value="Samurai" data-code="7166">Samurai (7166)</option>
-                                <option value="Ninja" data-code="7165">Ninja (7165)</option>
+                                <option value="" data-code="" selected>N/A — no team</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name" data-code="@t.ProjectCode">
+                                        @t.Name@(string.IsNullOrWhiteSpace(t.ProjectCode) ? "" : $" ({t.ProjectCode})")
+                                    </option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Project Code</label>
-                            <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="7166" readonly />
+                            <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="" placeholder="—" readonly />
                         </div>
                     </div>
 
@@ -1791,10 +1804,14 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            @* Includes hidden teams on purpose -- reporting on a team
+                               retired last quarter is a normal thing to want. *@
                             <select name="exportTeam" class="form-select form-select-sm">
                                 <option value="">-- Any Team --</option>
-                                <option value="Samurai">Samurai</option>
-                                <option value="Ninja">Ninja</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.AllTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(t.IsActive ? "" : " (hidden)")</option>
+                                }
                             </select>
                         </div>
                     </div>

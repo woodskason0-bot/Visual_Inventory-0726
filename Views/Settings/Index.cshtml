@@ -51,6 +51,64 @@
     </div>
 
     <!-- USERS & ACCESS -->
+<!-- ============ TEAMS / PROJECTS (Pass 7A) ============ -->
+<div class="settings-card p-4 mb-4">
+    <h5 class="text-white fw-bold mb-1">Teams &amp; Projects</h5>
+    <p class="text-light-gray small mb-3">
+        The Team / Project options offered at registration. Team is a
+        <strong>label</strong>, not a permission &mdash; who can see an item is decided by
+        its Line, not its team. Blank / <code>N/A</code> is always allowed.
+    </p>
+
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr><th>Team</th><th>Project Code</th><th>In Use</th><th class="text-end">Status</th></tr>
+        </thead>
+        <tbody>
+        @foreach (var t in (List<Visual_Inventory_System.Models.Team>)ViewBag.Teams)
+        {
+            <tr style="@(t.IsActive ? "" : "opacity:.5;")">
+                <td class="fw-bold">@t.Name</td>
+                <td>
+                    <form asp-controller="Settings" asp-action="UpdateProjectCode" method="post" class="d-flex gap-2">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="teamId" value="@t.Id" />
+                        <input type="text" name="projectCode" value="@t.ProjectCode" maxlength="30"
+                               class="form-control form-control-sm" style="width:120px;" placeholder="(none)" />
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                    </form>
+                </td>
+                <td class="text-light-gray small">@(ViewBag.TeamUsage != null && ((Dictionary<string,int>)ViewBag.TeamUsage).ContainsKey(t.Name) ? ((Dictionary<string,int>)ViewBag.TeamUsage)[t.Name] : 0) item(s)</td>
+                <td class="text-end">
+                    <form asp-controller="Settings" asp-action="ToggleTeamActive" method="post">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="teamId" value="@t.Id" />
+                        <button type="submit" class="btn btn-sm @(t.IsActive ? "btn-outline-warning" : "btn-outline-success")">
+                            @(t.IsActive ? "Hide" : "Restore")
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    <h6 class="text-white fw-bold mb-2 mt-4">Add Team</h6>
+    <form asp-controller="Settings" asp-action="AddTeam" method="post" class="d-flex gap-2 flex-wrap">
+        @Html.AntiForgeryToken()
+        <input type="text" name="name" placeholder="Team name" required
+               class="form-control form-control-sm" style="max-width:200px;" />
+        <input type="text" name="projectCode" placeholder="Project code (optional)"
+               class="form-control form-control-sm" style="max-width:200px;" />
+        <button type="submit" class="btn btn-sm btn-success fw-bold">Add Team</button>
+    </form>
+    <div class="text-light-gray small mt-2">
+        <i class="bi bi-info-circle me-1"></i>Hiding a team removes it from the pickers but leaves
+        existing items untouched. Renaming isn't offered &mdash; items store the team name directly,
+        so a rename would orphan them. Add the new name and hide the old one.
+    </div>
+</div>
+
     <div class="settings-card p-4 mb-4">
         <h5 class="text-white fw-bold mb-3">Users &amp; Access</h5>
         <table class="table table-hover align-middle">

@@ -97,6 +97,13 @@ namespace Visual_Inventory_System.Controllers
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
+            // teams are offered; hidden ones stay on the items already using them.
+            ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
+                .Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
+            // The export filter offers HIDDEN teams too -- you still need to pull a
+            // report on a team that was retired last quarter.
+            ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
 
             var currentDraft = _orderService.GetCurrentDraft();
             var draftEntries = currentDraft.Entries;
@@ -310,9 +317,20 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Sub ??= "";
                 newItem.Rack ??= "";
                 newItem.Row ??= "";
-                newItem.Group ??= "Commercial";
-                newItem.Team ??= "Samurai";
-                newItem.ProjectCode ??= "7166";
+                // Pass 7A: Group is no longer a form field. It is derived from the
+                // Line of whoever is registering, so the ItemId prefix records the
+                // creator's org placement. Set once here and never changed after --
+                // otherwise an item's id and its Group would disagree.
+                newItem.Group = OrgStructure.GroupFor(_currentUser.Line);
+
+                // Team is now OPTIONAL and no longer defaults to Samurai. Blank is a
+                // real choice; the project code follows whichever team was picked.
+                newItem.Team = (newItem.Team ?? "").Trim();
+                if (string.Equals(newItem.Team, "N/A", StringComparison.OrdinalIgnoreCase))
+                    newItem.Team = "";
+                newItem.ProjectCode = newItem.Team.Length == 0
+                    ? ""
+                    : (_db.Teams.FirstOrDefault(t => t.Name == newItem.Team)?.ProjectCode ?? "");
                 newItem.Line ??= "";
                 if (newItem.Line.Length > 0 && !OrgStructure.IsValidLine(newItem.Line))
                 {

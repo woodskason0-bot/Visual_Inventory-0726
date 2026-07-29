@@ -260,9 +260,18 @@ namespace Visual_Inventory_System.Services
                         // what was ordered, so a short pickup can't over-count a loan.
                         int pulledQty = it.Quantity - remaining;
                         int pulledTc = it.ThermocoupledCount - remainingTc;
-                        it.LoanOutstanding = InventoryService.IsControlType(inv.Type) ? pulledQty
-                            : InventoryService.IsMotorType(inv.Type) ? pulledTc
-                            : 0;
+                        // Pass 6B: call the shared helper instead of repeating the
+                        // rule inline. This block WAS a duplicate of
+                        // InventoryService.LoanableQuantity -- which meant the helper
+                        // had zero callers, and adding compressors to it changed
+                        // nothing while this copy still returned 0 for them.
+                        //
+                        // Equivalent for the existing types: pulledTc can never exceed
+                        // pulledQty (TC is a subset of what was pulled), so the Min()
+                        // inside the helper resolves to pulledTc for motors exactly as
+                        // before. Controls are unchanged. Compressors now count.
+                        it.LoanOutstanding = InventoryService.LoanableQuantity(
+                            inv.Type, pulledQty, pulledTc);
 
                         // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
                         // physical unit actually pulled (pulledQty, not the ordered

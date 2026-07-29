@@ -660,10 +660,20 @@ namespace Visual_Inventory_System.Services
             {
                 details = $"Moved from {item.Group}/{item.Team} to ";
                 if (!string.IsNullOrWhiteSpace(newGroup)) item.Group = newGroup;
-                if (!string.IsNullOrWhiteSpace(newTeam))
+                if (newTeam != null)
                 {
-                    item.Team = newTeam;
-                    item.ProjectCode = (newTeam.ToLower() == "ninja") ? "7165" : "7166";
+                    // Pass 7A: was
+                    //   ProjectCode = newTeam.ToLower() == "ninja" ? "7165" : "7166";
+                    // -- which handed every team that wasn't Ninja Samurai's project
+                    // code, silently, forever. Now the code travels with the team row.
+                    //
+                    // newTeam == "" is a real choice (team is optional), so this
+                    // tests for null rather than blank.
+                    string t = newTeam.Trim();
+                    item.Team = t;
+                    item.ProjectCode = t.Length == 0
+                        ? ""
+                        : (_db.Teams.FirstOrDefault(x => x.Name == t)?.ProjectCode ?? "");
                 }
                 details += $"{item.Group}/{item.Team}";
             }

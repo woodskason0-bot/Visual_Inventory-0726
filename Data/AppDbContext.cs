@@ -22,6 +22,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<AppSetting> AppSettings { get; set; } = null!;
         public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
         public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
+        public DbSet<Team> Teams { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -85,6 +86,14 @@ namespace Visual_Inventory_System.Data
                  .WithMany()
                  .HasForeignKey(s => s.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Team>(b =>
+            {
+                // One row per team name. Vocabulary table -- items still store the
+                // NAME as a plain string (same convention as Line), so this is a
+                // picker source, not a foreign key.
+                b.HasIndex(t => t.Name).IsUnique();
             });
 
             modelBuilder.Entity<CompressorUnit>(b =>
