@@ -86,6 +86,29 @@ namespace Visual_Inventory_System.Data
                  .HasForeignKey(s => s.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
             });
+
+            modelBuilder.Entity<CompressorUnit>(b =>
+            {
+                // Every read of this table is "all units for this ItemId"
+                // (GetCompressorUnitsGrouped, the sidebar Compressors modal),
+                // so ItemId carries an index.
+                //
+                // This block is not optional. Migration 20260727 creates
+                // IX_CompressorUnits_ItemId, so the snapshot declares it;
+                // without a matching HasIndex the runtime model and the
+                // snapshot disagree, EF raises PendingModelChangesWarning, and
+                // Migrate() aborts before applying ANY migration -- which is
+                // what silently blocked Passes 3, 4 and 5.
+                b.HasIndex(c => c.ItemId);
+
+                // A model may not carry the same serial twice; two DIFFERENT
+                // models may share one, because LG reuses serials across model
+                // lines. So the unique key is the PAIR. Blank/NULL exempt --
+                // most units have no serial captured yet.
+                b.HasIndex(c => new { c.ItemId, c.SerialNumber })
+                 .IsUnique()
+                 .HasFilter("\"SerialNumber\" IS NOT NULL AND \"SerialNumber\" <> ''");
+            });
         }
     }
 }

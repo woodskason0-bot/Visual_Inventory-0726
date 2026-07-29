@@ -482,6 +482,17 @@ namespace Visual_Inventory_System.Controllers
                     var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .OrderBy(v => v.VariantNumber).ToList();
 
+                    // Pass 6B: the named units still out on THIS line. Usually
+                    // fewer than Outstanding -- serial coverage is partial, and the
+                    // view renders the remainder as plain quantity.
+                    var lineUnits = InventoryService.IsCompressorType(inv?.Type)
+                        ? _db.CompressorUnits.AsNoTracking()
+                              .Where(cu => cu.OrderItemId == it.Id
+                                        && cu.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp)
+                              .OrderBy(cu => cu.SerialNumber)
+                              .ToList()
+                        : new List<Visual_Inventory_System.Models.CompressorUnit>();
+
                     loans.Add(new LoanLineViewModel
                     {
                         OrderItemId = it.Id,
@@ -494,6 +505,8 @@ namespace Visual_Inventory_System.Controllers
                         ItemType = inv?.Type ?? "",
                         Outstanding = it.LoanOutstanding,
                         ReturnsAsTc = InventoryService.IsMotorType(inv?.Type),
+                        IsCompressor = InventoryService.IsCompressorType(inv?.Type),
+                        Units = lineUnits,
                         LocationChoices = activeVars
                             .Select(v => new VariantChoiceViewModel { VariantId = v.Id, Label = VLabel(v) })
                             .ToList()
@@ -508,12 +521,13 @@ namespace Visual_Inventory_System.Controllers
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult ReturnLoan(int orderItemId, int qty, int? targetVariantId,
-            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow)
+            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
+            int[]? unitIds = null, string? reason = null)
         {
             try
             {
                 _orderService.ReturnLoan(orderItemId, qty, targetVariantId,
-                    newParent, newMajor, newSub, newRack, newRow);
+                    newParent, newMajor, newSub, newRack, newRow, unitIds, reason);
                 TempData["Success"] = "Loan return recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
@@ -523,11 +537,11 @@ namespace Visual_Inventory_System.Controllers
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
-        public IActionResult ScrapLoan(int orderItemId, int qty)
+        public IActionResult ScrapLoan(int orderItemId, int qty, int[]? unitIds = null, string? reason = null)
         {
             try
             {
-                _orderService.ScrapLoan(orderItemId, qty);
+                _orderService.ScrapLoan(orderItemId, qty, unitIds, reason);
                 TempData["Success"] = "Loan scrap recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }

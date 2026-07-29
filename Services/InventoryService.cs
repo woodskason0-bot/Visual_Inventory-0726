@@ -1,4 +1,4 @@
-﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Models;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
@@ -504,18 +504,33 @@ namespace Visual_Inventory_System.Services
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().Equals("Compressor", System.StringComparison.OrdinalIgnoreCase);
 
-        // All logged CompressorUnit rows, grouped by ItemId, newest first.
-        // Forward-only log -- starts empty, fills in as pickups happen. Used
-        // by the Compressors quick-filter modal to show what's been captured
-        // so far under each model's current on-hand quantity.
+        // All CompressorUnit rows, grouped by ItemId, newest first.
+        // As of Pass 6A this is a ROSTER, not a pickup log: it holds On Hand
+        // stock as well as units that have left. Ordered by RecordedAt because
+        // PickedUpAt is now NULL for anything still on a shelf -- ordering by
+        // that would sort every on-hand unit into one indistinguishable clump.
         public Dictionary<string, List<CompressorUnit>> GetCompressorUnitsGrouped()
         {
             return _db.CompressorUnits
                 .AsNoTracking()
-                .OrderByDescending(c => c.PickedUpAt)
+                .OrderByDescending(c => c.RecordedAt)
                 .ToList()
                 .GroupBy(c => c.ItemId)
                 .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        // On-hand units for one family, oldest first -- the pool a pickup draws
+        // from and what 6B's Done Using / Return list will render. Serial-less
+        // stock has no row here, which is expected: units are a partial overlay
+        // over ItemVariant.Quantity, never a replacement for it.
+        public List<CompressorUnit> GetOnHandUnits(string itemId)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return new List<CompressorUnit>();
+            return _db.CompressorUnits
+                .AsNoTracking()
+                .Where(c => c.ItemId == itemId && c.Status == UnitStatus.OnHand)
+                .OrderBy(c => c.RecordedAt)
+                .ToList();
         }
 
         // How many units of an order line are LOANABLE (library books, expected
@@ -525,6 +540,17 @@ namespace Visual_Inventory_System.Services
         {
             if (IsControlType(type)) return quantity;
             if (IsMotorType(type)) return System.Math.Min(thermocoupledCount, quantity);
+
+            // Pass 6B: compressors count too, but the meaning differs. A Control
+            // or Motor is a library book -- LoanOutstanding means "expected back".
+            // A compressor is normally CONSUMED; here the same counter means
+            // "not yet dispositioned", i.e. nobody has pressed Done Using on it.
+            // Deliberately reusing the field rather than adding a parallel
+            // PendingDisposition column: one counter that cannot drift beats two
+            // that have to be kept in lockstep across PickUpOrder / ReturnLoan /
+            // ScrapLoan. The My Orders UI carries the wording for users.
+            if (IsCompressorType(type)) return quantity;
+
             return 0;
         }
 

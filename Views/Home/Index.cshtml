@@ -1144,27 +1144,47 @@
                                 </div>
                                 <div>
                                     <span class="badge bg-primary me-2">Qty @it.Quantity</span>
-                                    <span class="badge bg-secondary">@units.Count logged</span>
+                                    @{ var onHandCount = units.Count(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand); }
+                                    <span class="badge bg-secondary" title="Units with a serial on record, out of the quantity on hand">
+                                        @onHandCount / @it.Quantity tracked
+                                    </span>
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </div>
                             </div>
                             <div class="collapse mt-2" id="@collapseId">
                                 @if (!units.Any())
                                 {
-                                    <p class="text-light-gray small mb-0">No units logged yet for this model.</p>
+                                    <p class="text-light-gray small mb-0">No serials on record for this model yet.</p>
                                 }
                                 else
                                 {
+                                    @* Pass 6A: this is a ROSTER now, not a pickup log -- it lists
+                                       units still On Hand alongside ones that have left. PickedUpAt/By
+                                       are NULL for anything on a shelf, so both are guarded. *@
                                     <table class="table table-sm table-hover align-middle mb-0">
-                                        <thead><tr><th>Lab #</th><th>Serial #</th><th>Picked Up</th><th>By</th></tr></thead>
+                                        <thead><tr><th>Serial #</th><th>Lab #</th><th>Status</th><th>When</th><th>By</th></tr></thead>
                                         <tbody>
                                             @foreach (var cu in units)
                                             {
+                                                var onHand = cu.Status == Visual_Inventory_System.Models.UnitStatus.OnHand;
+                                                var scrapped = cu.Status == Visual_Inventory_System.Models.UnitStatus.Scrapped;
+                                                var stamp = cu.PickedUpAt ?? cu.RecordedAt;
+                                                var who = string.IsNullOrWhiteSpace(cu.PickedUpBy) ? cu.RecordedBy : cu.PickedUpBy;
                                                 <tr>
-                                                    <td class="@(cu.LabNumber == null ? "text-warning" : "")">@(cu.LabNumber ?? "(missing)")</td>
-                                                    <td class="@(cu.SerialNumber == null ? "text-warning" : "")">@(cu.SerialNumber ?? "(missing)")</td>
-                                                    <td class="text-light-gray small">@cu.PickedUpAt.ToLocalTime()</td>
-                                                    <td class="text-light-gray small">@cu.PickedUpBy.Replace('.', ' ')</td>
+                                                    <td class="@(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "text-warning" : "")">
+                                                        @(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "(missing)" : cu.SerialNumber)
+                                                    </td>
+                                                    @* Lab numbers are recorded, never assigned -- blank is the
+                                                       normal state until a numbering process exists, so it is
+                                                       dimmed rather than flagged. *@
+                                                    <td class="text-light-gray">@(string.IsNullOrWhiteSpace(cu.LabNumber) ? "—" : cu.LabNumber)</td>
+                                                    <td>
+                                                        <span class="badge @(onHand ? "bg-success" : scrapped ? "bg-danger" : "bg-warning text-dark")">
+                                                            @cu.Status
+                                                        </span>
+                                                    </td>
+                                                    <td class="text-light-gray small">@stamp.ToLocalTime()</td>
+                                                    <td class="text-light-gray small">@((who ?? "").Replace('.', ' '))</td>
                                                 </tr>
                                             }
                                         </tbody>
