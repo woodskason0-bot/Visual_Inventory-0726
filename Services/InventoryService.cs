@@ -539,6 +539,187 @@ namespace Visual_Inventory_System.Services
                 .ToList();
         }
 
+
+        // =====================================================================
+        // BULK INTAKE (Pass 9)
+        // =====================================================================
+        // ONE commit path, two entrances: a batch whose location already exists
+        // runs this straight from the Intake screen, and a batch that was held
+        // pending runs the SAME method once the superuser resolves the location.
+        // Anything that diverged between those two would drift apart within a
+        // month, which is the whole reason it lives here and not in a controller.
+
+        public class IntakeLine
+        {
+            public string ItemName { get; set; } = "";
+            public string Type { get; set; } = "";
+            public string Brand { get; set; } = "";
+            public string RheemPartNumber { get; set; } = "N/A";
+            public int Quantity { get; set; } = 1;
+            public string? SerialNumber { get; set; }
+        }
+
+        public class IntakeResult
+        {
+            public List<string> NewItems { get; set; } = new();       // ItemIds minted
+            public List<string> AddedToExisting { get; set; } = new();
+            public List<string> Skipped { get; set; } = new();
+            public List<string> Errors { get; set; } = new();
+            public int UnitsIn { get; set; }
+            public int SerialsLogged { get; set; }
+            public bool Ok => Errors.Count == 0;
+        }
+
+        /// <summary>
+        /// Commit a batch of rows at one location, under one Line/Team.
+        ///
+        /// preview=true runs every check and reports what WOULD happen without
+        /// writing -- the same thing the hand-written 02_verify SQL files did, but
+        /// before the fact instead of after.
+        ///
+        /// Group is derived from the SUBMITTER's Line, not the batch's, so the
+        /// ItemId prefix keeps recording who created the record (Pass 7A).
+        /// </summary>
+        public IntakeResult CommitIntake(
+            IEnumerable<IntakeLine> lines, string line, string team,
+            string parentCode, string majorCode, string subCode, string rack, string row,
+            string submittedBy, string submitterLine, bool preview)
+        {
+            var res = new IntakeResult();
+            string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
+            parentCode = Seg(parentCode); majorCode = Seg(majorCode); subCode = Seg(subCode);
+            rack = Seg(rack); row = Seg(row);
+
+            if (parentCode.Length == 0) { res.Errors.Add("No location chosen."); return res; }
+
+            string fda = string.Join(".", new[] { parentCode, majorCode, subCode, rack, row }
+                                          .Where(x => x.Length > 0));
+            string grp = OrgStructure.GroupFor(submitterLine);
+            var now = System.DateTime.UtcNow;
+            string ts = now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            foreach (var l in lines)
+            {
+                string name = Seg(l.ItemName);
+                if (name.Length == 0) continue;               // blank grid rows are normal
+                int qty = l.Quantity < 1 ? 1 : l.Quantity;
+                string pn = Seg(l.RheemPartNumber);
+                if (pn.Length == 0) pn = "N/A";
+                string type = Seg(l.Type);
+                string serial = Seg(l.SerialNumber);
+
+                // A real PN already owned by another family is the one thing that
+                // must block -- it means the same physical part is about to exist
+                // twice under two ItemIds. "N/A" is the shared sentinel, exempt.
+                if (!string.Equals(pn, "N/A", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var owner = _db.InventoryItems.AsNoTracking()
+                        .FirstOrDefault(i => i.RheemPartNumber.ToLower() == pn.ToLower()
+                                          && i.ItemName.ToLower() != name.ToLower());
+                    if (owner != null)
+                    {
+                        res.Errors.Add($"{name}: Rheem PN '{pn}' already belongs to {owner.ItemId} ({owner.ItemName}).");
+                        continue;
+                    }
+                }
+
+                var existing = _db.InventoryItems.Include(i => i.Variants)
+                    .FirstOrDefault(i => i.ItemName.ToLower() == name.ToLower());
+
+                if (existing != null)
+                {
+                    // Known model. Stock lands as a variant at this location --
+                    // never a second item, which is the rule the compressor loads
+                    // established and the reason 18 models legitimately sit in two
+                    // places.
+                    var here = existing.Variants.FirstOrDefault(v => !v.IsRetired && v.FdaString == fda);
+                    if (here != null)
+                    {
+                        res.Skipped.Add($"{name}: already has stock at {fda} (V{here.VariantNumber}, qty {here.Quantity}) — use Add Stock to top it up.");
+                        continue;
+                    }
+                    res.AddedToExisting.Add($"{existing.ItemId} {name} +{qty} at {fda}");
+                    res.UnitsIn += qty;
+                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+
+                    var nv = new ItemVariant
+                    {
+                        VariantNumber = NextFreeVariantNumber(existing),
+                        Quantity = qty, ThermocoupledQty = 0,
+                        Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
+                        FdaString = fda, RegisteredAt = now, IsRetired = false
+                    };
+                    existing.Variants.Add(nv);
+                    existing.LastUpdated = now; existing.UpdatedBy = submittedBy;
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "Quick Add", ItemId = existing.ItemId,
+                        QuantityChange = qty,
+                        Details = $"Intake: {qty} unit(s) at {fda} (Variant {nv.VariantNumber}).",
+                        User = submittedBy
+                    });
+                    _db.SaveChanges();
+                    if (serial.Length > 0) LogIntakeSerial(existing.ItemId, nv.Id, serial, submittedBy, now, res);
+                }
+                else
+                {
+                    string itemId = GenerateItemId(grp, type);
+                    res.NewItems.Add($"{itemId} {name} x{qty}");
+                    res.UnitsIn += qty;
+                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+
+                    var item = new InventoryItem
+                    {
+                        ItemId = itemId, ItemName = name, Type = type, Brand = Seg(l.Brand),
+                        Description = "", RheemPartNumber = pn, Line = line, Team = team,
+                        Group = grp, ProjectCode = team.Length == 0 ? ""
+                            : (_db.Teams.FirstOrDefault(t => t.Name == team)?.ProjectCode ?? ""),
+                        AlertThreshold = 0, RegisteredAt = now, LastUpdated = now, UpdatedBy = submittedBy
+                    };
+                    item.Variants.Add(new ItemVariant
+                    {
+                        VariantNumber = 1, Quantity = qty, ThermocoupledQty = 0,
+                        Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
+                        FdaString = fda, RegisteredAt = now, IsRetired = false
+                    });
+                    _db.InventoryItems.Add(item);
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "New Registry", ItemId = itemId,
+                        QuantityChange = qty,
+                        Details = $"Registered to {grp}/{(team.Length == 0 ? "no team" : team)} (Line: {(line.Length == 0 ? "unassigned" : line)}) via Intake.",
+                        User = submittedBy
+                    });
+                    _db.SaveChanges();
+                    if (serial.Length > 0)
+                        LogIntakeSerial(itemId, item.Variants.First().Id, serial, submittedBy, now, res);
+                }
+            }
+            return res;
+        }
+
+        // A serial given at intake is stock ON THE SHELF, so the unit is recorded
+        // On Hand -- not Picked Up. Duplicate (item, serial) is skipped rather than
+        // thrown: the unique index would reject it anyway and a whole batch failing
+        // over one repeated serial helps nobody.
+        private void LogIntakeSerial(string itemId, int variantId, string serial, string by, System.DateTime now, IntakeResult res)
+        {
+            if (!IsCompressorType(_db.InventoryItems.AsNoTracking()
+                    .FirstOrDefault(i => i.ItemId == itemId)?.Type)) return;
+
+            bool dupe = _db.CompressorUnits.Any(c => c.ItemId == itemId
+                && c.SerialNumber != null && c.SerialNumber.ToLower() == serial.ToLower());
+            if (dupe) { res.Skipped.Add($"{itemId}: serial '{serial}' already on record."); return; }
+
+            _db.CompressorUnits.Add(new CompressorUnit
+            {
+                ItemId = itemId, ItemVariantId = variantId, SerialNumber = serial,
+                Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
+            });
+            _db.SaveChanges();
+            res.SerialsLogged++;
+        }
+
         // How many units of an order line are LOANABLE (library books, expected
         // back): a Control loans its whole quantity; a Motor loans only its TC
         // subset; everything else loans nothing. Drives LoanOutstanding at pickup.

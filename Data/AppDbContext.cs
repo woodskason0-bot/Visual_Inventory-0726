@@ -24,6 +24,9 @@ namespace Visual_Inventory_System.Data
         public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
         public DbSet<Team> Teams { get; set; } = null!;
         public DbSet<Location> Locations { get; set; } = null!;
+        public DbSet<LocationZone> LocationZones { get; set; } = null!;
+        public DbSet<IntakeBatch> IntakeBatches { get; set; } = null!;
+        public DbSet<IntakeRow> IntakeRows { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -87,6 +90,30 @@ namespace Visual_Inventory_System.Data
                  .WithMany()
                  .HasForeignKey(s => s.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<IntakeBatch>(b =>
+            {
+                // Only PENDING batches live here, so the queue is the table -- an
+                // index on Status keeps "show me what's waiting" cheap as approved
+                // ones accumulate behind it.
+                b.HasIndex(x => x.Status);
+                b.HasMany(x => x.Rows)
+                 .WithOne(r => r.Batch!)
+                 .HasForeignKey(r => r.IntakeBatchId)
+                 .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<LocationZone>(b =>
+            {
+                // Cascade: deleting a Parent takes its map rectangles with it --
+                // a zone pointing at nothing would render an unclickable ghost.
+                b.HasOne<Location>()
+                 .WithMany()
+                 .HasForeignKey(z => z.LocationId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasIndex(z => z.LocationId);
             });
 
             modelBuilder.Entity<Location>(b =>

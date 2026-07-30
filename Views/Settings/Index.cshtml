@@ -51,6 +51,171 @@
     </div>
 
     <!-- USERS & ACCESS -->
+<!-- ============ PENDING INTAKES (Pass 9) ============ -->
+@{
+    var pending = (List<Visual_Inventory_System.Models.IntakeBatch>)(ViewBag.PendingIntakes ?? new List<Visual_Inventory_System.Models.IntakeBatch>());
+    var allLocs = (List<Visual_Inventory_System.Models.Location>)ViewBag.Locations;
+}
+<div class="settings-card p-4 mb-4">
+    <h5 class="text-white fw-bold mb-1">
+        Pending Intakes
+        @if (pending.Any()) { <span class="badge bg-warning text-dark ms-2">@pending.Count</span> }
+    </h5>
+    <p class="text-light-gray small mb-3">
+        Batches held because the location they named isn&rsquo;t recognised. Either
+        <strong>map</strong> it onto somewhere that already exists under a different name,
+        or <strong>create</strong> it. Either way the rows import through the same path a
+        known-location batch takes.
+    </p>
+
+    @if (!pending.Any())
+    {
+        <div class="text-light-gray small">Nothing waiting.</div>
+    }
+    @foreach (var b in pending)
+    {
+        <div class="mb-3 p-3" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+            <div class="d-flex justify-content-between flex-wrap">
+                <div>
+                    <span class="fw-bold text-white">Batch #@b.Id</span>
+                    <span class="text-light-gray small ms-2">
+                        @b.SubmittedBy · @b.SubmittedAt.ToLocalTime().ToString("MMM d h:mm tt")
+                        · @b.Rows.Count row(s)
+                        · Line: @(string.IsNullOrWhiteSpace(b.Line) ? "unassigned" : b.Line)
+                        · Team: @(string.IsNullOrWhiteSpace(b.Team) ? "none" : b.Team)
+                    </span>
+                </div>
+                <div class="text-warning small">asked for &ldquo;@b.RequestedLocation&rdquo;</div>
+            </div>
+
+            <table class="table table-sm mt-2 mb-2">
+                <thead><tr><th>Model</th><th>Type</th><th>Brand</th><th>PN</th><th>Qty</th><th>Serial</th></tr></thead>
+                <tbody>
+                @foreach (var r in b.Rows)
+                {
+                    <tr>
+                        <td class="fw-bold">@r.ItemName</td><td>@r.Type</td><td>@r.Brand</td>
+                        <td>@r.RheemPartNumber</td><td>@r.Quantity</td>
+                        <td class="text-light-gray small">@(string.IsNullOrWhiteSpace(r.SerialNumber) ? "—" : r.SerialNumber)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+
+            <form asp-controller="Settings" asp-action="ApproveIntake" method="post" class="d-flex gap-2 flex-wrap align-items-end">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="batchId" value="@b.Id" />
+                <div>
+                    <label class="form-label small text-light-gray mb-0">Map to existing</label>
+                    <select name="mapToLocationId" class="form-select form-select-sm" style="max-width:260px;">
+                        <option value="0">— or create new below —</option>
+                        @foreach (var l in allLocs.Where(x => x.IsActive))
+                        {
+                            <option value="@l.Id">@l.Level: @l.Name</option>
+                        }
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small text-light-gray mb-0">…or new</label>
+                    <input type="text" name="newName" placeholder="Name" class="form-control form-control-sm" style="max-width:160px;" />
+                </div>
+                <select name="newLevel" class="form-select form-select-sm" style="max-width:110px;">
+                    <option value="Parent">Parent</option><option value="Major">Major</option><option value="Sub">Sub</option>
+                </select>
+                <select name="newOwnerId" class="form-select form-select-sm" style="max-width:190px;">
+                    <option value="0">— top level —</option>
+                    @foreach (var l in allLocs.Where(x => x.IsActive && x.Level != "Sub"))
+                    {
+                        <option value="@l.Id">@l.Level: @l.Name</option>
+                    }
+                </select>
+                <input type="text" name="rack" value="@b.Rack" placeholder="Rack" class="form-control form-control-sm" style="max-width:110px;" />
+                <input type="text" name="row" value="@b.Row" placeholder="Row" class="form-control form-control-sm" style="max-width:100px;" />
+                <button type="submit" class="btn btn-sm btn-success fw-bold">Approve &amp; Import</button>
+            </form>
+
+            <form asp-controller="Settings" asp-action="RejectIntake" method="post" class="d-flex gap-2 mt-2">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="batchId" value="@b.Id" />
+                <input type="text" name="note" placeholder="Reason (optional)" class="form-control form-control-sm" style="max-width:280px;" />
+                <button type="submit" class="btn btn-sm btn-outline-danger">Reject</button>
+            </form>
+        </div>
+    }
+</div>
+
+<!-- ============ MAP ZONES (Pass 8) ============ -->
+<div class="settings-card p-4 mb-4">
+    <h5 class="text-white fw-bold mb-1">Locations &mdash; Map</h5>
+    <p class="text-light-gray small mb-3">
+        Drag a box on the floorplan to make a <strong>Parent</strong> location clickable.
+        Pick an existing one, or choose <em>＋ New parent…</em> to create it and draw it in
+        one go.
+        Coordinates are stored as fractions of the image, so a zone stays put if the
+        floorplan is ever re-exported at another size. One Parent can have several
+        zones &mdash; draw again to add another.
+    </p>
+
+    @{
+        var zones = (dynamic)ViewBag.MapZones;
+        var parentLocs = ((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations)
+            .Where(x => x.Level == "Parent" && x.IsActive).OrderBy(x => x.Name).ToList();
+    }
+
+    <div id="zone-editor" style="position:relative; display:inline-block; max-width:100%; border:1px solid var(--vis-card-border); border-radius:6px; overflow:hidden;">
+        <img id="zone-map-img" src="~/images/facility.png" alt="Facility Map" style="display:block; max-width:100%; height:auto; user-select:none;" draggable="false" />
+        <div id="zone-overlay" style="position:absolute; inset:0; cursor:crosshair;"></div>
+    </div>
+
+    <form asp-controller="Settings" asp-action="AddZone" method="post" id="zone-form" class="d-flex gap-2 flex-wrap align-items-center mt-3">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="x" id="zone-x" /><input type="hidden" name="y" id="zone-y" />
+        <input type="hidden" name="w" id="zone-w" /><input type="hidden" name="h" id="zone-h" />
+        <span class="text-light-gray small" id="zone-readout">Drag a box on the map first.</span>
+        @* Drawing a box round an area that isn't registered yet is the normal case
+           when a team turns up, so the Parent can be created right here rather than
+           forcing a trip to the Locations panel and back. *@
+        <select name="locationId" id="zone-parent" class="form-select form-select-sm" style="max-width:220px;">
+            @foreach (var p in parentLocs)
+            {
+                <option value="@p.Id">@p.Name</option>
+            }
+            <option value="0">＋ New parent…</option>
+        </select>
+        <input type="text" name="newParentName" id="zone-newparent" placeholder="New parent name"
+               class="form-control form-control-sm" style="max-width:200px; display:none;" />
+        <input type="text" name="label" placeholder="Label (optional)" class="form-control form-control-sm" style="max-width:180px;" />
+        <button type="submit" class="btn btn-sm btn-success fw-bold" id="zone-save" disabled>Save Zone</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="zone-clear">Clear</button>
+    </form>
+
+    <table class="table table-sm align-middle mt-3">
+        <thead><tr><th>Parent</th><th>Label</th><th>Position</th><th>Size</th><th class="text-end"></th></tr></thead>
+        <tbody>
+        @foreach (var z in zones)
+        {
+            <tr>
+                <td class="fw-bold">@z.Name</td>
+                <td class="text-light-gray small">@(string.IsNullOrWhiteSpace((string)z.Label) ? "—" : z.Label)</td>
+                <td class="text-light-gray small"><code>@(((double)z.X).ToString("F3")), @(((double)z.Y).ToString("F3"))</code></td>
+                <td class="text-light-gray small"><code>@(((double)z.W).ToString("F3")) × @(((double)z.H).ToString("F3"))</code></td>
+                <td class="text-end">
+                    <form asp-controller="Settings" asp-action="DeleteZone" method="post">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="zoneId" value="@z.Id" />
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <div class="text-light-gray small">
+        <i class="bi bi-info-circle me-1"></i>Removing a zone only takes it off the map.
+        The location, its stock and every picker are untouched.
+    </div>
+</div>
+
 <!-- ============ LOCATIONS (Pass 7C) ============ -->
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Locations</h5>
@@ -406,5 +571,108 @@
         }
         levelSel.addEventListener('change', refresh);
         refresh();
+    })();
+</script>
+
+<script>
+    // ---- Pass 8: drag-to-draw map zones -------------------------------------
+    // Everything is normalised against the OVERLAY's rendered box, so the numbers
+    // saved are fractions of the image and independent of how big it happens to
+    // be drawn on this screen.
+    (function () {
+        const overlay = document.getElementById('zone-overlay');
+        const readout = document.getElementById('zone-readout');
+        const saveBtn = document.getElementById('zone-save');
+        if (!overlay || !readout || !saveBtn) return;
+
+        const fx = document.getElementById('zone-x'), fy = document.getElementById('zone-y');
+        const fw = document.getElementById('zone-w'), fh = document.getElementById('zone-h');
+
+        const existing = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+            ((IEnumerable<dynamic>)ViewBag.MapZones).Select(z => new {
+                name = (string)z.Name, x = (double)z.X, y = (double)z.Y, w = (double)z.W, h = (double)z.H }))); 
+
+        // Paint what's already placed so you can see coverage before adding more.
+        existing.forEach(function (z) {
+            const d = document.createElement('div');
+            d.style.cssText = 'position:absolute;border:2px solid #22C55E;background:rgba(34,197,94,.18);'
+                + 'pointer-events:none;font-size:10px;color:#DCFCE7;padding:1px 3px;overflow:hidden;';
+            d.style.left = (z.x * 100) + '%'; d.style.top = (z.y * 100) + '%';
+            d.style.width = (z.w * 100) + '%'; d.style.height = (z.h * 100) + '%';
+            d.textContent = z.name;
+            overlay.appendChild(d);
+        });
+
+        let box = null, startX = 0, startY = 0, drawing = false;
+
+        function frac(e) {
+            const r = overlay.getBoundingClientRect();
+            // Clamp: a drag that leaves the image would otherwise post coordinates
+            // the server has to reject, which reads as the save mysteriously failing.
+            return {
+                x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+                y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+            };
+        }
+
+        overlay.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            const p = frac(e);
+            startX = p.x; startY = p.y; drawing = true;
+            if (box) box.remove();
+            box = document.createElement('div');
+            box.style.cssText = 'position:absolute;border:2px dashed #F59E0B;background:rgba(245,158,11,.20);pointer-events:none;';
+            overlay.appendChild(box);
+        });
+
+        window.addEventListener('mousemove', function (e) {
+            if (!drawing || !box) return;
+            const p = frac(e);
+            // Dragging up or left is normal -- take the min corner and an absolute
+            // size so any direction produces a valid rectangle.
+            const x = Math.min(startX, p.x), y = Math.min(startY, p.y);
+            const w = Math.abs(p.x - startX), h = Math.abs(p.y - startY);
+            box.style.left = (x * 100) + '%'; box.style.top = (y * 100) + '%';
+            box.style.width = (w * 100) + '%'; box.style.height = (h * 100) + '%';
+            fx.value = x.toFixed(6); fy.value = y.toFixed(6);
+            fw.value = w.toFixed(6); fh.value = h.toFixed(6);
+            readout.textContent = `x ${x.toFixed(3)} · y ${y.toFixed(3)} · ${w.toFixed(3)} × ${h.toFixed(3)}`;
+        });
+
+        window.addEventListener('mouseup', function () {
+            if (!drawing) return;
+            drawing = false;
+            const ok = parseFloat(fw.value) > 0.005 && parseFloat(fh.value) > 0.005;
+            saveBtn.disabled = !ok;
+            if (!ok) readout.textContent = 'That box is too small to click — drag a larger area.';
+        });
+
+        // "＋ New parent…" swaps the dropdown for a name box. The field is only
+        // sent when it's visible -- an empty newParentName means "use the picked
+        // Parent", which is what the server branches on.
+        const parentSel = document.getElementById('zone-parent');
+        const newParentIn = document.getElementById('zone-newparent');
+        if (parentSel && newParentIn) {
+            parentSel.addEventListener('change', function () {
+                const creating = parentSel.value === '0';
+                newParentIn.style.display = creating ? '' : 'none';
+                newParentIn.required = creating;
+                if (!creating) newParentIn.value = '';
+                else newParentIn.focus();
+            });
+        }
+
+        document.getElementById('zone-clear').addEventListener('click', function () {
+            if (box) { box.remove(); box = null; }
+            fx.value = fy.value = fw.value = fh.value = '';
+            saveBtn.disabled = true;
+            readout.textContent = 'Drag a box on the map first.';
+            if (parentSel && newParentIn) {
+                parentSel.selectedIndex = 0;
+                newParentIn.style.display = 'none';
+                newParentIn.required = false;
+                newParentIn.value = '';
+            }
+        });
     })();
 </script>

@@ -103,13 +103,16 @@
         };
     };
 
-    var mapData = new Dictionary<string, object>
+    // Pass 9 fix: built from the Locations table, not a hardcoded four. This is the
+    // stats feed the map zones look themselves up in (zoneDataMap[title]). While it
+    // was hardcoded, a Parent added in Settings got a rectangle from Pass 8 but no
+    // entry here -- so it fell into the "empty" branch and read 0 Rows forever,
+    // however much stock was actually registered into it.
+    var mapData = new Dictionary<string, object>();
+    foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
     {
-        { "RD Lab", zone("RLB") },
-        { "External Yard", zone("ETRD") },
-        { "New Test Cells", zone("NWES") },
-        { "Plant Test Cells", zone("PATS") }
-    };
+        mapData[lp.Name] = zone(lp.Code);
+    }
     var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
 
     // Coded location hierarchy (Parent -> Major -> [Subs]) built from the REAL stored
@@ -745,11 +748,22 @@
             <!-- Reinstated Glowing Red Dot Tracker Element -->
             <div id="map-tracking-dot" class="glowing-tracker-dot"></div>
 
+            @* Pass 8: rectangles come from LocationZones. Coordinates are FRACTIONS
+               of the image (0-1), not pixels -- resizeMap() turns them into pixels
+               against whatever size the image is currently rendered at, so nothing
+               here depends on facility.png staying 1146x643.
+               title="{Name}" is load-bearing: zoneDataMap is keyed by the friendly
+               name, and the post-click Major/Sub menu looks itself up by it. *@
             <map name="labmap" id="labmap">
-                <area shape="rect" coords="1025,370,1110,520" href="/Home/Index?mode=Omni&omniSearch=RLB" title="RD Lab" />
-                <area shape="rect" coords="210,45,320,365" href="/Home/Index?mode=Omni&omniSearch=ETRD" title="External Yard" />
-                <area shape="rect" coords="975,165,1010,260" href="/Home/Index?mode=Omni&omniSearch=NWES" title="New Test Cells" />
-                <area shape="rect" coords="975,455,1010,480" href="/Home/Index?mode=Omni&omniSearch=PATS" title="Plant Test Cells" />
+                @foreach (var z in (List<(string Name, string Code, double X, double Y, double W, double H)>)(ViewBag.MapZones ?? new List<(string, string, double, double, double, double)>()))
+                {
+                    <area shape="rect" coords="0,0,0,0"
+                          data-nx="@z.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-ny="@z.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-nw="@z.W.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-nh="@z.H.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          href="/Home/Index?mode=Omni&omniSearch=@z.Code" title="@z.Name" />
+                }
             </map>
         </div>
 
@@ -1742,12 +1756,17 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Parent</label>
+                                @* Pass 9 fix: from the Locations table. NOTE the value is the
+                                   NAME, not the code -- bindCascadingLocation() runs encodeLoc()
+                                   on whatever is selected. That difference is why the 7C sweep
+                                   missed this one and the export filter below: they were greppable
+                                   as value="RD Lab", not value="RLB". *@
                             <select name="Parent" id="reg-parent" class="form-select">
                                 <option value="">Select Parent...</option>
-                                <option value="RD Lab">RD Lab</option>
-                                <option value="External Yard">External Yard</option>
-                                <option value="New Test Cells">New Test Cells</option>
-                                <option value="Plant Test Cells">Plant Test Cells</option>
+                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                {
+                                    <option value="@lp.Name">@lp.Name</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -1840,12 +1859,13 @@
 
                     <div class="row g-2 mb-3">
                         <div class="col-md-4">
+                            @* Same name-valued shape as reg-parent, same reason. *@
                             <select id="exp-parent" class="form-select form-select-sm">
                                 <option value="">Any Parent...</option>
-                                <option value="RD Lab">RD Lab</option>
-                                <option value="External Yard">External Yard</option>
-                                <option value="New Test Cells">New Test Cells</option>
-                                <option value="Plant Test Cells">Plant Test Cells</option>
+                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                {
+                                    <option value="@lp.Name">@lp.Name</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -2811,14 +2831,12 @@
         const container = document.querySelector('.map-image-frame');
         if (!img || !map || !container) return;
 
-        const originalWidth = img.naturalWidth;
-        const originalHeight = img.naturalHeight;
-        if (originalWidth === 0) return;
-
         const currentWidth = img.clientWidth;
         const currentHeight = img.clientHeight;
-        const widthRatio = currentWidth / originalWidth;
-        const heightRatio = currentHeight / originalHeight;
+        if (currentWidth === 0) return;
+        // Pass 8: zones are fractions now, so the image's natural size is no longer
+        // part of the maths -- one less thing that breaks if the floorplan is
+        // ever swapped for a different resolution.
 
         // Gets exact starting pixel offset of the visible map image inside the black frame
         const imgRect = img.getBoundingClientRect();
@@ -2835,9 +2853,12 @@
         const areas = map.getElementsByTagName('area');
 
         for (let a of areas) {
-            if (!a.dataset.orig) a.dataset.orig = a.coords;
-            const origCoords = a.dataset.orig.split(',').map(Number);
-            const scaledCoords = origCoords.map((c, i) => Math.round(c * (i % 2 === 0 ? widthRatio : heightRatio)));
+            const nx = parseFloat(a.dataset.nx), ny = parseFloat(a.dataset.ny);
+            const nw = parseFloat(a.dataset.nw), nh = parseFloat(a.dataset.nh);
+            if (isNaN(nx) || isNaN(ny) || isNaN(nw) || isNaN(nh)) continue;
+            const px = Math.round(nx * currentWidth), py = Math.round(ny * currentHeight);
+            const pw = Math.round(nw * currentWidth), ph = Math.round(nh * currentHeight);
+            const scaledCoords = [px, py, px + pw, py + ph];
             a.coords = scaledCoords.join(',');
 
             if (scaledCoords.length === 4) {
@@ -2947,7 +2968,17 @@
                         }
                     };
                 } else {
-                    zoneDiv.title = `${title} (Empty)`;
+                    // Pass 9 fix: an empty zone used to render as literally nothing --
+                    // no marker, no outline -- so a zone you just drew was
+                    // indistinguishable from one that failed to save. Show a dimmed
+                    // marker reading "0 rows" instead: visible, obviously empty, and
+                    // still clickable through to the (empty) filtered view.
+                    zoneDiv.title = `${title} — no stock recorded yet`;
+                    zoneDiv.innerHTML = `
+                        <div class="zone-marker" title="${title}" style="position:relative; opacity:.45;">
+                            <i class="bi bi-geo-alt marker-icon"></i>
+                            <span class="marker-count">0 Rows</span>
+                        </div>`;
                     zoneDiv.onclick = () => window.location.href = a.href;
                 }
 
@@ -3190,16 +3221,27 @@
         //   { Parent: { Major: [Sub, ...] } }
         const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
 
-        // Mirror of LocationCodec.Encode: 1st, 3rd, 5th and last letter/digit
-        // of the cleaned name, de-duplicated, kept in ascending order.
-        function encodeLoc(name) {
-            if (!name) return "";
-            const clean = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
-            if (!clean.length) return "";
-            const n = clean.length;
-            const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
-            return pos.map(p => clean[p - 1]).join("");
-        }
+    // Client-side half of the location code rule: 1st, 3rd, 5th and LAST
+    // letter/digit of the cleaned name. Must stay in lockstep with
+    // Services/LocationCodec.Encode().
+    //
+    // NOTE: duplicated in Views/Home/Intake.cshtml. Moving it to wwwroot/js/site.js
+    // was tried and reverted -- _Layout loads site.js after the body renders, so a
+    // view's inline script runs before it would exist. Fixing the duplication means
+    // moving that script reference higher in the layout, which touches every page.
+    //
+    // And do NOT write the layout's body-render call by name in here with a leading
+    // at-sign: inside a .cshtml file that is a Razor transition even within a JS
+    // comment, and it will be invoked for real. That is exactly how this comment
+    // took the dashboard down once already.
+    function encodeLoc(name) {
+        if (!name) return "";
+        const clean = String(name).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (!clean.length) return "";
+        const n = clean.length;
+        const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
+        return pos.map(p => clean[p - 1]).join("");
+    }
 
         function bindCascadingLocation(pId, mId, sId, rkId, rwId, fdaId) {
             const pSel = document.getElementById(pId);

@@ -102,6 +102,17 @@ namespace Visual_Inventory_System.Controllers
             // to be maintained by hand in this view.
             ViewBag.LocationParents = BuildLocationParents();
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
+            // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
+            // -- the one copy of the location vocabulary 7C missed, because it was
+            // an image map rather than a dropdown.
+            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
+                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
+                      z => z.LocationId, l => l.Id,
+                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
+                .ToList()
+                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
+                              X: z.X, Y: z.Y, W: z.W, H: z.H))
+                .ToList();
             // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
             // teams are offered; hidden ones stay on the items already using them.
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
@@ -149,9 +160,15 @@ namespace Visual_Inventory_System.Controllers
         // ============================
         // CART ACTIONS
         // ============================
+        // Pass 9: registering and ordering dropped from Engineer to Standard.
+        // Interns come in as Standard and could previously add stock to items that
+        // already existed but could neither create one nor request anything -- a
+        // half-capability that made no sense. Scrap, Ownership, Edit Details and
+        // thresholds stay at Engineer: changing or destroying what exists is a
+        // different kind of trust than adding to it.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0)
         {
             _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount);
@@ -162,7 +179,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult RemoveFromLedger(string itemId)
         {
             _orderService.RemoveItem(itemId);
@@ -172,7 +189,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult SubmitLedger()
         {
             if (!_orderService.GetCurrentDraft().Entries.Any())
@@ -294,7 +311,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult CreateItem(InventoryItem newItem)
         {
             try
@@ -421,7 +438,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult StartOrder()
         {
             _orderService.StartOrder();
@@ -430,7 +447,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult CancelOrder()
         {
             _orderService.CancelOrder();
@@ -510,6 +527,112 @@ namespace Visual_Inventory_System.Controllers
                 tree[p.Name] = majors;
             }
             return tree;
+        }
+
+
+        // =====================================================================
+        // BULK INTAKE (Pass 9) -- Standard+ can submit.
+        // =====================================================================
+        // Location pickers only offer what exists, so nobody can invent a shelf
+        // by typing. The escape hatch is "not listed", which HOLDS the batch for
+        // the superuser to map or create -- it does not block the person entering.
+
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult Intake()
+        {
+            ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
+            ViewBag.LocationParents = BuildLocationParents();
+            ViewBag.ActiveTeams = _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
+            ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Existing names + types, for the model autocomplete and the type
+            // datalist -- same idea as the Modify Stock picker: suggest, don't force.
+            ViewBag.KnownItemsJson = System.Text.Json.JsonSerializer.Serialize(
+                _db.InventoryItems.AsNoTracking()
+                   .Select(i => new { name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber })
+                   .ToList());
+            ViewBag.KnownTypes = _db.InventoryItems.AsNoTracking()
+                .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
+            ViewBag.MyPending = _db.IntakeBatches.AsNoTracking()
+                .Where(b => b.SubmittedBy == _currentUser.Name && b.Status == IntakeStatus.Pending)
+                .OrderByDescending(b => b.SubmittedAt).ToList();
+            return View();
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SubmitIntake(
+            string line, string? team,
+            string? parentCode, string? majorCode, string? subCode, string? rack, string? row,
+            string? requestedLocation,
+            string[]? itemName, string[]? type, string[]? brand, string[]? rpn, int[]? qty, string[]? serial,
+            bool preview = false)
+        {
+            var lines = new List<InventoryService.IntakeLine>();
+            for (int i = 0; itemName != null && i < itemName.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(itemName[i])) continue;
+                lines.Add(new InventoryService.IntakeLine
+                {
+                    ItemName = itemName[i],
+                    Type = type != null && i < type.Length ? type[i] : "",
+                    Brand = brand != null && i < brand.Length ? brand[i] : "",
+                    RheemPartNumber = rpn != null && i < rpn.Length && !string.IsNullOrWhiteSpace(rpn[i]) ? rpn[i] : "N/A",
+                    Quantity = qty != null && i < qty.Length ? qty[i] : 1,
+                    SerialNumber = serial != null && i < serial.Length ? serial[i] : null
+                });
+            }
+            if (lines.Count == 0)
+            {
+                TempData["Error"] = "Nothing to import — add at least one row.";
+                return RedirectToAction("Intake");
+            }
+
+            team = (team ?? "").Trim();
+            if (string.Equals(team, "N/A", StringComparison.OrdinalIgnoreCase)) team = "";
+
+            // ---- location not listed: HOLD the batch, don't lose the work ----
+            if (!string.IsNullOrWhiteSpace(requestedLocation) && string.IsNullOrWhiteSpace(parentCode))
+            {
+                var batch = new IntakeBatch
+                {
+                    SubmittedBy = _currentUser.Name, SubmittedAt = DateTime.UtcNow,
+                    Line = line ?? "", Team = team,
+                    ParentCode = "", MajorCode = "", SubCode = "",
+                    Rack = (rack ?? "").Trim(), Row = (row ?? "").Trim(),
+                    RequestedLocation = requestedLocation.Trim(),
+                    Status = IntakeStatus.Pending
+                };
+                foreach (var l in lines)
+                    batch.Rows.Add(new IntakeRow
+                    {
+                        ItemName = l.ItemName, Type = l.Type, Brand = l.Brand,
+                        RheemPartNumber = l.RheemPartNumber, Quantity = l.Quantity, SerialNumber = l.SerialNumber
+                    });
+                _db.IntakeBatches.Add(batch);
+                _db.SaveChanges();
+                TempData["Success"] = $"Sent for approval — {lines.Count} row(s) held until '{requestedLocation.Trim()}' is sorted out. Nothing is lost.";
+                return RedirectToAction("Intake");
+            }
+
+            var result = _inventoryService.CommitIntake(
+                lines, line ?? "", team,
+                parentCode ?? "", majorCode ?? "", subCode ?? "", rack ?? "", row ?? "",
+                _currentUser.Name, _currentUser.Line ?? "", preview);
+
+            if (preview || !result.Ok)
+            {
+                TempData["IntakePreview"] = System.Text.Json.JsonSerializer.Serialize(result);
+                if (!result.Ok && !preview)
+                    TempData["Error"] = "Nothing was imported — fix the problems listed and try again.";
+                return RedirectToAction("Intake");
+            }
+
+            TempData["Success"] = $"Imported {result.UnitsIn} unit(s): "
+                + $"{result.NewItems.Count} new item(s), {result.AddedToExisting.Count} added to existing"
+                + (result.SerialsLogged > 0 ? $", {result.SerialsLogged} serial(s) recorded" : "")
+                + (result.Skipped.Count > 0 ? $", {result.Skipped.Count} skipped" : "") + ".";
+            return RedirectToAction("Intake");
         }
 
         // Self-scoped loan ledger: this user's orders + their items still out.
