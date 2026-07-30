@@ -165,12 +165,15 @@
                              Blank levels store as "0". Shown only when "New location" chosen. -->
                         <div class="new-loc-row mt-2" id="newloc-@loan.OrderItemId">
                             <div class="d-flex flex-wrap gap-2">
+                                @* Pass 7C: from the Locations table -- this list and the one in
+                                   Index.cshtml used to be maintained by hand, in two places, with
+                                   the codes typed out. *@
                                 <select name="newParent" class="mo-input">
                                     <option value="">Parent…</option>
-                                    <option value="RLB">RD Lab (RLB)</option>
-                                    <option value="ETRD">External Yard (ETRD)</option>
-                                    <option value="NWES">New Test Cells (NWES)</option>
-                                    <option value="PATS">Plant Test Cells (PATS)</option>
+                                    @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                    {
+                                        <option value="@lp.Code">@lp.Name (@lp.Code)</option>
+                                    }
                                 </select>
                                 <input type="text" name="newMajor" placeholder="Major" class="mo-input" style="width:100px;" />
                                 <input type="text" name="newSub" placeholder="Sub" class="mo-input" style="width:100px;" />

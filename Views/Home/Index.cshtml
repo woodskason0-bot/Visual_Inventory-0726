@@ -1356,20 +1356,37 @@
                     </div>
 
                     <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
+                        @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
+                           (Commercial, Residential) with one LINE (International, which
+                           sits under Commercial Air) as if they were peers -- a flattened,
+                           wrong copy of OrgStructure. Group is also derived from the
+                           registering user's Line and frozen at creation, so letting a
+                           transfer change it would put an item's Group at odds with its
+                           own ItemId prefix.
+                           Ownership now moves the thing that actually governs visibility:
+                           Branch/Line. Same element ids as the old Edit Details cascade,
+                           so populateEditLinePickers() drives this unchanged. *@
                         <div class="col-6">
-                            <label class="form-label small fw-bold text-light-gray">New Group</label>
-                            <select name="newGroup" class="form-select">
-                                <option value="Commercial">Commercial</option>
-                                <option value="Residential">Residential</option>
-                                <option value="International">International</option>
+                            <label class="form-label small fw-bold text-light-gray">Branch</label>
+                            <select id="edit-line-branch" class="form-select" disabled>
+                                <option value="">-- Branch --</option>
                             </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Line</label>
+                            <select name="newLine" id="edit-line" class="form-select" disabled>
+                                <option value="">Unassigned</option>
+                            </select>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">
+                                Takes effect immediately &mdash; no transfer window. Blank = visible to everyone.
+                            </small>
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold text-light-gray">New Team</label>
                             @* Pass 7A: data-driven from the Teams table, and blank is
                                allowed -- team is optional now. The project code follows
                                whichever team is chosen, resolved server-side. *@
-                            <select name="newTeam" class="form-select">
+                            <select name="newTeam" id="edit-team" class="form-select" disabled>
                                 <option value="">N/A — no team</option>
                                 @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
                                 {
@@ -1405,21 +1422,11 @@
                             <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
                             <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
                         </div>
-                        <div class="row g-2 mb-1">
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-light-gray">Branch</label>
-                                <select id="edit-line-branch" class="form-select" disabled>
-                                    <option value="">-- Branch --</option>
-                                </select>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-light-gray">Line</label>
-                                <select name="newLine" id="edit-line" class="form-select" disabled>
-                                    <option value="">Unassigned</option>
-                                </select>
-                                <small class="text-light-gray d-block mt-1" style="font-size:10px;">Reassigning takes effect immediately -- no transfer window.</small>
-                            </div>
-                        </div>
+                        @* Pass 7B: Branch/Line moved OUT of here and into Internal -
+                           Transfer, where reassigning ownership belongs. Pass 3 put it
+                           here because Edit Details was the only Engineer+ pane that
+                           existed at the time; that made Internal - Transfer vestigial.
+                           Edit Details is identity only again: PN, Description, Brand. *@
                     </div>
 
                     <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
@@ -1436,10 +1443,11 @@
                                 <label class="form-label small fw-bold text-light-gray">Parent</label>
                                 <select name="newParent" id="loc-parent" class="form-select" disabled>
                                     <option value="">Select Parent...</option>
-                                    <option value="RLB">RD Lab (RLB)</option>
-                                    <option value="ETRD">External Yard (ETRD)</option>
-                                    <option value="NWES">New Test Cells (NWES)</option>
-                                    <option value="PATS">Plant Test Cells (PATS)</option>
+                                    @* Pass 7C: from the Locations table, codes derived. *@
+                                    @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                    {
+                                        <option value="@lp.Code">@lp.Name (@lp.Code)</option>
+                                    }
                                 </select>
                             </div>
                             <div class="col-md-4">
@@ -2188,6 +2196,13 @@
         const qtyInput = document.getElementById('stock-qty-input');
         const helpText = document.getElementById('stock-qty-help');
 
+        // Pass 7B: transfer-pane inputs are inert unless Internal - Transfer is
+        // the active action (re-enabled below when it is).
+        ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = true;
+        });
+
         populateVariantSel(action);
         const variantSel = document.getElementById('stock-variant-sel');
         const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
@@ -2199,7 +2214,8 @@
         const editOn = (action === 'Edit Details');
         if (editDiv) {
             editDiv.style.display = editOn ? 'block' : 'none';
-            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na', 'edit-line-branch', 'edit-line'].forEach(function (id) {
+            // Pass 7B: edit-line-branch / edit-line no longer live in this pane.
+            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !editOn;
             });
@@ -2218,6 +2234,21 @@
             if (locDiv) locDiv.style.display = 'none';
             if (moveQtyDiv) moveQtyDiv.style.display = 'none';
             qtyInput.required = false;
+            // Pass 7B: seed Branch/Line from the item's CURRENT line so the pane
+            // opens showing where it is now, not a blank slate. Uses getStockItem()
+            // -- the same lookup prefillEditDetails() uses -- because stock-item-id
+            // is a readonly text input, not a select with options to read.
+            // Disabled inputs don't post. These three stay disabled outside this
+            // action so a hidden pane can never contribute a stray value to an
+            // unrelated submit -- the same guard the Edit Details pane uses.
+            ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            if (typeof populateEditLinePickers === 'function') {
+                const ownItem = getStockItem();
+                populateEditLinePickers(ownItem ? (ownItem.line || '') : '');
+            }
         } else if (action === 'Location Transfer') {
             qtyDiv.style.display = 'none';
             ownDiv.style.display = 'none';
@@ -2283,12 +2314,16 @@
             ? 'This item already has a brand — it can\'t be changed here.'
             : 'Brand can only be ADDED when the item has none.';
 
-        populateEditLinePickers(item ? (item.line || '') : '');
+        // Pass 7B: the Branch/Line pickers moved to Internal - Transfer, which
+        // seeds them itself. Edit Details no longer touches them.
     }
 
-    // ---- Edit Details: Branch/Line cascade ---------------------------------
+    // ---- Internal - Transfer: Branch/Line cascade ---------------------------
     // Line reassignment is instant/complete (no transfer window) -- location
     // and ownership are decoupled, so this just overwrites item.Line.
+    // Element ids kept as edit-line-branch / edit-line: they were named for the
+    // pane Pass 3 put them in, and renaming them would touch five more call sites
+    // for no behavioural gain.
     function branchForLine(line) {
         for (var branch in orgStructure) {
             if (orgStructure[branch].indexOf(line) !== -1) return branch;
@@ -3148,12 +3183,12 @@
         // Location hierarchy (friendly names only). Codes are derived by the
         // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),
         // so the live preview always matches what actually gets saved.
-        const locMap = {
-            "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja"], "2-6": [] },
-            "External Yard": { "Connex Area": ["Connex Box 6"], "Trailer Area": ["Trailer 1"] },
-            "New Test Cells": {},
-            "Plant Test Cells": {}
-        };
+        // Pass 7C: served from the Locations table instead of being typed here.
+        // This object and LocationCodec's name list were two hand-kept copies of
+        // the same vocabulary; they drifted, and 34 variant rows ended up on Sub
+        // codes neither copy knew about. Shape is unchanged:
+        //   { Parent: { Major: [Sub, ...] } }
+        const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
 
         // Mirror of LocationCodec.Encode: 1st, 3rd, 5th and last letter/digit
         // of the cleaned name, de-duplicated, kept in ascending order.

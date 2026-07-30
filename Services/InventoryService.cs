@@ -488,10 +488,16 @@ namespace Visual_Inventory_System.Services
             && type.Trim().ToLowerInvariant().EndsWith("motor");
 
         // Loanable "controls" = types that end with "Control" (e.g. "Control",
-        // "Fan Control"). NOTE: Type is free-text and NO current item is typed
-        // this way, so today this matches nothing -- control-ish stock (EEV, TXV,
-        // VFD, Valve) is NOT counted until you either type items as "...Control"
-        // or widen this one helper. This is the single place to change that rule.
+        // "Fan Control").
+        //
+        // CORRECTED Pass 7B: this comment used to claim no item was typed this way
+        // and that the rule therefore matched nothing. That is FALSE -- 9 items are
+        // Type = "Control" as of the 7/28 audit, so the Control loan path is live
+        // and those items loan their full quantity.
+        //
+        // Still true: other control-ish stock (EEV, VFD, Valve, TXV) is NOT matched,
+        // because Type is free text and those aren't spelled "...Control". Widen it
+        // here if that changes -- this is the single place the rule lives.
         public static bool IsControlType(string? type) =>
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().ToLowerInvariant().EndsWith("control");
@@ -556,7 +562,8 @@ namespace Visual_Inventory_System.Services
 
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
-            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0)
+            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
+            string? newLine = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -658,8 +665,28 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Ownership")
             {
-                details = $"Moved from {item.Group}/{item.Team} to ";
-                if (!string.IsNullOrWhiteSpace(newGroup)) item.Group = newGroup;
+                // Pass 7B: ownership means LINE now, not Group.
+                //
+                // The old "New Group" picker offered Commercial / Residential /
+                // International -- two BRANCHES and one LINE, flattened as peers.
+                // Group is also derived from the registering user's Line and frozen
+                // at creation (it mints the ItemId prefix), so a transfer must not
+                // move it or an item's Group would contradict its own id.
+                //
+                // newGroup is still accepted by the signature for call compatibility
+                // and is deliberately IGNORED.
+                string oldLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
+                string oldTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
+
+                if (newLine != null)
+                {
+                    string ln = newLine.Trim();
+                    // Blank is legal -- it means unassigned, which fails OPEN
+                    // (visible to everyone), the Pass 3 rollout default.
+                    if (ln.Length > 0 && !OrgStructure.IsValidLine(ln))
+                        return (item, oldQty, item.Quantity);
+                    item.Line = ln;
+                }
                 if (newTeam != null)
                 {
                     // Pass 7A: was
@@ -675,7 +702,9 @@ namespace Visual_Inventory_System.Services
                         ? ""
                         : (_db.Teams.FirstOrDefault(x => x.Name == t)?.ProjectCode ?? "");
                 }
-                details += $"{item.Group}/{item.Team}";
+                string nowLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
+                string nowTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
+                details = $"Moved from '{oldLine}' ({oldTeam}) to '{nowLine}' ({nowTeam}).";
             }
             else if (actionType == "Location Transfer")
             {

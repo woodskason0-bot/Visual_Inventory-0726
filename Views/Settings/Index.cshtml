@@ -51,6 +51,73 @@
     </div>
 
     <!-- USERS & ACCESS -->
+<!-- ============ LOCATIONS (Pass 7C) ============ -->
+<div class="settings-card p-4 mb-4">
+    <h5 class="text-white fw-bold mb-1">Locations</h5>
+    <p class="text-light-gray small mb-3">
+        The Parent / Major / Sub vocabulary used everywhere locations are picked.
+        <strong>Codes are derived, never typed</strong> &mdash; the 1st, 3rd, 5th and last
+        character of the name, the same rule the app has always used. Rack and Row stay
+        free text on each item.
+    </p>
+
+    @{
+        var locs = (List<Visual_Inventory_System.Models.Location>)ViewBag.Locations;
+        var codes = (Dictionary<int, string>)ViewBag.LocationCodes;
+        var byId = locs.ToDictionary(x => x.Id, x => x);
+        string OwnerOf(Visual_Inventory_System.Models.Location l) =>
+            l.ParentId.HasValue && byId.ContainsKey(l.ParentId.Value) ? byId[l.ParentId.Value].Name : "—";
+    }
+
+    <table class="table table-sm align-middle">
+        <thead><tr><th>Level</th><th>Name</th><th>Code</th><th>Within</th><th class="text-end">Status</th></tr></thead>
+        <tbody>
+        @foreach (var lvl in Visual_Inventory_System.Models.LocationLevel.All)
+        {
+            foreach (var l in locs.Where(x => x.Level == lvl).OrderBy(x => x.Name))
+            {
+                <tr style="@(l.IsActive ? "" : "opacity:.5;")">
+                    <td class="text-light-gray small">@l.Level</td>
+                    <td class="fw-bold">@l.Name</td>
+                    <td><code>@(codes.ContainsKey(l.Id) ? codes[l.Id] : "")</code></td>
+                    <td class="text-light-gray small">@OwnerOf(l)</td>
+                    <td class="text-end">
+                        <form asp-controller="Settings" asp-action="ToggleLocationActive" method="post">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="locationId" value="@l.Id" />
+                            <button type="submit" class="btn btn-sm @(l.IsActive ? "btn-outline-warning" : "btn-outline-success")">
+                                @(l.IsActive ? "Hide" : "Restore")
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+            }
+        }
+        </tbody>
+    </table>
+
+    <h6 class="text-white fw-bold mb-2 mt-4">Add Location</h6>
+    <form asp-controller="Settings" asp-action="AddLocation" method="post" class="d-flex gap-2 flex-wrap align-items-center">
+        @Html.AntiForgeryToken()
+        <select name="level" id="loc-level" class="form-select form-select-sm" style="max-width:130px;">
+            <option value="Parent">Parent</option>
+            <option value="Major">Major</option>
+            <option value="Sub">Sub</option>
+        </select>
+        <input type="text" name="name" placeholder="Location name" required
+               class="form-control form-control-sm" style="max-width:220px;" />
+        <select name="parentId" id="loc-owner" class="form-select form-select-sm" style="max-width:230px;" disabled>
+            <option value="">— top level —</option>
+        </select>
+        <button type="submit" class="btn btn-sm btn-success fw-bold">Add Location</button>
+    </form>
+    <div class="text-light-gray small mt-2">
+        <i class="bi bi-info-circle me-1"></i>Hiding a location drops it from the pickers
+        <em>and</em> from the decode map, so anything still stored there reverts to showing its raw
+        code until it's moved. A name whose code would collide with an existing one is rejected.
+    </div>
+</div>
+
 <!-- ============ TEAMS / PROJECTS (Pass 7A) ============ -->
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Teams &amp; Projects</h5>
@@ -306,5 +373,38 @@
 
         var addUserForm = document.getElementById('addUserForm');
         if (addUserForm) wireLinePicker(addUserForm);
+    })();
+</script>
+
+<script>
+    // Add-Location owner picker: a Major belongs to a Parent, a Sub to a Major.
+    // Built from the same rows the table above renders, so it can't offer an
+    // owner that doesn't exist.
+    (function () {
+        const levelSel = document.getElementById('loc-level');
+        const ownerSel = document.getElementById('loc-owner');
+        if (!levelSel || !ownerSel) return;
+
+        const parents = [@Html.Raw(string.Join(",", ((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Parent" && x.IsActive).Select(x => $"{{id:{x.Id},name:\"{x.Name}\"}}")))];
+        const majors  = [@Html.Raw(string.Join(",", ((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Major" && x.IsActive).Select(x => $"{{id:{x.Id},name:\"{x.Name}\"}}")))];
+
+        function refresh() {
+            const lvl = levelSel.value;
+            const src = lvl === 'Major' ? parents : (lvl === 'Sub' ? majors : []);
+            ownerSel.innerHTML = '';
+            if (lvl === 'Parent') {
+                ownerSel.innerHTML = '<option value="">— top level —</option>';
+                ownerSel.disabled = true;
+                return;
+            }
+            ownerSel.disabled = false;
+            src.forEach(function (o) {
+                const opt = document.createElement('option');
+                opt.value = o.id; opt.textContent = o.name;
+                ownerSel.appendChild(opt);
+            });
+        }
+        levelSel.addEventListener('change', refresh);
+        refresh();
     })();
 </script>

@@ -23,6 +23,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
         public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
         public DbSet<Team> Teams { get; set; } = null!;
+        public DbSet<Location> Locations { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -86,6 +87,13 @@ namespace Visual_Inventory_System.Data
                  .WithMany()
                  .HasForeignKey(s => s.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Location>(b =>
+            {
+                // Unique per (level, owner, name): two "Rack A" Subs under different
+                // Majors are legitimate, a duplicate under the same one is not.
+                b.HasIndex(l => new { l.Level, l.ParentId, l.Name }).IsUnique();
             });
 
             modelBuilder.Entity<Team>(b =>

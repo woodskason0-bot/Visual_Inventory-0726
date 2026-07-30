@@ -97,6 +97,11 @@ namespace Visual_Inventory_System.Controllers
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Pass 7C: the location vocabulary, straight from the table. Replaces the
+            // hardcoded <option value="RLB"> list AND the locMap {} object that used
+            // to be maintained by hand in this view.
+            ViewBag.LocationParents = BuildLocationParents();
+            ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
             // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
             // teams are offered; hidden ones stay on the items already using them.
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
@@ -257,7 +262,11 @@ namespace Visual_Inventory_System.Controllers
             // Identity edits never touch quantities/variants -- separate path.
             if (string.Equals(actionType, "Edit Details", StringComparison.OrdinalIgnoreCase))
             {
-                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, newLine);
+                // Pass 7B: Edit Details no longer edits Line -- that pane's Branch/Line
+                // fields moved to Internal - Transfer. newLine is passed as null so a
+                // stale value posted from the (hidden) transfer pane can never silently
+                // reassign an item's Line while someone edits its part number.
+                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, null);
                 if (ok) TempData["Success"] = $"{itemId}: {message}";
                 else TempData["Error"] = message;
                 return RedirectToAction("Index");
@@ -266,7 +275,8 @@ namespace Visual_Inventory_System.Controllers
             try
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
-                    newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty);
+                    newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
+                    newLine);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -465,6 +475,43 @@ namespace Visual_Inventory_System.Controllers
             return View(transactions);
         }
 
+
+        // ----------------------------------------------------------------------
+        // LOCATION VOCABULARY (Pass 7C)
+        // Codes are DERIVED here, never read from the table -- LocationCodec.Encode
+        // stays the only thing that turns a name into a code, so a stored code can
+        // never disagree with the rule.
+        // ----------------------------------------------------------------------
+        private List<(string Code, string Name)> BuildLocationParents()
+        {
+            return _db.Locations.AsNoTracking()
+                .Where(l => l.Level == LocationLevel.Parent && l.IsActive)
+                .OrderBy(l => l.Name).ToList()
+                .Select(l => (Code: LocationCodec.Encode(l.Name), Name: l.Name))
+                .ToList();
+        }
+
+        // { "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja", ...] }, ... }
+        // Friendly names only -- the client derives codes with its own copy of the
+        // same rule, which is why the shapes must stay identical.
+        private Dictionary<string, Dictionary<string, List<string>>> BuildLocationTree()
+        {
+            var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
+            var tree = new Dictionary<string, Dictionary<string, List<string>>>();
+            foreach (var p in all.Where(l => l.Level == LocationLevel.Parent).OrderBy(l => l.Name))
+            {
+                var majors = new Dictionary<string, List<string>>();
+                foreach (var m in all.Where(l => l.Level == LocationLevel.Major && l.ParentId == p.Id).OrderBy(l => l.Name))
+                {
+                    majors[m.Name] = all
+                        .Where(l => l.Level == LocationLevel.Sub && l.ParentId == m.Id)
+                        .OrderBy(l => l.Name).Select(l => l.Name).ToList();
+                }
+                tree[p.Name] = majors;
+            }
+            return tree;
+        }
+
         // Self-scoped loan ledger: this user's orders + their items still out.
         public IActionResult MyOrders()
         {
@@ -487,6 +534,12 @@ namespace Visual_Inventory_System.Controllers
                 if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                 if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                 if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
+                // Pass 7C: Rack and Row were dropped from this label entirely, which
+                // made every Lean-To variant read as plain "Plant Test Cells" -- and
+                // two variants of the same item at different racks indistinguishable
+                // in the picker. They are free text, so they are shown as stored.
+                if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
+                if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                 string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
                 return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
             }
@@ -532,6 +585,7 @@ namespace Visual_Inventory_System.Controllers
                 }
             }
 
+            ViewBag.LocationParents = BuildLocationParents();
             return View(new MyOrdersViewModel { UserName = me, Orders = myOrders, Loans = loans });
         }
 
@@ -589,6 +643,12 @@ namespace Visual_Inventory_System.Controllers
                         if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                         if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                         if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
+                        // Pass 7C: Rack and Row were dropped from this label entirely, which
+                        // made every Lean-To variant read as plain "Plant Test Cells" -- and
+                        // two variants of the same item at different racks indistinguishable
+                        // in the picker. They are free text, so they are shown as stored.
+                        if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
+                        if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                         string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
                         return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
                     }

@@ -60,6 +60,11 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult Index()
         {
             ViewBag.Teams = _db.Teams.OrderByDescending(t => t.IsActive).ThenBy(t => t.Name).ToList();
+            ViewBag.Locations = _db.Locations.OrderBy(l => l.Level).ThenBy(l => l.Name).ToList();
+            // Codes shown next to each name are DERIVED, never stored -- so what the
+            // panel displays is exactly what Encode() will produce.
+            ViewBag.LocationCodes = _db.Locations.ToList()
+                .ToDictionary(l => l.Id, l => LocationCodec.Encode(l.Name));
             // How many items still point at each team name -- shown next to Hide so
             // nobody hides a team without seeing what references it.
             ViewBag.TeamUsage = _db.InventoryItems
@@ -309,6 +314,104 @@ namespace Visual_Inventory_System.Controllers
         // pointing at the old value unless it cascaded -- and a cascading
         // rename is hard to undo. Add a new team and hide the old one instead;
         // that leaves the history readable either way.
+
+
+        // ==========================================================
+        // LOCATIONS (Pass 7C)
+        // ==========================================================
+        // The vocabulary used to live in four hand-kept copies -- the codec's const
+        // array, the JS cascade map, and two hardcoded <option> lists. They drifted:
+        // 34 variant rows carried Sub codes no copy knew, so breadcrumbs showed raw
+        // codes. One table now feeds all four.
+        //
+        // Codes are NEVER stored. LocationCodec.Encode() derives them from the name
+        // by the same 1st/3rd/5th/last rule, so nothing here can contradict it.
+
+        private void RefreshLocationCodec()
+        {
+            LocationCodec.Refresh(_db.Locations.Where(l => l.IsActive).Select(l => l.Name).ToList());
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddLocation(string name, string level, int? parentId)
+        {
+            name = (name ?? "").Trim();
+            level = (level ?? "").Trim();
+
+            if (name.Length == 0) { TempData["Error"] = "A location needs a name."; return RedirectToAction("Index"); }
+            if (!LocationLevel.All.Contains(level)) { TempData["Error"] = "Pick Parent, Major or Sub."; return RedirectToAction("Index"); }
+            if (level != LocationLevel.Parent && (parentId == null || parentId <= 0))
+            {
+                TempData["Error"] = $"A {level} needs an owner one level up.";
+                return RedirectToAction("Index");
+            }
+            if (level == LocationLevel.Parent) parentId = null;
+
+            if (_db.Locations.Any(l => l.Level == level && l.ParentId == parentId && l.Name.ToLower() == name.ToLower()))
+            {
+                TempData["Error"] = $"'{name}' already exists at that level.";
+                return RedirectToAction("Index");
+            }
+
+            // A name whose code collides with an existing one would make Decode()
+            // ambiguous -- first writer wins and the second becomes invisible. Catch
+            // it here rather than letting it silently mis-label a shelf later.
+            string code = LocationCodec.Encode(name);
+            var clash = _db.Locations.Where(l => l.IsActive).ToList()
+                .FirstOrDefault(l => LocationCodec.Encode(l.Name) == code);
+            if (clash != null)
+            {
+                TempData["Error"] = $"'{name}' encodes to {code}, which '{clash.Name}' already uses. Pick a name that encodes differently.";
+                return RedirectToAction("Index");
+            }
+
+            _db.Locations.Add(new Location { Name = name, Level = level, ParentId = parentId, IsActive = true });
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Location Added",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{level} '{name}' added (code {code}).",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshLocationCodec();
+            TempData["Success"] = $"{level} '{name}' added — code {code}.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult ToggleLocationActive(int locationId)
+        {
+            var loc = _db.Locations.FirstOrDefault(l => l.Id == locationId);
+            if (loc == null) { TempData["Error"] = "That location no longer exists."; return RedirectToAction("Index"); }
+
+            loc.IsActive = !loc.IsActive;
+            string code = LocationCodec.Encode(loc.Name);
+            int inUse = _db.ItemVariants.Count(v => v.Parent == code || v.Major == code || v.Sub == code);
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Location Updated",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"{loc.Level} '{loc.Name}' ({code}): IsActive -> {loc.IsActive}. {inUse} variant(s) reference it.",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshLocationCodec();
+
+            // Hiding also drops the name from the decode map, so anything still
+            // stored at that code goes back to rendering raw. Say so plainly.
+            TempData["Success"] = loc.IsActive
+                ? $"'{loc.Name}' is selectable again."
+                : $"'{loc.Name}' hidden. {inUse} variant(s) still stored there will show as '{code}' until moved.";
+            return RedirectToAction("Index");
+        }
 
         [HttpPost]
         [ValidateAntiForgeryToken]
