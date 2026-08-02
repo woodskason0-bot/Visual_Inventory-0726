@@ -329,7 +329,7 @@ namespace Visual_Inventory_System.Controllers
 
                 // --- LOCATION ENCODING (single source of truth) ---
                 // The form posts friendly names ("RD Lab", "Trailer Area", ...).
-                // We convert them to codes here, store the CODE in Parent for a
+                // I convert them to codes here, store the CODE in Parent for a
                 // consistent column, and rebuild the FDA string from codes so a
                 // client-supplied value can never put bad data in the DB.
                 string pCode = LocationCodec.Encode(newItem.Parent);
