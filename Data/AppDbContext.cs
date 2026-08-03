@@ -22,6 +22,11 @@ namespace Visual_Inventory_System.Data
         public DbSet<AppSetting> AppSettings { get; set; } = null!;
         public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
         public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
+        public DbSet<Team> Teams { get; set; } = null!;
+        public DbSet<Location> Locations { get; set; } = null!;
+        public DbSet<LocationZone> LocationZones { get; set; } = null!;
+        public DbSet<IntakeBatch> IntakeBatches { get; set; } = null!;
+        public DbSet<IntakeRow> IntakeRows { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -85,6 +90,68 @@ namespace Visual_Inventory_System.Data
                  .WithMany()
                  .HasForeignKey(s => s.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<IntakeBatch>(b =>
+            {
+                // Only PENDING batches live here, so the queue is the table -- an
+                // index on Status keeps "show me what's waiting" cheap as approved
+                // ones accumulate behind it.
+                b.HasIndex(x => x.Status);
+                b.HasMany(x => x.Rows)
+                 .WithOne(r => r.Batch!)
+                 .HasForeignKey(r => r.IntakeBatchId)
+                 .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<LocationZone>(b =>
+            {
+                // Cascade: deleting a Parent takes its map rectangles with it --
+                // a zone pointing at nothing would render an unclickable ghost.
+                b.HasOne<Location>()
+                 .WithMany()
+                 .HasForeignKey(z => z.LocationId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                b.HasIndex(z => z.LocationId);
+            });
+
+            modelBuilder.Entity<Location>(b =>
+            {
+                // Unique per (level, owner, name): two "Rack A" Subs under different
+                // Majors are legitimate, a duplicate under the same one is not.
+                b.HasIndex(l => new { l.Level, l.ParentId, l.Name }).IsUnique();
+            });
+
+            modelBuilder.Entity<Team>(b =>
+            {
+                // One row per team name. Vocabulary table -- items still store the
+                // NAME as a plain string (same convention as Line), so this is a
+                // picker source, not a foreign key.
+                b.HasIndex(t => t.Name).IsUnique();
+            });
+
+            modelBuilder.Entity<CompressorUnit>(b =>
+            {
+                // Every read of this table is "all units for this ItemId"
+                // (GetCompressorUnitsGrouped, the sidebar Compressors modal),
+                // so ItemId carries an index.
+                //
+                // This block is not optional. Migration 20260727 creates
+                // IX_CompressorUnits_ItemId, so the snapshot declares it;
+                // without a matching HasIndex the runtime model and the
+                // snapshot disagree, EF raises PendingModelChangesWarning, and
+                // Migrate() aborts before applying ANY migration -- which is
+                // what silently blocked Passes 3, 4 and 5.
+                b.HasIndex(c => c.ItemId);
+
+                // A model may not carry the same serial twice; two DIFFERENT
+                // models may share one, because LG reuses serials across model
+                // lines. So the unique key is the PAIR. Blank/NULL exempt --
+                // most units have no serial captured yet.
+                b.HasIndex(c => new { c.ItemId, c.SerialNumber })
+                 .IsUnique()
+                 .HasFilter("\"SerialNumber\" IS NOT NULL AND \"SerialNumber\" <> ''");
             });
         }
     }

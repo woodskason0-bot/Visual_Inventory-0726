@@ -221,6 +221,11 @@
                         <li class="nav-item ms-3">
                             <a class="nav-link @(currentAction == "MyOrders" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="MyOrders">My Orders</a>
                         </li>
+                        @* Pass 9: bulk intake, Standard+ -- interns can log stock without
+                           being able to invent a location. *@
+                        <li class="nav-item ms-3">
+                            <a class="nav-link @(currentAction == "Intake" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Intake">Intake</a>
+                        </li>
                         @if (signedIn && string.Equals(visUser, SuperuserGate.SuperuserName, StringComparison.OrdinalIgnoreCase))
                         {
                             <li class="nav-item ms-3">

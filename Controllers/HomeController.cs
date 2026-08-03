@@ -97,6 +97,29 @@ namespace Visual_Inventory_System.Controllers
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Pass 7C: the location vocabulary, straight from the table. Replaces the
+            // hardcoded <option value="RLB"> list AND the locMap {} object that used
+            // to be maintained by hand in this view.
+            ViewBag.LocationParents = BuildLocationParents();
+            ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
+            // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
+            // -- the one copy of the location vocabulary 7C missed, because it was
+            // an image map rather than a dropdown.
+            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
+                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
+                      z => z.LocationId, l => l.Id,
+                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
+                .ToList()
+                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
+                              X: z.X, Y: z.Y, W: z.W, H: z.H))
+                .ToList();
+            // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
+            // teams are offered; hidden ones stay on the items already using them.
+            ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
+                .Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
+            // The export filter offers HIDDEN teams too -- you still need to pull a
+            // report on a team that was retired last quarter.
+            ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
 
             var currentDraft = _orderService.GetCurrentDraft();
             var draftEntries = currentDraft.Entries;
@@ -137,9 +160,15 @@ namespace Visual_Inventory_System.Controllers
         // ============================
         // CART ACTIONS
         // ============================
+        // Pass 9: registering and ordering dropped from Engineer to Standard.
+        // Interns come in as Standard and could previously add stock to items that
+        // already existed but could neither create one nor request anything -- a
+        // half-capability that made no sense. Scrap, Ownership, Edit Details and
+        // thresholds stay at Engineer: changing or destroying what exists is a
+        // different kind of trust than adding to it.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0)
         {
             _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount);
@@ -150,7 +179,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult RemoveFromLedger(string itemId)
         {
             _orderService.RemoveItem(itemId);
@@ -160,7 +189,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult SubmitLedger()
         {
             if (!_orderService.GetCurrentDraft().Entries.Any())
@@ -250,7 +279,11 @@ namespace Visual_Inventory_System.Controllers
             // Identity edits never touch quantities/variants -- separate path.
             if (string.Equals(actionType, "Edit Details", StringComparison.OrdinalIgnoreCase))
             {
-                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, newLine);
+                // Pass 7B: Edit Details no longer edits Line -- that pane's Branch/Line
+                // fields moved to Internal - Transfer. newLine is passed as null so a
+                // stale value posted from the (hidden) transfer pane can never silently
+                // reassign an item's Line while someone edits its part number.
+                var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, null);
                 if (ok) TempData["Success"] = $"{itemId}: {message}";
                 else TempData["Error"] = message;
                 return RedirectToAction("Index");
@@ -259,7 +292,8 @@ namespace Visual_Inventory_System.Controllers
             try
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
-                    newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty);
+                    newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
+                    newLine);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -277,7 +311,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult CreateItem(InventoryItem newItem)
         {
             try
@@ -310,9 +344,20 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Sub ??= "";
                 newItem.Rack ??= "";
                 newItem.Row ??= "";
-                newItem.Group ??= "Commercial";
-                newItem.Team ??= "Samurai";
-                newItem.ProjectCode ??= "7166";
+                // Pass 7A: Group is no longer a form field. It is derived from the
+                // Line of whoever is registering, so the ItemId prefix records the
+                // creator's org placement. Set once here and never changed after --
+                // otherwise an item's id and its Group would disagree.
+                newItem.Group = OrgStructure.GroupFor(_currentUser.Line);
+
+                // Team is now OPTIONAL and no longer defaults to Samurai. Blank is a
+                // real choice; the project code follows whichever team was picked.
+                newItem.Team = (newItem.Team ?? "").Trim();
+                if (string.Equals(newItem.Team, "N/A", StringComparison.OrdinalIgnoreCase))
+                    newItem.Team = "";
+                newItem.ProjectCode = newItem.Team.Length == 0
+                    ? ""
+                    : (_db.Teams.FirstOrDefault(t => t.Name == newItem.Team)?.ProjectCode ?? "");
                 newItem.Line ??= "";
                 if (newItem.Line.Length > 0 && !OrgStructure.IsValidLine(newItem.Line))
                 {
@@ -393,7 +438,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult StartOrder()
         {
             _orderService.StartOrder();
@@ -402,7 +447,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Engineer)]
+        [RequireLevel(AccessLevels.Standard)]
         public IActionResult CancelOrder()
         {
             _orderService.CancelOrder();
@@ -447,6 +492,149 @@ namespace Visual_Inventory_System.Controllers
             return View(transactions);
         }
 
+
+        // ----------------------------------------------------------------------
+        // LOCATION VOCABULARY (Pass 7C)
+        // Codes are DERIVED here, never read from the table -- LocationCodec.Encode
+        // stays the only thing that turns a name into a code, so a stored code can
+        // never disagree with the rule.
+        // ----------------------------------------------------------------------
+        private List<(string Code, string Name)> BuildLocationParents()
+        {
+            return _db.Locations.AsNoTracking()
+                .Where(l => l.Level == LocationLevel.Parent && l.IsActive)
+                .OrderBy(l => l.Name).ToList()
+                .Select(l => (Code: LocationCodec.Encode(l.Name), Name: l.Name))
+                .ToList();
+        }
+
+        // { "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja", ...] }, ... }
+        // Friendly names only -- the client derives codes with its own copy of the
+        // same rule, which is why the shapes must stay identical.
+        private Dictionary<string, Dictionary<string, List<string>>> BuildLocationTree()
+        {
+            var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
+            var tree = new Dictionary<string, Dictionary<string, List<string>>>();
+            foreach (var p in all.Where(l => l.Level == LocationLevel.Parent).OrderBy(l => l.Name))
+            {
+                var majors = new Dictionary<string, List<string>>();
+                foreach (var m in all.Where(l => l.Level == LocationLevel.Major && l.ParentId == p.Id).OrderBy(l => l.Name))
+                {
+                    majors[m.Name] = all
+                        .Where(l => l.Level == LocationLevel.Sub && l.ParentId == m.Id)
+                        .OrderBy(l => l.Name).Select(l => l.Name).ToList();
+                }
+                tree[p.Name] = majors;
+            }
+            return tree;
+        }
+
+
+        // =====================================================================
+        // BULK INTAKE (Pass 9) -- Standard+ can submit.
+        // =====================================================================
+        // Location pickers only offer what exists, so nobody can invent a shelf
+        // by typing. The escape hatch is "not listed", which HOLDS the batch for
+        // the superuser to map or create -- it does not block the person entering.
+
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult Intake()
+        {
+            ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
+            ViewBag.LocationParents = BuildLocationParents();
+            ViewBag.ActiveTeams = _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
+            ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Existing names + types, for the model autocomplete and the type
+            // datalist -- same idea as the Modify Stock picker: suggest, don't force.
+            ViewBag.KnownItemsJson = System.Text.Json.JsonSerializer.Serialize(
+                _db.InventoryItems.AsNoTracking()
+                   .Select(i => new { name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber })
+                   .ToList());
+            ViewBag.KnownTypes = _db.InventoryItems.AsNoTracking()
+                .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
+            ViewBag.MyPending = _db.IntakeBatches.AsNoTracking()
+                .Where(b => b.SubmittedBy == _currentUser.Name && b.Status == IntakeStatus.Pending)
+                .OrderByDescending(b => b.SubmittedAt).ToList();
+            return View();
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SubmitIntake(
+            string line, string? team,
+            string? parentCode, string? majorCode, string? subCode, string? rack, string? row,
+            string? requestedLocation,
+            string[]? itemName, string[]? type, string[]? brand, string[]? rpn, int[]? qty, string[]? serial,
+            bool preview = false)
+        {
+            var lines = new List<InventoryService.IntakeLine>();
+            for (int i = 0; itemName != null && i < itemName.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(itemName[i])) continue;
+                lines.Add(new InventoryService.IntakeLine
+                {
+                    ItemName = itemName[i],
+                    Type = type != null && i < type.Length ? type[i] : "",
+                    Brand = brand != null && i < brand.Length ? brand[i] : "",
+                    RheemPartNumber = rpn != null && i < rpn.Length && !string.IsNullOrWhiteSpace(rpn[i]) ? rpn[i] : "N/A",
+                    Quantity = qty != null && i < qty.Length ? qty[i] : 1,
+                    SerialNumber = serial != null && i < serial.Length ? serial[i] : null
+                });
+            }
+            if (lines.Count == 0)
+            {
+                TempData["Error"] = "Nothing to import — add at least one row.";
+                return RedirectToAction("Intake");
+            }
+
+            team = (team ?? "").Trim();
+            if (string.Equals(team, "N/A", StringComparison.OrdinalIgnoreCase)) team = "";
+
+            // ---- location not listed: HOLD the batch, don't lose the work ----
+            if (!string.IsNullOrWhiteSpace(requestedLocation) && string.IsNullOrWhiteSpace(parentCode))
+            {
+                var batch = new IntakeBatch
+                {
+                    SubmittedBy = _currentUser.Name, SubmittedAt = DateTime.UtcNow,
+                    Line = line ?? "", Team = team,
+                    ParentCode = "", MajorCode = "", SubCode = "",
+                    Rack = (rack ?? "").Trim(), Row = (row ?? "").Trim(),
+                    RequestedLocation = requestedLocation.Trim(),
+                    Status = IntakeStatus.Pending
+                };
+                foreach (var l in lines)
+                    batch.Rows.Add(new IntakeRow
+                    {
+                        ItemName = l.ItemName, Type = l.Type, Brand = l.Brand,
+                        RheemPartNumber = l.RheemPartNumber, Quantity = l.Quantity, SerialNumber = l.SerialNumber
+                    });
+                _db.IntakeBatches.Add(batch);
+                _db.SaveChanges();
+                TempData["Success"] = $"Sent for approval — {lines.Count} row(s) held until '{requestedLocation.Trim()}' is sorted out. Nothing is lost.";
+                return RedirectToAction("Intake");
+            }
+
+            var result = _inventoryService.CommitIntake(
+                lines, line ?? "", team,
+                parentCode ?? "", majorCode ?? "", subCode ?? "", rack ?? "", row ?? "",
+                _currentUser.Name, _currentUser.Line ?? "", preview);
+
+            if (preview || !result.Ok)
+            {
+                TempData["IntakePreview"] = System.Text.Json.JsonSerializer.Serialize(result);
+                if (!result.Ok && !preview)
+                    TempData["Error"] = "Nothing was imported — fix the problems listed and try again.";
+                return RedirectToAction("Intake");
+            }
+
+            TempData["Success"] = $"Imported {result.UnitsIn} unit(s): "
+                + $"{result.NewItems.Count} new item(s), {result.AddedToExisting.Count} added to existing"
+                + (result.SerialsLogged > 0 ? $", {result.SerialsLogged} serial(s) recorded" : "")
+                + (result.Skipped.Count > 0 ? $", {result.Skipped.Count} skipped" : "") + ".";
+            return RedirectToAction("Intake");
+        }
+
         // Self-scoped loan ledger: this user's orders + their items still out.
         public IActionResult MyOrders()
         {
@@ -469,6 +657,12 @@ namespace Visual_Inventory_System.Controllers
                 if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                 if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                 if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
+                // Pass 7C: Rack and Row were dropped from this label entirely, which
+                // made every Lean-To variant read as plain "Plant Test Cells" -- and
+                // two variants of the same item at different racks indistinguishable
+                // in the picker. They are free text, so they are shown as stored.
+                if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
+                if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                 string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
                 return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
             }
@@ -482,6 +676,17 @@ namespace Visual_Inventory_System.Controllers
                     var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .OrderBy(v => v.VariantNumber).ToList();
 
+                    // Pass 6B: the named units still out on THIS line. Usually
+                    // fewer than Outstanding -- serial coverage is partial, and the
+                    // view renders the remainder as plain quantity.
+                    var lineUnits = InventoryService.IsCompressorType(inv?.Type)
+                        ? _db.CompressorUnits.AsNoTracking()
+                              .Where(cu => cu.OrderItemId == it.Id
+                                        && cu.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp)
+                              .OrderBy(cu => cu.SerialNumber)
+                              .ToList()
+                        : new List<Visual_Inventory_System.Models.CompressorUnit>();
+
                     loans.Add(new LoanLineViewModel
                     {
                         OrderItemId = it.Id,
@@ -494,6 +699,8 @@ namespace Visual_Inventory_System.Controllers
                         ItemType = inv?.Type ?? "",
                         Outstanding = it.LoanOutstanding,
                         ReturnsAsTc = InventoryService.IsMotorType(inv?.Type),
+                        IsCompressor = InventoryService.IsCompressorType(inv?.Type),
+                        Units = lineUnits,
                         LocationChoices = activeVars
                             .Select(v => new VariantChoiceViewModel { VariantId = v.Id, Label = VLabel(v) })
                             .ToList()
@@ -501,6 +708,7 @@ namespace Visual_Inventory_System.Controllers
                 }
             }
 
+            ViewBag.LocationParents = BuildLocationParents();
             return View(new MyOrdersViewModel { UserName = me, Orders = myOrders, Loans = loans });
         }
 
@@ -508,12 +716,13 @@ namespace Visual_Inventory_System.Controllers
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult ReturnLoan(int orderItemId, int qty, int? targetVariantId,
-            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow)
+            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
+            int[]? unitIds = null, string? reason = null)
         {
             try
             {
                 _orderService.ReturnLoan(orderItemId, qty, targetVariantId,
-                    newParent, newMajor, newSub, newRack, newRow);
+                    newParent, newMajor, newSub, newRack, newRow, unitIds, reason);
                 TempData["Success"] = "Loan return recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
@@ -523,11 +732,11 @@ namespace Visual_Inventory_System.Controllers
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
-        public IActionResult ScrapLoan(int orderItemId, int qty)
+        public IActionResult ScrapLoan(int orderItemId, int qty, int[]? unitIds = null, string? reason = null)
         {
             try
             {
-                _orderService.ScrapLoan(orderItemId, qty);
+                _orderService.ScrapLoan(orderItemId, qty, unitIds, reason);
                 TempData["Success"] = "Loan scrap recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
@@ -557,6 +766,12 @@ namespace Visual_Inventory_System.Controllers
                         if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                         if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                         if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
+                        // Pass 7C: Rack and Row were dropped from this label entirely, which
+                        // made every Lean-To variant read as plain "Plant Test Cells" -- and
+                        // two variants of the same item at different racks indistinguishable
+                        // in the picker. They are free text, so they are shown as stored.
+                        if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
+                        if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                         string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
                         return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
                     }

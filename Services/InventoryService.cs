@@ -1,4 +1,4 @@
-﻿using Visual_Inventory_System.Models;
+using Visual_Inventory_System.Models;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
@@ -488,10 +488,16 @@ namespace Visual_Inventory_System.Services
             && type.Trim().ToLowerInvariant().EndsWith("motor");
 
         // Loanable "controls" = types that end with "Control" (e.g. "Control",
-        // "Fan Control"). NOTE: Type is free-text and NO current item is typed
-        // this way, so today this matches nothing -- control-ish stock (EEV, TXV,
-        // VFD, Valve) is NOT counted until you either type items as "...Control"
-        // or widen this one helper. This is the single place to change that rule.
+        // "Fan Control").
+        //
+        // CORRECTED Pass 7B: this comment used to claim no item was typed this way
+        // and that the rule therefore matched nothing. That is FALSE -- 9 items are
+        // Type = "Control" as of the 7/28 audit, so the Control loan path is live
+        // and those items loan their full quantity.
+        //
+        // Still true: other control-ish stock (EEV, VFD, Valve, TXV) is NOT matched,
+        // because Type is free text and those aren't spelled "...Control". Widen it
+        // here if that changes -- this is the single place the rule lives.
         public static bool IsControlType(string? type) =>
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().ToLowerInvariant().EndsWith("control");
@@ -504,18 +510,214 @@ namespace Visual_Inventory_System.Services
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().Equals("Compressor", System.StringComparison.OrdinalIgnoreCase);
 
-        // All logged CompressorUnit rows, grouped by ItemId, newest first.
-        // Forward-only log -- starts empty, fills in as pickups happen. Used
-        // by the Compressors quick-filter modal to show what's been captured
-        // so far under each model's current on-hand quantity.
+        // All CompressorUnit rows, grouped by ItemId, newest first.
+        // As of Pass 6A this is a ROSTER, not a pickup log: it holds On Hand
+        // stock as well as units that have left. Ordered by RecordedAt because
+        // PickedUpAt is now NULL for anything still on a shelf -- ordering by
+        // that would sort every on-hand unit into one indistinguishable clump.
         public Dictionary<string, List<CompressorUnit>> GetCompressorUnitsGrouped()
         {
             return _db.CompressorUnits
                 .AsNoTracking()
-                .OrderByDescending(c => c.PickedUpAt)
+                .OrderByDescending(c => c.RecordedAt)
                 .ToList()
                 .GroupBy(c => c.ItemId)
                 .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        // On-hand units for one family, oldest first -- the pool a pickup draws
+        // from and what 6B's Done Using / Return list will render. Serial-less
+        // stock has no row here, which is expected: units are a partial overlay
+        // over ItemVariant.Quantity, never a replacement for it.
+        public List<CompressorUnit> GetOnHandUnits(string itemId)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return new List<CompressorUnit>();
+            return _db.CompressorUnits
+                .AsNoTracking()
+                .Where(c => c.ItemId == itemId && c.Status == UnitStatus.OnHand)
+                .OrderBy(c => c.RecordedAt)
+                .ToList();
+        }
+
+
+        // =====================================================================
+        // BULK INTAKE (Pass 9)
+        // =====================================================================
+        // ONE commit path, two entrances: a batch whose location already exists
+        // runs this straight from the Intake screen, and a batch that was held
+        // pending runs the SAME method once the superuser resolves the location.
+        // Anything that diverged between those two would drift apart within a
+        // month, which is the whole reason it lives here and not in a controller.
+
+        public class IntakeLine
+        {
+            public string ItemName { get; set; } = "";
+            public string Type { get; set; } = "";
+            public string Brand { get; set; } = "";
+            public string RheemPartNumber { get; set; } = "N/A";
+            public int Quantity { get; set; } = 1;
+            public string? SerialNumber { get; set; }
+        }
+
+        public class IntakeResult
+        {
+            public List<string> NewItems { get; set; } = new();       // ItemIds minted
+            public List<string> AddedToExisting { get; set; } = new();
+            public List<string> Skipped { get; set; } = new();
+            public List<string> Errors { get; set; } = new();
+            public int UnitsIn { get; set; }
+            public int SerialsLogged { get; set; }
+            public bool Ok => Errors.Count == 0;
+        }
+
+        /// <summary>
+        /// Commit a batch of rows at one location, under one Line/Team.
+        ///
+        /// preview=true runs every check and reports what WOULD happen without
+        /// writing -- the same thing the hand-written 02_verify SQL files did, but
+        /// before the fact instead of after.
+        ///
+        /// Group is derived from the SUBMITTER's Line, not the batch's, so the
+        /// ItemId prefix keeps recording who created the record (Pass 7A).
+        /// </summary>
+        public IntakeResult CommitIntake(
+            IEnumerable<IntakeLine> lines, string line, string team,
+            string parentCode, string majorCode, string subCode, string rack, string row,
+            string submittedBy, string submitterLine, bool preview)
+        {
+            var res = new IntakeResult();
+            string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
+            parentCode = Seg(parentCode); majorCode = Seg(majorCode); subCode = Seg(subCode);
+            rack = Seg(rack); row = Seg(row);
+
+            if (parentCode.Length == 0) { res.Errors.Add("No location chosen."); return res; }
+
+            string fda = string.Join(".", new[] { parentCode, majorCode, subCode, rack, row }
+                                          .Where(x => x.Length > 0));
+            string grp = OrgStructure.GroupFor(submitterLine);
+            var now = System.DateTime.UtcNow;
+            string ts = now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            foreach (var l in lines)
+            {
+                string name = Seg(l.ItemName);
+                if (name.Length == 0) continue;               // blank grid rows are normal
+                int qty = l.Quantity < 1 ? 1 : l.Quantity;
+                string pn = Seg(l.RheemPartNumber);
+                if (pn.Length == 0) pn = "N/A";
+                string type = Seg(l.Type);
+                string serial = Seg(l.SerialNumber);
+
+                // A real PN already owned by another family is the one thing that
+                // must block -- it means the same physical part is about to exist
+                // twice under two ItemIds. "N/A" is the shared sentinel, exempt.
+                if (!string.Equals(pn, "N/A", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var owner = _db.InventoryItems.AsNoTracking()
+                        .FirstOrDefault(i => i.RheemPartNumber.ToLower() == pn.ToLower()
+                                          && i.ItemName.ToLower() != name.ToLower());
+                    if (owner != null)
+                    {
+                        res.Errors.Add($"{name}: Rheem PN '{pn}' already belongs to {owner.ItemId} ({owner.ItemName}).");
+                        continue;
+                    }
+                }
+
+                var existing = _db.InventoryItems.Include(i => i.Variants)
+                    .FirstOrDefault(i => i.ItemName.ToLower() == name.ToLower());
+
+                if (existing != null)
+                {
+                    // Known model. Stock lands as a variant at this location --
+                    // never a second item, which is the rule the compressor loads
+                    // established and the reason 18 models legitimately sit in two
+                    // places.
+                    var here = existing.Variants.FirstOrDefault(v => !v.IsRetired && v.FdaString == fda);
+                    if (here != null)
+                    {
+                        res.Skipped.Add($"{name}: already has stock at {fda} (V{here.VariantNumber}, qty {here.Quantity}) — use Add Stock to top it up.");
+                        continue;
+                    }
+                    res.AddedToExisting.Add($"{existing.ItemId} {name} +{qty} at {fda}");
+                    res.UnitsIn += qty;
+                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+
+                    var nv = new ItemVariant
+                    {
+                        VariantNumber = NextFreeVariantNumber(existing),
+                        Quantity = qty, ThermocoupledQty = 0,
+                        Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
+                        FdaString = fda, RegisteredAt = now, IsRetired = false
+                    };
+                    existing.Variants.Add(nv);
+                    existing.LastUpdated = now; existing.UpdatedBy = submittedBy;
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "Quick Add", ItemId = existing.ItemId,
+                        QuantityChange = qty,
+                        Details = $"Intake: {qty} unit(s) at {fda} (Variant {nv.VariantNumber}).",
+                        User = submittedBy
+                    });
+                    _db.SaveChanges();
+                    if (serial.Length > 0) LogIntakeSerial(existing.ItemId, nv.Id, serial, submittedBy, now, res);
+                }
+                else
+                {
+                    string itemId = GenerateItemId(grp, type);
+                    res.NewItems.Add($"{itemId} {name} x{qty}");
+                    res.UnitsIn += qty;
+                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+
+                    var item = new InventoryItem
+                    {
+                        ItemId = itemId, ItemName = name, Type = type, Brand = Seg(l.Brand),
+                        Description = "", RheemPartNumber = pn, Line = line, Team = team,
+                        Group = grp, ProjectCode = team.Length == 0 ? ""
+                            : (_db.Teams.FirstOrDefault(t => t.Name == team)?.ProjectCode ?? ""),
+                        AlertThreshold = 0, RegisteredAt = now, LastUpdated = now, UpdatedBy = submittedBy
+                    };
+                    item.Variants.Add(new ItemVariant
+                    {
+                        VariantNumber = 1, Quantity = qty, ThermocoupledQty = 0,
+                        Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
+                        FdaString = fda, RegisteredAt = now, IsRetired = false
+                    });
+                    _db.InventoryItems.Add(item);
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "New Registry", ItemId = itemId,
+                        QuantityChange = qty,
+                        Details = $"Registered to {grp}/{(team.Length == 0 ? "no team" : team)} (Line: {(line.Length == 0 ? "unassigned" : line)}) via Intake.",
+                        User = submittedBy
+                    });
+                    _db.SaveChanges();
+                    if (serial.Length > 0)
+                        LogIntakeSerial(itemId, item.Variants.First().Id, serial, submittedBy, now, res);
+                }
+            }
+            return res;
+        }
+
+        // A serial given at intake is stock ON THE SHELF, so the unit is recorded
+        // On Hand -- not Picked Up. Duplicate (item, serial) is skipped rather than
+        // thrown: the unique index would reject it anyway and a whole batch failing
+        // over one repeated serial helps nobody.
+        private void LogIntakeSerial(string itemId, int variantId, string serial, string by, System.DateTime now, IntakeResult res)
+        {
+            if (!IsCompressorType(_db.InventoryItems.AsNoTracking()
+                    .FirstOrDefault(i => i.ItemId == itemId)?.Type)) return;
+
+            bool dupe = _db.CompressorUnits.Any(c => c.ItemId == itemId
+                && c.SerialNumber != null && c.SerialNumber.ToLower() == serial.ToLower());
+            if (dupe) { res.Skipped.Add($"{itemId}: serial '{serial}' already on record."); return; }
+
+            _db.CompressorUnits.Add(new CompressorUnit
+            {
+                ItemId = itemId, ItemVariantId = variantId, SerialNumber = serial,
+                Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
+            });
+            _db.SaveChanges();
+            res.SerialsLogged++;
         }
 
         // How many units of an order line are LOANABLE (library books, expected
@@ -525,12 +727,24 @@ namespace Visual_Inventory_System.Services
         {
             if (IsControlType(type)) return quantity;
             if (IsMotorType(type)) return System.Math.Min(thermocoupledCount, quantity);
+
+            // Pass 6B: compressors count too, but the meaning differs. A Control
+            // or Motor is a library book -- LoanOutstanding means "expected back".
+            // A compressor is normally CONSUMED; here the same counter means
+            // "not yet dispositioned", i.e. nobody has pressed Done Using on it.
+            // Deliberately reusing the field rather than adding a parallel
+            // PendingDisposition column: one counter that cannot drift beats two
+            // that have to be kept in lockstep across PickUpOrder / ReturnLoan /
+            // ScrapLoan. The My Orders UI carries the wording for users.
+            if (IsCompressorType(type)) return quantity;
+
             return 0;
         }
 
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
-            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0)
+            string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
+            string? newLine = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -632,14 +846,46 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Ownership")
             {
-                details = $"Moved from {item.Group}/{item.Team} to ";
-                if (!string.IsNullOrWhiteSpace(newGroup)) item.Group = newGroup;
-                if (!string.IsNullOrWhiteSpace(newTeam))
+                // Pass 7B: ownership means LINE now, not Group.
+                //
+                // The old "New Group" picker offered Commercial / Residential /
+                // International -- two BRANCHES and one LINE, flattened as peers.
+                // Group is also derived from the registering user's Line and frozen
+                // at creation (it mints the ItemId prefix), so a transfer must not
+                // move it or an item's Group would contradict its own id.
+                //
+                // newGroup is still accepted by the signature for call compatibility
+                // and is deliberately IGNORED.
+                string oldLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
+                string oldTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
+
+                if (newLine != null)
                 {
-                    item.Team = newTeam;
-                    item.ProjectCode = (newTeam.ToLower() == "ninja") ? "7165" : "7166";
+                    string ln = newLine.Trim();
+                    // Blank is legal -- it means unassigned, which fails OPEN
+                    // (visible to everyone), the Pass 3 rollout default.
+                    if (ln.Length > 0 && !OrgStructure.IsValidLine(ln))
+                        return (item, oldQty, item.Quantity);
+                    item.Line = ln;
                 }
-                details += $"{item.Group}/{item.Team}";
+                if (newTeam != null)
+                {
+                    // Pass 7A: was
+                    //   ProjectCode = newTeam.ToLower() == "ninja" ? "7165" : "7166";
+                    // -- which handed every team that wasn't Ninja Samurai's project
+                    // code, silently, forever. Now the code travels with the team row.
+                    //
+                    // newTeam == "" is a real choice (team is optional), so this
+                    // tests for null rather than blank.
+                    string t = newTeam.Trim();
+                    item.Team = t;
+                    item.ProjectCode = t.Length == 0
+                        ? ""
+                        : (_db.Teams.FirstOrDefault(x => x.Name == t)?.ProjectCode ?? "");
+                }
+                string nowLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
+                string nowTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
+                details = $"Moved from '{oldLine}' ({oldTeam}) to '{nowLine}' ({nowTeam}).";
             }
             else if (actionType == "Location Transfer")
             {

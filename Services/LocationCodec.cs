@@ -53,7 +53,13 @@ namespace Visual_Inventory_System.Services
         // is always the exact inverse for known locations. Storage stays coded;
         // this just turns the barcode back into a label when we show it.
         // ----------------------------------------------------------------------
-        private static readonly string[] CanonicalNames = new[]
+        // FALLBACK ONLY. Before Pass 7C this array WAS the vocabulary, and it had
+        // drifted: 34 variant rows carried Sub codes (MZA3-MZA8) it never knew about,
+        // so every breadcrumb rendered them as raw codes. The vocabulary now lives in
+        // the Locations table and is pushed in via Refresh() at startup and after any
+        // Settings edit. This list survives only so Decode() still does something
+        // sensible if it is ever called before the first Refresh.
+        private static readonly string[] SeedNames = new[]
         {
             // Parents
             "RD Lab", "External Yard", "New Test Cells", "Plant Test Cells",
@@ -63,18 +69,35 @@ namespace Visual_Inventory_System.Services
             "Samurai", "Ninja", "Connex Box 6", "Trailer 1"
         };
 
-        private static readonly Dictionary<string, string> ReverseMap = BuildReverseMap();
+        // Read-mostly lookup, swapped wholesale rather than mutated, so a reader
+        // mid-Decode always sees one complete map and never a half-built one.
+        private static volatile Dictionary<string, string> _reverseMap = BuildReverseMap(SeedNames);
 
-        private static Dictionary<string, string> BuildReverseMap()
+        private static Dictionary<string, string> BuildReverseMap(IEnumerable<string> names)
         {
             var map = new Dictionary<string, string>();
-            foreach (var name in CanonicalNames)
+            foreach (var name in names)
             {
+                if (string.IsNullOrWhiteSpace(name)) continue;
                 var code = Encode(name);
                 if (!string.IsNullOrEmpty(code) && !map.ContainsKey(code))
-                    map[code] = name;
+                    map[code] = name.Trim();
             }
             return map;
+        }
+
+        /// <summary>
+        /// Point Decode() at the current Locations table. Called once at startup
+        /// (Program.cs) and again after any location is added, renamed or hidden
+        /// (SettingsController), so the friendly names never go stale mid-session.
+        ///
+        /// Encode() is untouched by this: the 1st/3rd/5th/last rule is still the
+        /// only thing that turns a name into a code, which is why codes are derived
+        /// and never stored -- there is nothing here that can disagree with it.
+        /// </summary>
+        public static void Refresh(IEnumerable<string> names)
+        {
+            _reverseMap = BuildReverseMap(names ?? System.Array.Empty<string>());
         }
 
         /// <summary>
@@ -85,11 +108,9 @@ namespace Visual_Inventory_System.Services
         public static string Decode(string? code)
         {
             if (string.IsNullOrWhiteSpace(code)) return code ?? "";
-            return ReverseMap.TryGetValue(code.Trim(), out var name) ? name : code;
+            return _reverseMap.TryGetValue(code.Trim(), out var name) ? name : code;
         }
 
-        /// <summary>The code -> friendly map, for serializing to the client so the
-        /// map drill can show friendly names too. Single source of truth = Encode().</summary>
-        public static IReadOnlyDictionary<string, string> DecodeMap => ReverseMap;
+        public static IReadOnlyDictionary<string, string> DecodeMap => _reverseMap;
     }
 }

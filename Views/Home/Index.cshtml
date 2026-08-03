@@ -103,13 +103,16 @@
         };
     };
 
-    var mapData = new Dictionary<string, object>
+    // Pass 9 fix: built from the Locations table, not a hardcoded four. This is the
+    // stats feed the map zones look themselves up in (zoneDataMap[title]). While it
+    // was hardcoded, a Parent added in Settings got a rectangle from Pass 8 but no
+    // entry here -- so it fell into the "empty" branch and read 0 Rows forever,
+    // however much stock was actually registered into it.
+    var mapData = new Dictionary<string, object>();
+    foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
     {
-        { "RD Lab", zone("RLB") },
-        { "External Yard", zone("ETRD") },
-        { "New Test Cells", zone("NWES") },
-        { "Plant Test Cells", zone("PATS") }
-    };
+        mapData[lp.Name] = zone(lp.Code);
+    }
     var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
 
     // Coded location hierarchy (Parent -> Major -> [Subs]) built from the REAL stored
@@ -745,11 +748,22 @@
             <!-- Reinstated Glowing Red Dot Tracker Element -->
             <div id="map-tracking-dot" class="glowing-tracker-dot"></div>
 
+            @* Pass 8: rectangles come from LocationZones. Coordinates are FRACTIONS
+               of the image (0-1), not pixels -- resizeMap() turns them into pixels
+               against whatever size the image is currently rendered at, so nothing
+               here depends on facility.png staying 1146x643.
+               title="{Name}" is load-bearing: zoneDataMap is keyed by the friendly
+               name, and the post-click Major/Sub menu looks itself up by it. *@
             <map name="labmap" id="labmap">
-                <area shape="rect" coords="1025,370,1110,520" href="/Home/Index?mode=Omni&omniSearch=RLB" title="RD Lab" />
-                <area shape="rect" coords="210,45,320,365" href="/Home/Index?mode=Omni&omniSearch=ETRD" title="External Yard" />
-                <area shape="rect" coords="975,165,1010,260" href="/Home/Index?mode=Omni&omniSearch=NWES" title="New Test Cells" />
-                <area shape="rect" coords="975,455,1010,480" href="/Home/Index?mode=Omni&omniSearch=PATS" title="Plant Test Cells" />
+                @foreach (var z in (List<(string Name, string Code, double X, double Y, double W, double H)>)(ViewBag.MapZones ?? new List<(string, string, double, double, double, double)>()))
+                {
+                    <area shape="rect" coords="0,0,0,0"
+                          data-nx="@z.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-ny="@z.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-nw="@z.W.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          data-nh="@z.H.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          href="/Home/Index?mode=Omni&omniSearch=@z.Code" title="@z.Name" />
+                }
             </map>
         </div>
 
@@ -1144,27 +1158,47 @@
                                 </div>
                                 <div>
                                     <span class="badge bg-primary me-2">Qty @it.Quantity</span>
-                                    <span class="badge bg-secondary">@units.Count logged</span>
+                                    @{ var onHandCount = units.Count(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand); }
+                                    <span class="badge bg-secondary" title="Units with a serial on record, out of the quantity on hand">
+                                        @onHandCount / @it.Quantity tracked
+                                    </span>
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </div>
                             </div>
                             <div class="collapse mt-2" id="@collapseId">
                                 @if (!units.Any())
                                 {
-                                    <p class="text-light-gray small mb-0">No units logged yet for this model.</p>
+                                    <p class="text-light-gray small mb-0">No serials on record for this model yet.</p>
                                 }
                                 else
                                 {
+                                    @* Pass 6A: this is a ROSTER now, not a pickup log -- it lists
+                                       units still On Hand alongside ones that have left. PickedUpAt/By
+                                       are NULL for anything on a shelf, so both are guarded. *@
                                     <table class="table table-sm table-hover align-middle mb-0">
-                                        <thead><tr><th>Lab #</th><th>Serial #</th><th>Picked Up</th><th>By</th></tr></thead>
+                                        <thead><tr><th>Serial #</th><th>Lab #</th><th>Status</th><th>When</th><th>By</th></tr></thead>
                                         <tbody>
                                             @foreach (var cu in units)
                                             {
+                                                var onHand = cu.Status == Visual_Inventory_System.Models.UnitStatus.OnHand;
+                                                var scrapped = cu.Status == Visual_Inventory_System.Models.UnitStatus.Scrapped;
+                                                var stamp = cu.PickedUpAt ?? cu.RecordedAt;
+                                                var who = string.IsNullOrWhiteSpace(cu.PickedUpBy) ? cu.RecordedBy : cu.PickedUpBy;
                                                 <tr>
-                                                    <td class="@(cu.LabNumber == null ? "text-warning" : "")">@(cu.LabNumber ?? "(missing)")</td>
-                                                    <td class="@(cu.SerialNumber == null ? "text-warning" : "")">@(cu.SerialNumber ?? "(missing)")</td>
-                                                    <td class="text-light-gray small">@cu.PickedUpAt.ToLocalTime()</td>
-                                                    <td class="text-light-gray small">@cu.PickedUpBy.Replace('.', ' ')</td>
+                                                    <td class="@(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "text-warning" : "")">
+                                                        @(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "(missing)" : cu.SerialNumber)
+                                                    </td>
+                                                    @* Lab numbers are recorded, never assigned -- blank is the
+                                                       normal state until a numbering process exists, so it is
+                                                       dimmed rather than flagged. *@
+                                                    <td class="text-light-gray">@(string.IsNullOrWhiteSpace(cu.LabNumber) ? "—" : cu.LabNumber)</td>
+                                                    <td>
+                                                        <span class="badge @(onHand ? "bg-success" : scrapped ? "bg-danger" : "bg-warning text-dark")">
+                                                            @cu.Status
+                                                        </span>
+                                                    </td>
+                                                    <td class="text-light-gray small">@stamp.ToLocalTime()</td>
+                                                    <td class="text-light-gray small">@((who ?? "").Replace('.', ' '))</td>
                                                 </tr>
                                             }
                                         </tbody>
@@ -1336,19 +1370,42 @@
                     </div>
 
                     <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
+                        @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
+                           (Commercial, Residential) with one LINE (International, which
+                           sits under Commercial Air) as if they were peers -- a flattened,
+                           wrong copy of OrgStructure. Group is also derived from the
+                           registering user's Line and frozen at creation, so letting a
+                           transfer change it would put an item's Group at odds with its
+                           own ItemId prefix.
+                           Ownership now moves the thing that actually governs visibility:
+                           Branch/Line. Same element ids as the old Edit Details cascade,
+                           so populateEditLinePickers() drives this unchanged. *@
                         <div class="col-6">
-                            <label class="form-label small fw-bold text-light-gray">New Group</label>
-                            <select name="newGroup" class="form-select">
-                                <option value="Commercial">Commercial</option>
-                                <option value="Residential">Residential</option>
-                                <option value="International">International</option>
+                            <label class="form-label small fw-bold text-light-gray">Branch</label>
+                            <select id="edit-line-branch" class="form-select" disabled>
+                                <option value="">-- Branch --</option>
                             </select>
                         </div>
                         <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Line</label>
+                            <select name="newLine" id="edit-line" class="form-select" disabled>
+                                <option value="">Unassigned</option>
+                            </select>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">
+                                Takes effect immediately &mdash; no transfer window. Blank = visible to everyone.
+                            </small>
+                        </div>
+                        <div class="col-6">
                             <label class="form-label small fw-bold text-light-gray">New Team</label>
-                            <select name="newTeam" class="form-select">
-                                <option value="Samurai">Samurai (7166)</option>
-                                <option value="Ninja">Ninja (7165)</option>
+                            @* Pass 7A: data-driven from the Teams table, and blank is
+                               allowed -- team is optional now. The project code follows
+                               whichever team is chosen, resolved server-side. *@
+                            <select name="newTeam" id="edit-team" class="form-select" disabled>
+                                <option value="">N/A — no team</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(string.IsNullOrWhiteSpace(t.ProjectCode) ? "" : $" ({t.ProjectCode})")</option>
+                                }
                             </select>
                         </div>
                     </div>
@@ -1379,21 +1436,11 @@
                             <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
                             <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
                         </div>
-                        <div class="row g-2 mb-1">
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-light-gray">Branch</label>
-                                <select id="edit-line-branch" class="form-select" disabled>
-                                    <option value="">-- Branch --</option>
-                                </select>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-light-gray">Line</label>
-                                <select name="newLine" id="edit-line" class="form-select" disabled>
-                                    <option value="">Unassigned</option>
-                                </select>
-                                <small class="text-light-gray d-block mt-1" style="font-size:10px;">Reassigning takes effect immediately -- no transfer window.</small>
-                            </div>
-                        </div>
+                        @* Pass 7B: Branch/Line moved OUT of here and into Internal -
+                           Transfer, where reassigning ownership belongs. Pass 3 put it
+                           here because Edit Details was the only Engineer+ pane that
+                           existed at the time; that made Internal - Transfer vestigial.
+                           Edit Details is identity only again: PN, Description, Brand. *@
                     </div>
 
                     <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
@@ -1410,10 +1457,11 @@
                                 <label class="form-label small fw-bold text-light-gray">Parent</label>
                                 <select name="newParent" id="loc-parent" class="form-select" disabled>
                                     <option value="">Select Parent...</option>
-                                    <option value="RLB">RD Lab (RLB)</option>
-                                    <option value="ETRD">External Yard (ETRD)</option>
-                                    <option value="NWES">New Test Cells (NWES)</option>
-                                    <option value="PATS">Plant Test Cells (PATS)</option>
+                                    @* Pass 7C: from the Locations table, codes derived. *@
+                                    @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                    {
+                                        <option value="@lp.Code">@lp.Name (@lp.Code)</option>
+                                    }
                                 </select>
                             </div>
                             <div class="col-md-4">
@@ -1629,24 +1677,31 @@
                     </div>
 
                     <div class="row g-3 mb-3">
+                        @* Group removed in Pass 7A -- derived server-side from the
+                           registering user's Line (OrgStructure.GroupFor). It only
+                           feeds the ItemId prefix, and pinning it to the creator means
+                           a later Line change can't make an existing id wrong. *@
+@* Pass 7A: Team is OPTIONAL and data-driven from the Teams table.
+                           N/A is the default -- a team is a reporting label, not a
+                           permission; visibility belongs to Line. Group is no longer
+                           asked for at all: it's derived server-side from the Line of
+                           whoever is signed in, and only exists to mint the ItemId
+                           prefix. *@
                         <div class="col-md-4">
-                            <label class="form-label small fw-bold text-light-gray">Group</label>
-                            <select name="Group" id="reg-group" class="form-select">
-                                <option value="Commercial">Commercial</option>
-                                <option value="Residential">Residential</option>
-                                <option value="International">International</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            <label class="form-label small fw-bold text-light-gray">Team / Project <span class="text-light-gray">(optional)</span></label>
                             <select name="Team" id="reg-team" class="form-select">
-                                <option value="Samurai" data-code="7166">Samurai (7166)</option>
-                                <option value="Ninja" data-code="7165">Ninja (7165)</option>
+                                <option value="" data-code="" selected>N/A — no team</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name" data-code="@t.ProjectCode">
+                                        @t.Name@(string.IsNullOrWhiteSpace(t.ProjectCode) ? "" : $" ({t.ProjectCode})")
+                                    </option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Project Code</label>
-                            <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="7166" readonly />
+                            <input type="text" name="ProjectCode" id="reg-projcode" class="form-control text-light-gray" style="background-color: var(--vis-card-border);" value="" placeholder="—" readonly />
                         </div>
                     </div>
 
@@ -1701,12 +1756,17 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Parent</label>
+                                @* Pass 9 fix: from the Locations table. NOTE the value is the
+                                   NAME, not the code -- bindCascadingLocation() runs encodeLoc()
+                                   on whatever is selected. That difference is why the 7C sweep
+                                   missed this one and the export filter below: they were greppable
+                                   as value="RD Lab", not value="RLB". *@
                             <select name="Parent" id="reg-parent" class="form-select">
                                 <option value="">Select Parent...</option>
-                                <option value="RD Lab">RD Lab</option>
-                                <option value="External Yard">External Yard</option>
-                                <option value="New Test Cells">New Test Cells</option>
-                                <option value="Plant Test Cells">Plant Test Cells</option>
+                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                {
+                                    <option value="@lp.Name">@lp.Name</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -1771,10 +1831,14 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            @* Includes hidden teams on purpose -- reporting on a team
+                               retired last quarter is a normal thing to want. *@
                             <select name="exportTeam" class="form-select form-select-sm">
                                 <option value="">-- Any Team --</option>
-                                <option value="Samurai">Samurai</option>
-                                <option value="Ninja">Ninja</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.AllTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(t.IsActive ? "" : " (hidden)")</option>
+                                }
                             </select>
                         </div>
                     </div>
@@ -1795,12 +1859,13 @@
 
                     <div class="row g-2 mb-3">
                         <div class="col-md-4">
+                            @* Same name-valued shape as reg-parent, same reason. *@
                             <select id="exp-parent" class="form-select form-select-sm">
                                 <option value="">Any Parent...</option>
-                                <option value="RD Lab">RD Lab</option>
-                                <option value="External Yard">External Yard</option>
-                                <option value="New Test Cells">New Test Cells</option>
-                                <option value="Plant Test Cells">Plant Test Cells</option>
+                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                {
+                                    <option value="@lp.Name">@lp.Name</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -2151,6 +2216,13 @@
         const qtyInput = document.getElementById('stock-qty-input');
         const helpText = document.getElementById('stock-qty-help');
 
+        // Pass 7B: transfer-pane inputs are inert unless Internal - Transfer is
+        // the active action (re-enabled below when it is).
+        ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = true;
+        });
+
         populateVariantSel(action);
         const variantSel = document.getElementById('stock-variant-sel');
         const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
@@ -2162,7 +2234,8 @@
         const editOn = (action === 'Edit Details');
         if (editDiv) {
             editDiv.style.display = editOn ? 'block' : 'none';
-            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na', 'edit-line-branch', 'edit-line'].forEach(function (id) {
+            // Pass 7B: edit-line-branch / edit-line no longer live in this pane.
+            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !editOn;
             });
@@ -2181,6 +2254,21 @@
             if (locDiv) locDiv.style.display = 'none';
             if (moveQtyDiv) moveQtyDiv.style.display = 'none';
             qtyInput.required = false;
+            // Pass 7B: seed Branch/Line from the item's CURRENT line so the pane
+            // opens showing where it is now, not a blank slate. Uses getStockItem()
+            // -- the same lookup prefillEditDetails() uses -- because stock-item-id
+            // is a readonly text input, not a select with options to read.
+            // Disabled inputs don't post. These three stay disabled outside this
+            // action so a hidden pane can never contribute a stray value to an
+            // unrelated submit -- the same guard the Edit Details pane uses.
+            ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            if (typeof populateEditLinePickers === 'function') {
+                const ownItem = getStockItem();
+                populateEditLinePickers(ownItem ? (ownItem.line || '') : '');
+            }
         } else if (action === 'Location Transfer') {
             qtyDiv.style.display = 'none';
             ownDiv.style.display = 'none';
@@ -2246,12 +2334,16 @@
             ? 'This item already has a brand — it can\'t be changed here.'
             : 'Brand can only be ADDED when the item has none.';
 
-        populateEditLinePickers(item ? (item.line || '') : '');
+        // Pass 7B: the Branch/Line pickers moved to Internal - Transfer, which
+        // seeds them itself. Edit Details no longer touches them.
     }
 
-    // ---- Edit Details: Branch/Line cascade ---------------------------------
+    // ---- Internal - Transfer: Branch/Line cascade ---------------------------
     // Line reassignment is instant/complete (no transfer window) -- location
     // and ownership are decoupled, so this just overwrites item.Line.
+    // Element ids kept as edit-line-branch / edit-line: they were named for the
+    // pane Pass 3 put them in, and renaming them would touch five more call sites
+    // for no behavioural gain.
     function branchForLine(line) {
         for (var branch in orgStructure) {
             if (orgStructure[branch].indexOf(line) !== -1) return branch;
@@ -2739,14 +2831,12 @@
         const container = document.querySelector('.map-image-frame');
         if (!img || !map || !container) return;
 
-        const originalWidth = img.naturalWidth;
-        const originalHeight = img.naturalHeight;
-        if (originalWidth === 0) return;
-
         const currentWidth = img.clientWidth;
         const currentHeight = img.clientHeight;
-        const widthRatio = currentWidth / originalWidth;
-        const heightRatio = currentHeight / originalHeight;
+        if (currentWidth === 0) return;
+        // Pass 8: zones are fractions now, so the image's natural size is no longer
+        // part of the maths -- one less thing that breaks if the floorplan is
+        // ever swapped for a different resolution.
 
         // Gets exact starting pixel offset of the visible map image inside the black frame
         const imgRect = img.getBoundingClientRect();
@@ -2763,9 +2853,12 @@
         const areas = map.getElementsByTagName('area');
 
         for (let a of areas) {
-            if (!a.dataset.orig) a.dataset.orig = a.coords;
-            const origCoords = a.dataset.orig.split(',').map(Number);
-            const scaledCoords = origCoords.map((c, i) => Math.round(c * (i % 2 === 0 ? widthRatio : heightRatio)));
+            const nx = parseFloat(a.dataset.nx), ny = parseFloat(a.dataset.ny);
+            const nw = parseFloat(a.dataset.nw), nh = parseFloat(a.dataset.nh);
+            if (isNaN(nx) || isNaN(ny) || isNaN(nw) || isNaN(nh)) continue;
+            const px = Math.round(nx * currentWidth), py = Math.round(ny * currentHeight);
+            const pw = Math.round(nw * currentWidth), ph = Math.round(nh * currentHeight);
+            const scaledCoords = [px, py, px + pw, py + ph];
             a.coords = scaledCoords.join(',');
 
             if (scaledCoords.length === 4) {
@@ -2875,7 +2968,17 @@
                         }
                     };
                 } else {
-                    zoneDiv.title = `${title} (Empty)`;
+                    // Pass 9 fix: an empty zone used to render as literally nothing --
+                    // no marker, no outline -- so a zone you just drew was
+                    // indistinguishable from one that failed to save. Show a dimmed
+                    // marker reading "0 rows" instead: visible, obviously empty, and
+                    // still clickable through to the (empty) filtered view.
+                    zoneDiv.title = `${title} — no stock recorded yet`;
+                    zoneDiv.innerHTML = `
+                        <div class="zone-marker" title="${title}" style="position:relative; opacity:.45;">
+                            <i class="bi bi-geo-alt marker-icon"></i>
+                            <span class="marker-count">0 Rows</span>
+                        </div>`;
                     zoneDiv.onclick = () => window.location.href = a.href;
                 }
 
@@ -3111,23 +3214,34 @@
         // Location hierarchy (friendly names only). Codes are derived by the
         // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),
         // so the live preview always matches what actually gets saved.
-        const locMap = {
-            "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja"], "2-6": [] },
-            "External Yard": { "Connex Area": ["Connex Box 6"], "Trailer Area": ["Trailer 1"] },
-            "New Test Cells": {},
-            "Plant Test Cells": {}
-        };
+        // Pass 7C: served from the Locations table instead of being typed here.
+        // This object and LocationCodec's name list were two hand-kept copies of
+        // the same vocabulary; they drifted, and 34 variant rows ended up on Sub
+        // codes neither copy knew about. Shape is unchanged:
+        //   { Parent: { Major: [Sub, ...] } }
+        const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
 
-        // Mirror of LocationCodec.Encode: 1st, 3rd, 5th and last letter/digit
-        // of the cleaned name, de-duplicated, kept in ascending order.
-        function encodeLoc(name) {
-            if (!name) return "";
-            const clean = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
-            if (!clean.length) return "";
-            const n = clean.length;
-            const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
-            return pos.map(p => clean[p - 1]).join("");
-        }
+    // Client-side half of the location code rule: 1st, 3rd, 5th and LAST
+    // letter/digit of the cleaned name. Must stay in lockstep with
+    // Services/LocationCodec.Encode().
+    //
+    // NOTE: duplicated in Views/Home/Intake.cshtml. Moving it to wwwroot/js/site.js
+    // was tried and reverted -- _Layout loads site.js after the body renders, so a
+    // view's inline script runs before it would exist. Fixing the duplication means
+    // moving that script reference higher in the layout, which touches every page.
+    //
+    // And do NOT write the layout's body-render call by name in here with a leading
+    // at-sign: inside a .cshtml file that is a Razor transition even within a JS
+    // comment, and it will be invoked for real. That is exactly how this comment
+    // took the dashboard down once already.
+    function encodeLoc(name) {
+        if (!name) return "";
+        const clean = String(name).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (!clean.length) return "";
+        const n = clean.length;
+        const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
+        return pos.map(p => clean[p - 1]).join("");
+    }
 
         function bindCascadingLocation(pId, mId, sId, rkId, rwId, fdaId) {
             const pSel = document.getElementById(pId);

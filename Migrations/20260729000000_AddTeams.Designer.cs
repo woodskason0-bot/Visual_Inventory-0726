@@ -3,6 +3,7 @@ using System;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Visual_Inventory_System.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260729000000_AddTeams")]
+    partial class AddTeams
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
@@ -142,125 +145,6 @@ namespace Visual_Inventory_System.Migrations
                     b.ToTable("EmailRoutings");
                 });
 
-            modelBuilder.Entity("Visual_Inventory_System.Models.IntakeBatch", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Line")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("MajorCode")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Note")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ParentCode")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Rack")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("RequestedLocation")
-                        .HasMaxLength(120)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("ResolvedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ResolvedBy")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Row")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SubCode")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("SubmittedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SubmittedBy")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Team")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("IntakeBatches");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.IntakeRow", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Brand")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("IntakeBatchId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ItemName")
-                        .IsRequired()
-                        .HasMaxLength(120)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("RheemPartNumber")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SerialNumber")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IntakeBatchId");
-
-                    b.ToTable("IntakeRows");
-                });
-
             modelBuilder.Entity("Visual_Inventory_System.Models.InventoryItem", b =>
                 {
                     b.Property<int>("Id")
@@ -382,68 +266,6 @@ namespace Visual_Inventory_System.Migrations
                     b.HasIndex("InventoryItemId", "VariantNumber");
 
                     b.ToTable("ItemVariants");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.Location", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Level")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("ParentId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Level", "ParentId", "Name")
-                        .IsUnique();
-
-                    b.ToTable("Locations");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.LocationZone", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("H")
-                        .HasColumnType("REAL");
-
-                    b.Property<string>("Label")
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("LocationId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<double>("W")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("X")
-                        .HasColumnType("REAL");
-
-                    b.Property<double>("Y")
-                        .HasColumnType("REAL");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("LocationId");
-
-                    b.ToTable("LocationZones");
                 });
 
             modelBuilder.Entity("Visual_Inventory_System.Models.Notification", b =>
@@ -708,22 +530,6 @@ namespace Visual_Inventory_System.Migrations
                     b.ToTable("VisTasks");
                 });
 
-            modelBuilder.Entity("Visual_Inventory_System.Models.IntakeRow", b =>
-                {
-                    b.HasOne("Visual_Inventory_System.Models.IntakeBatch", "Batch")
-                        .WithMany("Rows")
-                        .HasForeignKey("IntakeBatchId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Batch");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.IntakeBatch", b =>
-                {
-                    b.Navigation("Rows");
-                });
-
             modelBuilder.Entity("Visual_Inventory_System.Models.ItemVariant", b =>
                 {
                     b.HasOne("Visual_Inventory_System.Models.InventoryItem", "InventoryItem")
@@ -733,15 +539,6 @@ namespace Visual_Inventory_System.Migrations
                         .IsRequired();
 
                     b.Navigation("InventoryItem");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.LocationZone", b =>
-                {
-                    b.HasOne("Visual_Inventory_System.Models.Location", null)
-                        .WithMany()
-                        .HasForeignKey("LocationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("Visual_Inventory_System.Models.NotificationSubscription", b =>

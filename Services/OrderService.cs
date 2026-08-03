@@ -260,9 +260,18 @@ namespace Visual_Inventory_System.Services
                         // what was ordered, so a short pickup can't over-count a loan.
                         int pulledQty = it.Quantity - remaining;
                         int pulledTc = it.ThermocoupledCount - remainingTc;
-                        it.LoanOutstanding = InventoryService.IsControlType(inv.Type) ? pulledQty
-                            : InventoryService.IsMotorType(inv.Type) ? pulledTc
-                            : 0;
+                        // Pass 6B: call the shared helper instead of repeating the
+                        // rule inline. This block WAS a duplicate of
+                        // InventoryService.LoanableQuantity -- which meant the helper
+                        // had zero callers, and adding compressors to it changed
+                        // nothing while this copy still returned 0 for them.
+                        //
+                        // Equivalent for the existing types: pulledTc can never exceed
+                        // pulledQty (TC is a subset of what was pulled), so the Min()
+                        // inside the helper resolves to pulledTc for motors exactly as
+                        // before. Controls are unchanged. Compressors now count.
+                        it.LoanOutstanding = InventoryService.LoanableQuantity(
+                            inv.Type, pulledQty, pulledTc);
 
                         // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
                         // physical unit actually pulled (pulledQty, not the ordered
@@ -272,12 +281,26 @@ namespace Visual_Inventory_System.Services
                         // posted count (or left blank) just logs null/null. Missing
                         // values are summarized onto the pickup log line below, not
                         // blocked here.
-                        int missingLab = 0, missingSerial = 0;
+                        int missingLab = 0, missingSerial = 0, matchedUnits = 0;
                         if (InventoryService.IsCompressorType(inv.Type) && pulledQty > 0)
                         {
                             List<(string? Lab, string? Serial)>? pairs = null;
                             compressorUnits?.TryGetValue(it.Id, out pairs);
                             var now = System.DateTime.UtcNow;
+
+                            // MATCH-OR-CREATE (Pass 6A). CompressorUnits is now a
+                            // roster, so a serial typed at pickup may already be on
+                            // it as On Hand stock. Blindly inserting would violate
+                            // IX_CompressorUnits_ItemId_SerialNumber and crash the
+                            // pickup for doing exactly the right thing -- reading
+                            // the number off the machine in your hands.
+                            //
+                            // Tracked (no AsNoTracking) so flips persist on SaveChanges.
+                            var onHand = _db.CompressorUnits
+                                .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand)
+                                .OrderBy(c => c.RecordedAt)
+                                .ToList();
+
                             for (int u = 0; u < pulledQty; u++)
                             {
                                 string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
@@ -287,22 +310,54 @@ namespace Visual_Inventory_System.Services
                                 if (lab == null) missingLab++;
                                 if (serial == null) missingSerial++;
 
-                                _db.CompressorUnits.Add(new CompressorUnit
+                                CompressorUnit? known = null;
+                                if (serial != null)
                                 {
-                                    ItemId = it.ItemId,
-                                    OrderId = orderId,
-                                    OrderItemId = it.Id,
-                                    LabNumber = lab,
-                                    SerialNumber = serial,
-                                    PickedUpAt = now,
-                                    PickedUpBy = _currentUser.Name
-                                });
+                                    known = onHand.FirstOrDefault(c =>
+                                        !string.IsNullOrWhiteSpace(c.SerialNumber) &&
+                                        string.Equals(c.SerialNumber, serial, System.StringComparison.OrdinalIgnoreCase));
+                                }
+
+                                if (known != null)
+                                {
+                                    // A unit we already knew about is leaving the shelf.
+                                    // Flip it -- its history (and lab number) carries forward.
+                                    onHand.Remove(known);
+                                    known.Status = UnitStatus.PickedUp;
+                                    known.OrderId = orderId;
+                                    known.OrderItemId = it.Id;
+                                    known.PickedUpAt = now;
+                                    known.PickedUpBy = _currentUser.Name;
+                                    known.ItemVariantId = null;   // off the shelf; 6B sets it again on return
+                                    if (lab != null) known.LabNumber = lab;
+                                    matchedUnits++;
+                                }
+                                else
+                                {
+                                    // First time we've seen this one. Recorded and
+                                    // picked up in the same breath.
+                                    _db.CompressorUnits.Add(new CompressorUnit
+                                    {
+                                        ItemId = it.ItemId,
+                                        ItemVariantId = null,
+                                        SerialNumber = serial,
+                                        LabNumber = lab,
+                                        Status = UnitStatus.PickedUp,
+                                        RecordedAt = now,
+                                        RecordedBy = _currentUser.Name,
+                                        OrderId = orderId,
+                                        OrderItemId = it.Id,
+                                        PickedUpAt = now,
+                                        PickedUpBy = _currentUser.Name
+                                    });
+                                }
                             }
                         }
 
                         var flagParts = new List<string>();
                         if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
                         if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
+                        if (matchedUnits > 0) flagParts.Add($"{matchedUnits} matched to known unit(s)");
                         string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
 
                         // LOG THE PICKUP HERE! Details snapshot the actual pull
@@ -359,7 +414,8 @@ namespace Visual_Inventory_System.Services
         // loans come back as TC stock (they were TC when they went out). Self-
         // scoped: you can only act on your own order's loans.
         public void ReturnLoan(int orderItemId, int qty, int? targetVariantId,
-            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow)
+            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
+            int[]? unitIds = null, string? reason = null)
         {
             if (qty <= 0) return;
 
@@ -407,6 +463,36 @@ namespace Visual_Inventory_System.Services
                     inv.Variants.Add(dest);
                 }
 
+                // Pass 6B: act on the individual units the user ticked. Units are a
+                // PARTIAL overlay -- only 184 of 825 compressors have a serial, so a
+                // line of 3 may name 1 unit and leave 2 as pure quantity. This loop
+                // is bounded by what was actually selected, never by the qty.
+                string unitNote = "";
+                var pickedUnits = new List<CompressorUnit>();
+                if (unitIds != null && unitIds.Length > 0)
+                {
+                    pickedUnits = _db.CompressorUnits
+                        .Where(c => unitIds.Contains(c.Id)
+                                 && c.ItemId == it.ItemId
+                                 && c.Status == UnitStatus.PickedUp)
+                        .ToList();
+                    var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
+                                           .Select(u => u.SerialNumber).ToList();
+                    if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
+                }
+                string reasonNote = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
+
+                // Returned units land ON the shelf they were returned to.
+                foreach (var cu in pickedUnits)
+                {
+                    cu.Status = UnitStatus.OnHand;
+                    cu.ItemVariantId = dest.Id;
+                    cu.OrderId = null;
+                    cu.OrderItemId = null;
+                    cu.PickedUpAt = null;
+                    cu.PickedUpBy = null;
+                }
+
                 it.LoanOutstanding -= give;
                 inv.LastUpdated = System.DateTime.UtcNow;
                 inv.UpdatedBy = _currentUser.Name;
@@ -417,7 +503,7 @@ namespace Visual_Inventory_System.Services
                     ActionType = "Loan Return",
                     ItemId = it.ItemId,
                     QuantityChange = give,
-                    Details = $"Returned {give}{(asTc ? " [TC]" : "")} from Order #{it.OrderId} into V{dest.VariantNumber} ({dest.FdaString}); {it.LoanOutstanding} still out.",
+                    Details = $"Returned {give}{(asTc ? " [TC]" : "")}{unitNote} from Order #{it.OrderId} into V{dest.VariantNumber} ({dest.FdaString}); {it.LoanOutstanding} still out.{reasonNote}",
                     User = _currentUser.Name
                 });
 
@@ -429,7 +515,7 @@ namespace Visual_Inventory_System.Services
 
         // Scrap loaned units: they aren't coming back, so NO stock is added --
         // this only closes out the loan counter and logs it. Self-scoped.
-        public void ScrapLoan(int orderItemId, int qty)
+        public void ScrapLoan(int orderItemId, int qty, int[]? unitIds = null, string? reason = null)
         {
             if (qty <= 0) return;
 
@@ -444,6 +530,34 @@ namespace Visual_Inventory_System.Services
                 int drop = System.Math.Min(qty, it.LoanOutstanding);
                 if (drop <= 0) throw new InvalidOperationException("Nothing outstanding to scrap on this line.");
 
+                // Pass 6B: act on the individual units the user ticked. Units are a
+                // PARTIAL overlay -- only 184 of 825 compressors have a serial, so a
+                // line of 3 may name 1 unit and leave 2 as pure quantity. This loop
+                // is bounded by what was actually selected, never by the qty.
+                string unitNote = "";
+                var pickedUnits = new List<CompressorUnit>();
+                if (unitIds != null && unitIds.Length > 0)
+                {
+                    pickedUnits = _db.CompressorUnits
+                        .Where(c => unitIds.Contains(c.Id)
+                                 && c.ItemId == it.ItemId
+                                 && c.Status == UnitStatus.PickedUp)
+                        .ToList();
+                    var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
+                                           .Select(u => u.SerialNumber).ToList();
+                    if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
+                }
+                string reasonNote = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
+
+                // Scrapped units never come back to a shelf: ItemVariantId stays
+                // null and the status is terminal. The roster row survives the
+                // machine, so the serial's history is still queryable afterwards.
+                foreach (var cu in pickedUnits)
+                {
+                    cu.Status = UnitStatus.Scrapped;
+                    cu.ItemVariantId = null;
+                }
+
                 it.LoanOutstanding -= drop;
 
                 _db.TransactionLogs.Add(new TransactionLog
@@ -452,7 +566,7 @@ namespace Visual_Inventory_System.Services
                     ActionType = "Loan Scrap",
                     ItemId = it.ItemId,
                     QuantityChange = 0,   // stock already left at pickup; scrap just means it never returns
-                    Details = $"Scrapped {drop} out on loan from Order #{it.OrderId}; {it.LoanOutstanding} still out.",
+                    Details = $"Scrapped {drop}{unitNote} out on loan from Order #{it.OrderId}; {it.LoanOutstanding} still out.{reasonNote}",
                     User = _currentUser.Name
                 });
 

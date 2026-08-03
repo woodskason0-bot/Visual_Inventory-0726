@@ -1,0 +1,217 @@
+@{
+    ViewData["Title"] = "Bulk Intake";
+    var teams = (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>());
+    var parents = (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string, string)>());
+    var knownTypes = (List<string>)(ViewBag.KnownTypes ?? new List<string>());
+    var myPending = (List<Visual_Inventory_System.Models.IntakeBatch>)(ViewBag.MyPending ?? new List<Visual_Inventory_System.Models.IntakeBatch>());
+    var preview = TempData["IntakePreview"] as string;
+}
+
+<style>
+    .intake-card { background: var(--vis-card); border: 1px solid var(--vis-card-border); border-radius: 10px; }
+    .intake-card table { color: var(--vis-text); }
+    .intake-card input, .intake-card select { background: var(--vis-card-border); color: var(--vis-text); border: 1px solid #3D4351; }
+</style>
+
+<div class="container-fluid py-4">
+    <h2 class="fw-bold text-white mb-1">Bulk Intake</h2>
+    <p class="text-light-gray small mb-4">
+        Enter a list of stock for <strong>one place</strong>. Models you already have will
+        match as you type &mdash; that adds stock to the existing item rather than creating
+        a second one. If your location isn&rsquo;t listed, pick <em>Not listed</em> and the
+        batch is held for approval; nothing you typed is lost.
+    </p>
+
+    @if (TempData["Success"] != null) { <div class="alert alert-success">@TempData["Success"]</div> }
+    @if (TempData["Error"] != null)   { <div class="alert alert-danger">@TempData["Error"]</div> }
+
+    @if (!string.IsNullOrEmpty(preview))
+    {
+        <div class="intake-card p-3 mb-4" id="preview-box">
+            <h6 class="text-white fw-bold">Preview &mdash; nothing has been written</h6>
+            <pre class="text-light-gray small mb-0" style="white-space:pre-wrap;">@preview</pre>
+        </div>
+    }
+
+    @if (myPending.Any())
+    {
+        <div class="intake-card p-3 mb-4">
+            <h6 class="text-white fw-bold mb-2">Your batches waiting on a location</h6>
+            @foreach (var b in myPending)
+            {
+                <div class="text-light-gray small">
+                    <strong>#@b.Id</strong> &mdash; @b.Rows.Count row(s), asked for
+                    &ldquo;<span class="text-warning">@b.RequestedLocation</span>&rdquo;,
+                    sent @b.SubmittedAt.ToLocalTime().ToString("MMM d h:mm tt")
+                </div>
+            }
+        </div>
+    }
+
+    <form asp-controller="Home" asp-action="SubmitIntake" method="post" class="intake-card p-3">
+        @Html.AntiForgeryToken()
+
+        <div class="row g-2 mb-3">
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-light-gray">Branch</label>
+                <select id="in-branch" class="form-select"><option value="">-- Branch --</option></select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-light-gray">Line</label>
+                <select name="line" id="in-line" class="form-select"><option value="">Unassigned</option></select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                <select name="team" class="form-select">
+                    <option value="">N/A &mdash; no team</option>
+                    @foreach (var t in teams) { <option value="@t.Name">@t.Name</option> }
+                </select>
+            </div>
+        </div>
+
+        <div class="row g-2 mb-3">
+            <div class="col-md-3">
+                <label class="form-label small fw-bold text-light-gray">Parent</label>
+                <select name="parentCode" id="in-parent" class="form-select">
+                    <option value="">-- Where --</option>
+                    @foreach (var p in parents) { <option value="@p.Code">@p.Name</option> }
+                    <option value="__NEW__">Not listed&hellip;</option>
+                </select>
+            </div>
+            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Major</label>
+                <select name="majorCode" id="in-major" class="form-select"><option value="">&mdash;</option></select></div>
+            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Sub</label>
+                <select name="subCode" id="in-sub" class="form-select"><option value="">&mdash;</option></select></div>
+            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Rack</label>
+                <input type="text" name="rack" class="form-control" /></div>
+            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Row</label>
+                <input type="text" name="row" class="form-control" /></div>
+        </div>
+
+        <div class="mb-3" id="req-loc-row" style="display:none;">
+            <label class="form-label small fw-bold text-warning">What do you call this place?</label>
+            <input type="text" name="requestedLocation" id="in-reqloc" class="form-control" style="max-width:340px;"
+                   placeholder="e.g. North Bay" />
+            <div class="text-light-gray small mt-1">
+                Held for approval. It may already exist under another name &mdash; that gets sorted on approval.
+            </div>
+        </div>
+
+        <table class="table table-sm align-middle">
+            <thead><tr>
+                <th style="width:26%;">Model</th><th style="width:14%;">Type</th><th style="width:16%;">Brand</th>
+                <th style="width:16%;">Rheem PN</th><th style="width:8%;">Qty</th>
+                <th style="width:16%;">Serial <span class="text-light-gray">(compressors)</span></th><th></th>
+            </tr></thead>
+            <tbody id="intake-rows"></tbody>
+        </table>
+
+        <datalist id="known-items"></datalist>
+        <datalist id="known-types">@foreach (var t in knownTypes) { <option value="@t"></option> }</datalist>
+
+        <div class="d-flex gap-2 flex-wrap">
+            <button type="button" class="btn btn-outline-secondary" id="add-row">+ Add row</button>
+            <button type="submit" name="preview" value="true" class="btn btn-outline-info fw-bold">Preview</button>
+            <button type="submit" class="btn btn-success fw-bold">Import</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    const locTree      = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
+    const knownItems   = @Html.Raw(ViewBag.KnownItemsJson ?? "[]");
+
+    // Same 1/3/5/last rule as Services/LocationCodec.Encode(). Duplicated from
+    // Index.cshtml -- see the note there for why it isn't in site.js.
+    function encodeLoc(name) {
+        if (!name) return "";
+        const clean = String(name).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (!clean.length) return "";
+        const n = clean.length;
+        const pos = [...new Set([1, 3, 5, n].filter(p => p >= 1 && p <= n))].sort((a, b) => a - b);
+        return pos.map(p => clean[p - 1]).join("");
+    }
+
+    (function () {
+        const bSel = document.getElementById('in-branch'), lSel = document.getElementById('in-line');
+        Object.keys(orgStructure).forEach(function (b) {
+            bSel.appendChild(Object.assign(document.createElement('option'), { value: b, textContent: b }));
+        });
+        bSel.addEventListener('change', function () {
+            lSel.innerHTML = '<option value="">Unassigned</option>';
+            (orgStructure[bSel.value] || []).forEach(function (l) {
+                lSel.appendChild(Object.assign(document.createElement('option'), { value: l, textContent: l }));
+            });
+        });
+    })();
+
+    // Parent -> Major -> Sub, driven by the same table the rest of the app uses.
+    (function () {
+        const p = document.getElementById('in-parent'), m = document.getElementById('in-major'),
+              s = document.getElementById('in-sub'), req = document.getElementById('req-loc-row'),
+              reqIn = document.getElementById('in-reqloc');
+        const nameFor = {};
+        Object.keys(locTree).forEach(function (n) { nameFor[encodeLoc(n)] = n; });
+
+        function fill(sel, names) {
+            sel.innerHTML = '<option value="">—</option>';
+            names.forEach(function (n) {
+                sel.appendChild(Object.assign(document.createElement('option'),
+                    { value: encodeLoc(n), textContent: n }));
+            });
+        }
+        p.addEventListener('change', function () {
+            const isNew = p.value === '__NEW__';
+            req.style.display = isNew ? '' : 'none';
+            reqIn.required = isNew;
+            if (isNew) { reqIn.focus(); fill(m, []); fill(s, []); return; }
+            reqIn.value = '';
+            const pName = nameFor[p.value];
+            fill(m, pName ? Object.keys(locTree[pName] || {}) : []);
+            fill(s, []);
+        });
+        m.addEventListener('change', function () {
+            const pName = nameFor[p.value];
+            const majors = pName ? (locTree[pName] || {}) : {};
+            const mName = Object.keys(majors).find(function (k) { return encodeLoc(k) === m.value; });
+            fill(s, mName ? (majors[mName] || []) : []);
+        });
+    })();
+
+    // Model autocomplete: suggest what already exists, and prefill the rest of the
+    // row from it so adding stock to a known item doesn't mean retyping its brand.
+    (function () {
+        const dl = document.getElementById('known-items');
+        knownItems.forEach(function (i) {
+            dl.appendChild(Object.assign(document.createElement('option'), { value: i.name }));
+        });
+        const byName = {};
+        knownItems.forEach(function (i) { byName[i.name.toLowerCase()] = i; });
+
+        const body = document.getElementById('intake-rows');
+        function addRow() {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td><input name="itemName" list="known-items" class="form-control form-control-sm" autocomplete="off" /></td>' +
+                '<td><input name="type" list="known-types" class="form-control form-control-sm" /></td>' +
+                '<td><input name="brand" class="form-control form-control-sm" /></td>' +
+                '<td><input name="rpn" value="N/A" class="form-control form-control-sm" /></td>' +
+                '<td><input name="qty" type="number" min="1" value="1" class="form-control form-control-sm" /></td>' +
+                '<td><input name="serial" class="form-control form-control-sm" /></td>' +
+                '<td><button type="button" class="btn btn-sm btn-outline-danger">&times;</button></td>';
+            tr.querySelector('button').onclick = function () { tr.remove(); };
+            const nameIn = tr.querySelector('[name=itemName]');
+            nameIn.addEventListener('change', function () {
+                const hit = byName[nameIn.value.trim().toLowerCase()];
+                if (!hit) return;
+                tr.querySelector('[name=type]').value  = hit.type  || '';
+                tr.querySelector('[name=brand]').value = hit.brand || '';
+                tr.querySelector('[name=rpn]').value   = hit.rpn   || 'N/A';
+            });
+            body.appendChild(tr);
+        }
+        document.getElementById('add-row').addEventListener('click', addRow);
+        for (let i = 0; i < 5; i++) addRow();
+    })();
+</script>
