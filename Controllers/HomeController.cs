@@ -344,11 +344,6 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Sub ??= "";
                 newItem.Rack ??= "";
                 newItem.Row ??= "";
-                // Pass 7A: Group is no longer a form field. It is derived from the
-                // Line of whoever is registering, so the ItemId prefix records the
-                // creator's org placement. Set once here and never changed after --
-                // otherwise an item's id and its Group would disagree.
-                newItem.Group = OrgStructure.GroupFor(_currentUser.Line);
 
                 // Team is now OPTIONAL and no longer defaults to Samurai. Blank is a
                 // real choice; the project code follows whichever team was picked.
@@ -364,6 +359,13 @@ namespace Visual_Inventory_System.Controllers
                     TempData["Error"] = $"'{newItem.Line}' isn't a recognized Line.";
                     return RedirectToAction("Index");
                 }
+
+                // Group is not a form field -- it's derived from the item's own
+                // Line (the Branch/Line picked on THIS registration form), so the
+                // ID prefix follows what was actually selected rather than the
+                // registrant's own account Line. Set once here and never changed
+                // after -- otherwise an item's id and its Group would disagree.
+                newItem.Group = OrgStructure.GroupFor(newItem.Line);
 
                 // --- ITEM ID (server-authoritative) ---
                 // The form's ID box is a read-only preview; the real ID is assigned
@@ -934,15 +936,77 @@ namespace Visual_Inventory_System.Controllers
                     list[unitIdx] = (lab, serial);
                 }
 
-                _orderService.PickUpOrder(orderId, choices.Count > 0 ? choices : null,
+                var result = _orderService.PickUpOrder(orderId, choices.Count > 0 ? choices : null,
                     compressorUnits.Count > 0 ? compressorUnits : null);
-                TempData["Success"] = "Order completed.";
+
+                if (result.HasShortLines)
+                {
+                    // Not enough on the shelf for one or more lines -- stock was
+                    // left untouched for those. Other lines on the order picked
+                    // up normally. Stash the shortfall for PickupQueue to render
+                    // a "what's actually here?" correction form.
+                    TempData["ShortPullOrderId"] = orderId;
+                    TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(result.ShortLines);
+                    TempData["Error"] = result.ShortLines.Count == 1
+                        ? $"{result.ShortLines[0].ItemName} came up short -- report the real shelf count below."
+                        : $"{result.ShortLines.Count} items came up short -- report the real shelf counts below.";
+                }
+                else
+                {
+                    TempData["Success"] = "Order completed.";
+                }
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
 
             // SMART REDIRECT: Go back to the exact page you came from (Logs OR Orders)
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
+        }
+
+        // Short-pull correction (see OrderService.ReportShortPull). Standard-level
+        // on purpose -- this is the consolidated action that used to take a
+        // runner, an Engineer to cancel, and the requester to re-order.
+        // corrected_{variantId} = the count the picker actually saw at that
+        // location; only fields the picker touched are posted.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult ReportShortPull(int orderId, int orderItemId)
+        {
+            try
+            {
+                var corrections = new Dictionary<int, int>();
+                foreach (var key in Request.Form.Keys)
+                {
+                    if (key.StartsWith("corrected_")
+                        && int.TryParse(key.Substring("corrected_".Length), out int variantId)
+                        && int.TryParse(Request.Form[key], out int actualQty))
+                    {
+                        corrections[variantId] = actualQty;
+                    }
+                }
+
+                var result = _orderService.ReportShortPull(orderId, orderItemId, corrections);
+
+                if (result.HasShortLines)
+                {
+                    TempData["ShortPullOrderId"] = result.OrderId;
+                    TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(result.ShortLines);
+                    TempData["Error"] = "Still short after that correction -- another check may have beaten you to it.";
+                }
+                else if (result.NewOrderId.HasValue)
+                {
+                    TempData["Success"] = $"Stock corrected and Order #{result.NewOrderId} picked up clean.";
+                }
+                else
+                {
+                    TempData["Success"] = "Stock corrected. Nothing was actually on the shelf, so no pickup was issued.";
+                }
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+
+            string referer = Request.Headers["Referer"].ToString();
+            return string.IsNullOrEmpty(referer) ? RedirectToAction("PickupQueue") : Redirect(referer);
         }
 
         [HttpPost]

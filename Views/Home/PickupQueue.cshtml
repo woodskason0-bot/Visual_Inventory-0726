@@ -83,6 +83,53 @@
         <div class="alert alert-danger py-2">@TempData["Error"]</div>
     }
 
+    @{
+        var shortOrderId = TempData["ShortPullOrderId"] as int?;
+        var shortJson = TempData["ShortPullJson"] as string;
+        var shortLines = string.IsNullOrEmpty(shortJson)
+            ? new List<Visual_Inventory_System.Services.ShortPullLine>()
+            : (System.Text.Json.JsonSerializer.Deserialize<List<Visual_Inventory_System.Services.ShortPullLine>>(shortJson)
+               ?? new List<Visual_Inventory_System.Services.ShortPullLine>());
+    }
+    @if (shortOrderId.HasValue && shortLines.Any())
+    {
+        <!-- Short-pull correction: not enough on the shelf to honor the line as
+             ordered. Stock was left untouched -- report what's actually there,
+             per location, and a corrected order gets issued and picked up in the
+             same action. See OrderService.ReportShortPull. -->
+        <div class="queue-card p-3 mb-4" style="border-left: 4px solid var(--vis-red);">
+            <h6 class="fw-bold mb-2"><i class="bi bi-exclamation-triangle-fill me-1" style="color: var(--vis-red);"></i>Short on Order #@shortOrderId</h6>
+            <p class="text-dim small mb-3">
+                What's requested doesn't match what's on the shelf. Report the real count at
+                each location below -- leave a box as-is if that location's count is correct.
+            </p>
+            @foreach (var line in shortLines)
+            {
+                <form asp-controller="Home" asp-action="ReportShortPull" method="post" class="mb-3 pb-3" style="border-bottom: 1px solid var(--vis-card-border);">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="orderId" value="@shortOrderId" />
+                    <input type="hidden" name="orderItemId" value="@line.OrderItemId" />
+                    <div class="mb-2">
+                        <span class="fw-bold">@line.ItemId</span> &mdash; @line.ItemName
+                        <span class="text-dim ms-2">requested @line.Requested</span>
+                    </div>
+                    <div class="row g-2 align-items-end">
+                        @foreach (var loc in line.Locations)
+                        {
+                            <div class="col-auto">
+                                <label class="form-label small text-dim mb-1">@loc.Fda</label>
+                                <input type="number" min="0" name="corrected_@loc.VariantId" class="form-control form-control-sm" style="width:110px;" value="@loc.RecordedQty" />
+                            </div>
+                        }
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Correct &amp; Pick Up</button>
+                        </div>
+                    </div>
+                </form>
+            }
+        </div>
+    }
+
     <!-- ============ GO GET THESE (pending-order pickup queue) ============ -->
     <h4 class="section-h mb-2"><i class="bi bi-box-seam me-2 text-success"></i>Go Get These</h4>
     <div class="mb-2 d-flex gap-3">

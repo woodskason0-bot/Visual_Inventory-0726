@@ -11,6 +11,19 @@ namespace Visual_Inventory_System.Models
         public int Quantity { get; set; }
 
         /// <summary>
+        /// "Pending" | "Completed" | "Cancelled" | "Corrected". Line-level state
+        /// so one short line on a multi-item order can be pulled aside for a
+        /// stock correction while its sibling lines pick up normally. A line
+        /// that comes up short at pickup is set to "Cancelled" here (its real
+        /// fulfillment happens on a freshly issued order against the corrected
+        /// count) rather than letting the order close short. OrderService.
+        /// ReportShortPull immediately flips a "Cancelled" line to "Corrected"
+        /// once it starts acting on it, so a double-submit can't apply the same
+        /// stock correction (and reissue a duplicate order) twice.
+        /// </summary>
+        public string Status { get; set; } = "Pending";
+
+        /// <summary>
         /// How many units on THIS order line are requested thermocoupled.
         /// 0 for non-motor lines or when none requested. Capped at TC-available
         /// at add-to-cart time. Rides the order so pickup pulls exactly this

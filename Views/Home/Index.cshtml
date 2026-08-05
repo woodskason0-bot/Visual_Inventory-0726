@@ -67,6 +67,8 @@
     // logged at pickup so far. Forward-only log -- starts empty per model.
     var compressorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsCompressorType(i.Type))
         .OrderBy(i => i.ItemName).ToList();
+    var compressorBrands = compressorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
+        .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
     var compressorUnitsByItem = invSvc?.GetCompressorUnitsGrouped()
         ?? new Dictionary<string, List<Visual_Inventory_System.Models.CompressorUnit>>();
     var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
@@ -1139,6 +1141,32 @@
                     not a full map of current stock. A model showing Qty 12 may only have a
                     few units listed below for a while; that gap closes as more get logged.
                 </p>
+
+                <!-- Filter bar: Unclaimed = no Team AND no Line assigned. Purely
+                     client-side (the modal is fully rendered already), so filtering
+                     never closes the modal or round-trips the page. -->
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="compFilterUnclaimed" onchange="compApplyFilter()">
+                        <label class="form-check-label small" for="compFilterUnclaimed">Unclaimed only</label>
+                    </div>
+                    <select id="compFilterTeam" class="form-select form-select-sm" style="width:auto;" onchange="compApplyFilter()">
+                        <option value="">All Teams</option>
+                        @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                        {
+                            <option value="@t.Name">@t.Name</option>
+                        }
+                    </select>
+                    <select id="compFilterBrand" class="form-select form-select-sm" style="width:auto;" onchange="compApplyFilter()">
+                        <option value="">All Brands</option>
+                        @foreach (var b in compressorBrands)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                    <span id="compFilterCount" class="text-light-gray small ms-auto"></span>
+                </div>
+
                 @if (!compressorItems.Any())
                 {
                     <p class="text-light-gray mb-0">No compressor models visible to you yet.</p>
@@ -1149,7 +1177,8 @@
                     {
                         var units = compressorUnitsByItem.TryGetValue(it.ItemId, out var u) ? u : new List<Visual_Inventory_System.Models.CompressorUnit>();
                         var collapseId = "compUnits-" + it.ItemId.Replace(" ", "");
-                        <div class="mb-2 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                        var isUnclaimed = string.IsNullOrWhiteSpace(it.Team) && string.IsNullOrWhiteSpace(it.Line);
+                        <div class="comp-row mb-2 p-2" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
                             <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
                                  data-bs-toggle="collapse" data-bs-target="#@collapseId">
                                 <div>
@@ -3171,18 +3200,36 @@
 
         // ---- Live Item ID preview -----------------------------------------
         // Shows the predicted ID (<GroupInitial><Type first+last>-NNNN) as the
-        // user picks Group / types Type. The number is read from the items
-        // already on the page. This is ONLY a preview: HomeController.CreateItem
-        // recomputes and assigns the real ID at save, so a stale number here
-        // can never cause a clash. The success toast shows the actual ID.
-        const regGroup = document.getElementById('reg-group');
+        // user picks Branch/Line / types Type. The number is read from the
+        // items already on the page. This is ONLY a preview: HomeController.
+        // CreateItem recomputes and assigns the real ID at save (from the
+        // item's own posted Line, same source used here), so a stale number
+        // or stale group here can never cause a clash. The success toast
+        // shows the actual ID.
         const regType = document.getElementById('reg-type');
         const regIdOut = document.getElementById('reg-itemid');
 
+        // Mirrors OrgStructure.BranchFor/GroupFor: find which Branch a Line
+        // belongs to, then reduce "Residential Air" -> "Residential". Falls
+        // back to the Branch dropdown alone if no specific Line is picked
+        // yet, so the preview updates the moment a Branch is chosen instead
+        // of waiting on a Line selection underneath it.
+        function regGroupWord() {
+            const lineVal = (regLine && regLine.value) ? regLine.value.trim() : '';
+            let branch = '';
+            if (lineVal) {
+                for (const b in orgStructure) {
+                    if ((orgStructure[b] || []).indexOf(lineVal) !== -1) { branch = b; break; }
+                }
+            }
+            if (!branch) branch = (regLineBranch && regLineBranch.value) ? regLineBranch.value.trim() : '';
+            if (!branch) return 'Commercial';
+            return /\sair$/i.test(branch) ? branch.slice(0, -4) : branch;
+        }
+
         function regBuildPrefix() {
-            let g = (regGroup && regGroup.value ? regGroup.value : 'Commercial').trim();
+            let g = regGroupWord();
             let t = (regType && regType.value ? regType.value : '').trim();
-            if (g === '') g = 'Commercial';
             if (t === '') t = 'General';
             const gi = g.charAt(0).toUpperCase();
             const tc = (t.charAt(0) + t.charAt(t.length - 1)).toUpperCase();
@@ -3205,11 +3252,37 @@
             });
             regIdOut.value = prefix + String(max + 1).padStart(4, '0');
         }
-        if (regGroup) regGroup.addEventListener('change', regPreviewId);
+        if (regLineBranch) regLineBranch.addEventListener('change', regPreviewId);
+        if (regLine) regLine.addEventListener('change', regPreviewId);
         if (regType) regType.addEventListener('input', regPreviewId);
         // Refresh the preview each time the registry modal opens.
         const newItemModal = document.getElementById('newItemModal');
         if (newItemModal) newItemModal.addEventListener('shown.bs.modal', regPreviewId);
+
+        // ---- Compressor filter (Unclaimed / Team / Brand) -----------------
+        // Client-side only: the modal is fully rendered already, so filtering
+        // just shows/hides .comp-row blocks by their data-* attributes rather
+        // than round-tripping the page. Same treatment can be reused for
+        // Motors later -- parked until that's scoped.
+        function compApplyFilter() {
+            const unclaimedOnly = document.getElementById('compFilterUnclaimed')?.checked;
+            const team = document.getElementById('compFilterTeam')?.value || '';
+            const brand = document.getElementById('compFilterBrand')?.value || '';
+            const rows = document.querySelectorAll('#compressorRegistryModal .comp-row');
+            let shown = 0;
+            rows.forEach(function (row) {
+                let visible = true;
+                if (unclaimedOnly && row.dataset.unclaimed !== '1') visible = false;
+                if (team && row.dataset.team !== team) visible = false;
+                if (brand && row.dataset.brand !== brand) visible = false;
+                row.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            const countEl = document.getElementById('compFilterCount');
+            if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' shown';
+        }
+        const compressorRegistryModal = document.getElementById('compressorRegistryModal');
+        if (compressorRegistryModal) compressorRegistryModal.addEventListener('shown.bs.modal', compApplyFilter);
 
         // Location hierarchy (friendly names only). Codes are derived by the
         // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),

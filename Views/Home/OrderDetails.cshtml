@@ -46,13 +46,15 @@
             <th>Description</th>
             <th>Location</th>
             <th class="text-end">Quantity</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
     @foreach (var it in Model.Items)
     {
         var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
-        <tr>
+        var wasShort = it.Status == "Cancelled";
+        <tr class="@(wasShort ? "text-muted" : "")">
             <td>@it.ItemId</td>
             <td>@(inv?.ItemName ?? "Unknown item")@(string.IsNullOrWhiteSpace(inv?.RheemPartNumber) ? "" : $" — PN: {inv!.RheemPartNumber}")</td>
             <td>@(string.IsNullOrWhiteSpace(inv?.Description) ? "-" : inv.Description)</td>
@@ -62,6 +64,12 @@
                 )
             </td>
             <td class="text-end">@it.Quantity</td>
+            <td>
+                @if (wasShort)
+                {
+                    <span class="badge bg-warning text-dark" title="Came up short on the shelf; stock was corrected and the real quantity was reissued and picked up on a separate order.">Short — reissued separately</span>
+                }
+            </td>
         </tr>
     }
     </tbody>

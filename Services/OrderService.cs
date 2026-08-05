@@ -6,6 +6,43 @@ using System.Linq;
 
 namespace Visual_Inventory_System.Services
 {
+    /// <summary>One location's recorded quantity for a line that came up short at pickup.</summary>
+    public class LocationStock
+    {
+        public int VariantId { get; set; }
+        public string Fda { get; set; } = "";
+        public int RecordedQty { get; set; }
+    }
+
+    /// <summary>
+    /// An order line that couldn't be pulled as ordered -- requested exceeds what's
+    /// actually on the shelf across this item's active locations. Carries the
+    /// per-location breakdown so the picker can report the true count at whichever
+    /// shelf(s) they're actually standing at, rather than one flat number.
+    /// </summary>
+    public class ShortPullLine
+    {
+        public int OrderItemId { get; set; }
+        public string ItemId { get; set; } = "";
+        public string ItemName { get; set; } = "";
+        public int Requested { get; set; }
+        public System.Collections.Generic.List<LocationStock> Locations { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Outcome of a pickup attempt (PickUpOrder or ReportShortPull's immediate
+    /// re-pickup). Lines that came up short are NOT fulfilled -- they're reported
+    /// here instead, untouched, for correction via ReportShortPull. Other lines on
+    /// the same order complete normally.
+    /// </summary>
+    public class PickupResult
+    {
+        public int OrderId { get; set; }
+        public int? NewOrderId { get; set; }   // set by ReportShortPull when a correction reissues clean
+        public System.Collections.Generic.List<ShortPullLine> ShortLines { get; set; } = new();
+        public bool HasShortLines => ShortLines.Count > 0;
+    }
+
     public class OrderService
     {
         private readonly AppDbContext _db;
@@ -190,12 +227,13 @@ namespace Visual_Inventory_System.Services
         // compressorUnits: orderItemId -> list of (LabNumber, SerialNumber) pairs,
         // one entry per physical unit being pulled on that line. Both soft --
         // null/blank in either slot just means that unit's field wasn't given.
-        public void PickUpOrder(int orderId, Dictionary<int, int>? variantChoices = null,
+        public PickupResult PickUpOrder(int orderId, Dictionary<int, int>? variantChoices = null,
             Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits = null)
         {
             // Captured inside the tx, used for the post-commit ping to the requester.
             string? requesterToNotify = null;
             string fulfiller = _currentUser.Name;
+            var result = new PickupResult { OrderId = orderId };
 
             using var tx = _db.Database.BeginTransaction();
             try
@@ -204,182 +242,37 @@ namespace Visual_Inventory_System.Services
                 if (order == null) throw new InvalidOperationException("Order not found.");
                 if (order.Status == "Completed") throw new InvalidOperationException("Already completed.");
 
-                foreach (var it in order.Items)
+                // Only lines still awaiting pickup -- a second attempt on the same
+                // order (or one that already had a short line pulled aside) must
+                // not re-touch lines that already resolved either way.
+                foreach (var it in order.Items.Where(i => i.Status == "Pending"))
                 {
-                    var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
-                    if (inv != null)
-                    {
-                        // Which location to pull from first: the engineer's request
-                        // on the order line wins; else the pickup person's choice
-                        // (posted from the queue page); else no preference.
-                        int? preferId = it.RequestedVariantId;
-                        if (preferId == null && variantChoices != null
-                            && variantChoices.TryGetValue(it.Id, out int chosen))
-                        {
-                            preferId = chosen;
-                        }
-
-                        // Preferred variant first (if still active), then the rest
-                        // lowest-number-first as spill so a pickup never strands on
-                        // a location that came up short.
-                        var pullOrder = inv.Variants.Where(v => !v.IsRetired)
-                            .OrderBy(v => preferId.HasValue && v.Id == preferId.Value ? 0 : 1)
-                            .ThenBy(v => v.VariantNumber)
-                            .ToList();
-
-                        int remaining = it.Quantity;
-                        int remainingTc = it.ThermocoupledCount;   // TC motors still owed to this line
-                        var pulls = new List<string>();   // snapshot for the log
-                        foreach (var v in pullOrder)
-                        {
-                            if (remaining <= 0) break;
-                            int take = System.Math.Min(v.Quantity, remaining);
-                            if (take > 0)
-                            {
-                                // How many of the pulled units are TC. Floor: if this
-                                // stack lacks enough non-TC to cover `take`, the rest
-                                // must be TC (keeps TC <= qty on what's left). Ceiling:
-                                // the TC actually on the stack. Between those, honor
-                                // what the order still asks for.
-                                int nonTc = v.Quantity - v.ThermocoupledQty;
-                                int forcedTc = System.Math.Max(0, take - nonTc);
-                                int maxTc = System.Math.Min(take, v.ThermocoupledQty);
-                                int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
-
-                                v.Quantity -= take;
-                                v.ThermocoupledQty -= tcTake;
-                                remaining -= take;
-                                remainingTc = System.Math.Max(0, remainingTc - tcTake);
-                                pulls.Add($"{take}{(tcTake > 0 ? $" [{tcTake} TC]" : "")} from V{v.VariantNumber} ({v.FdaString})");
-                            }
-                        }
-
-                        // LOAN STARTS HERE. Loanable units that ACTUALLY left the
-                        // shelf are now out and expected back (Controls: everything
-                        // pulled; Motors: the TC pulled). Based on what shipped, not
-                        // what was ordered, so a short pickup can't over-count a loan.
-                        int pulledQty = it.Quantity - remaining;
-                        int pulledTc = it.ThermocoupledCount - remainingTc;
-                        // Pass 6B: call the shared helper instead of repeating the
-                        // rule inline. This block WAS a duplicate of
-                        // InventoryService.LoanableQuantity -- which meant the helper
-                        // had zero callers, and adding compressors to it changed
-                        // nothing while this copy still returned 0 for them.
-                        //
-                        // Equivalent for the existing types: pulledTc can never exceed
-                        // pulledQty (TC is a subset of what was pulled), so the Min()
-                        // inside the helper resolves to pulledTc for motors exactly as
-                        // before. Controls are unchanged. Compressors now count.
-                        it.LoanOutstanding = InventoryService.LoanableQuantity(
-                            inv.Type, pulledQty, pulledTc);
-
-                        // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
-                        // physical unit actually pulled (pulledQty, not the ordered
-                        // qty -- a short pickup can't log units that never left the
-                        // shelf). Lab#/Serial# are both soft: whatever pairs were
-                        // posted for this line get used in order; anything past the
-                        // posted count (or left blank) just logs null/null. Missing
-                        // values are summarized onto the pickup log line below, not
-                        // blocked here.
-                        int missingLab = 0, missingSerial = 0, matchedUnits = 0;
-                        if (InventoryService.IsCompressorType(inv.Type) && pulledQty > 0)
-                        {
-                            List<(string? Lab, string? Serial)>? pairs = null;
-                            compressorUnits?.TryGetValue(it.Id, out pairs);
-                            var now = System.DateTime.UtcNow;
-
-                            // MATCH-OR-CREATE (Pass 6A). CompressorUnits is now a
-                            // roster, so a serial typed at pickup may already be on
-                            // it as On Hand stock. Blindly inserting would violate
-                            // IX_CompressorUnits_ItemId_SerialNumber and crash the
-                            // pickup for doing exactly the right thing -- reading
-                            // the number off the machine in your hands.
-                            //
-                            // Tracked (no AsNoTracking) so flips persist on SaveChanges.
-                            var onHand = _db.CompressorUnits
-                                .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand)
-                                .OrderBy(c => c.RecordedAt)
-                                .ToList();
-
-                            for (int u = 0; u < pulledQty; u++)
-                            {
-                                string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
-                                string? serial = (pairs != null && u < pairs.Count) ? pairs[u].Serial : null;
-                                lab = string.IsNullOrWhiteSpace(lab) ? null : lab.Trim();
-                                serial = string.IsNullOrWhiteSpace(serial) ? null : serial.Trim();
-                                if (lab == null) missingLab++;
-                                if (serial == null) missingSerial++;
-
-                                CompressorUnit? known = null;
-                                if (serial != null)
-                                {
-                                    known = onHand.FirstOrDefault(c =>
-                                        !string.IsNullOrWhiteSpace(c.SerialNumber) &&
-                                        string.Equals(c.SerialNumber, serial, System.StringComparison.OrdinalIgnoreCase));
-                                }
-
-                                if (known != null)
-                                {
-                                    // A unit we already knew about is leaving the shelf.
-                                    // Flip it -- its history (and lab number) carries forward.
-                                    onHand.Remove(known);
-                                    known.Status = UnitStatus.PickedUp;
-                                    known.OrderId = orderId;
-                                    known.OrderItemId = it.Id;
-                                    known.PickedUpAt = now;
-                                    known.PickedUpBy = _currentUser.Name;
-                                    known.ItemVariantId = null;   // off the shelf; 6B sets it again on return
-                                    if (lab != null) known.LabNumber = lab;
-                                    matchedUnits++;
-                                }
-                                else
-                                {
-                                    // First time we've seen this one. Recorded and
-                                    // picked up in the same breath.
-                                    _db.CompressorUnits.Add(new CompressorUnit
-                                    {
-                                        ItemId = it.ItemId,
-                                        ItemVariantId = null,
-                                        SerialNumber = serial,
-                                        LabNumber = lab,
-                                        Status = UnitStatus.PickedUp,
-                                        RecordedAt = now,
-                                        RecordedBy = _currentUser.Name,
-                                        OrderId = orderId,
-                                        OrderItemId = it.Id,
-                                        PickedUpAt = now,
-                                        PickedUpBy = _currentUser.Name
-                                    });
-                                }
-                            }
-                        }
-
-                        var flagParts = new List<string>();
-                        if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
-                        if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
-                        if (matchedUnits > 0) flagParts.Add($"{matchedUnits} matched to known unit(s)");
-                        string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
-
-                        // LOG THE PICKUP HERE! Details snapshot the actual pull
-                        // locations at this moment -- variant numbers can be
-                        // reused later, so the log must not rely on lookups.
-                        _db.TransactionLogs.Add(new TransactionLog
-                        {
-                            Timestamp = System.DateTime.UtcNow,
-                            ActionType = "Order Picked Up",
-                            ItemId = it.ItemId,
-                            QuantityChange = -it.Quantity,
-                            Details = (pulls.Count > 0
-                                ? $"Order #{orderId} — pulled {string.Join(", ", pulls)}"
-                                : $"Order #{orderId}") + compressorFlag,
-                            User = _currentUser.Name
-                        });
-                    }
+                    var shortLine = FulfillOrderItem(it, orderId, variantChoices, compressorUnits);
+                    if (shortLine != null) result.ShortLines.Add(shortLine);
                 }
 
-                order.Status = "Completed";
-                order.FulfilledBy = _currentUser.Name;
-                order.FulfilledAt = System.DateTime.UtcNow;
+                // Order-level status follows the lines: nothing left Pending means
+                // this order is done being worked on. If every line came up short,
+                // call the order what it is -- Cancelled, not Completed -- since
+                // nothing under this order id actually left the shelf. A mix of
+                // Completed/Cancelled still counts as Completed: real fulfillment
+                // happened here, the short line's real fulfillment lives on
+                // whatever order ReportShortPull reissues.
+                bool anyPending = order.Items.Any(i => i.Status == "Pending");
+                if (anyPending)
+                {
+                    // Shouldn't happen -- FulfillOrderItem always leaves a line
+                    // Completed or Cancelled -- but leave the order Pending rather
+                    // than lie about it if it ever does.
+                }
+                else
+                {
+                    bool anyCompleted = order.Items.Any(i => i.Status == "Completed");
+                    order.Status = anyCompleted ? "Completed" : "Cancelled";
+                    order.FulfilledBy = _currentUser.Name;
+                    order.FulfilledAt = System.DateTime.UtcNow;
+                }
+
                 _db.SaveChanges();
                 tx.Commit();
                 tx.Dispose(); // release the ambient tx so the post-commit ping can SaveChanges cleanly
@@ -407,6 +300,348 @@ namespace Visual_Inventory_System.Services
                 }
             }
             catch { /* swallow: pickup already committed */ }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Pulls (or refuses) a single order line. Mutates `it.Status` to
+        /// "Completed" or "Cancelled" and, on success, decrements stock / logs the
+        /// pickup exactly as before. Returns the shortfall (stock left untouched)
+        /// instead of pulling anything if the shelf can't cover what was ordered --
+        /// a short pull is a data-integrity event, not a fulfillment variation, so
+        /// nothing partial ever gets pulled here. Shared by PickUpOrder and by
+        /// ReportShortPull's immediate re-pickup of the corrected quantity.
+        /// </summary>
+        private ShortPullLine? FulfillOrderItem(OrderItem it, int orderId,
+            Dictionary<int, int>? variantChoices,
+            Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits)
+        {
+            var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
+            if (inv == null)
+            {
+                // Item vanished after the order was placed. Nothing to pull or
+                // report short on -- let the line close rather than block the
+                // order forever.
+                it.Status = "Completed";
+                return null;
+            }
+
+            var activeVariants = inv.Variants.Where(v => !v.IsRetired).ToList();
+            int totalAvailable = activeVariants.Sum(v => v.Quantity);
+
+            if (it.Quantity > totalAvailable)
+            {
+                // Not enough on the shelf to honor this line as ordered. Refuse
+                // it here rather than pulling whatever exists -- [decided] a
+                // short pull is a data-integrity event, not a fulfillment
+                // variation. Stock stays untouched; the picker reports the real
+                // count via ReportShortPull, location by location.
+                it.Status = "Cancelled";
+                return new ShortPullLine
+                {
+                    OrderItemId = it.Id,
+                    ItemId = it.ItemId,
+                    ItemName = inv.ItemName,
+                    Requested = it.Quantity,
+                    Locations = activeVariants.Select(v => new LocationStock
+                    {
+                        VariantId = v.Id,
+                        Fda = v.FdaString,
+                        RecordedQty = v.Quantity
+                    }).ToList()
+                };
+            }
+
+            // Which location to pull from first: the engineer's request
+            // on the order line wins; else the pickup person's choice
+            // (posted from the queue page); else no preference.
+            int? preferId = it.RequestedVariantId;
+            if (preferId == null && variantChoices != null
+                && variantChoices.TryGetValue(it.Id, out int chosen))
+            {
+                preferId = chosen;
+            }
+
+            // Preferred variant first (if still active), then the rest
+            // lowest-number-first as spill. The pre-check above guarantees
+            // enough total stock exists, so this always fully satisfies the
+            // line -- it can still span two locations, just never comes up short.
+            var pullOrder = activeVariants
+                .OrderBy(v => preferId.HasValue && v.Id == preferId.Value ? 0 : 1)
+                .ThenBy(v => v.VariantNumber)
+                .ToList();
+
+            int remaining = it.Quantity;
+            int remainingTc = it.ThermocoupledCount;   // TC motors still owed to this line
+            var pulls = new List<string>();   // snapshot for the log
+            foreach (var v in pullOrder)
+            {
+                if (remaining <= 0) break;
+                int take = System.Math.Min(v.Quantity, remaining);
+                if (take > 0)
+                {
+                    // How many of the pulled units are TC. Floor: if this
+                    // stack lacks enough non-TC to cover `take`, the rest
+                    // must be TC (keeps TC <= qty on what's left). Ceiling:
+                    // the TC actually on the stack. Between those, honor
+                    // what the order still asks for.
+                    int nonTc = v.Quantity - v.ThermocoupledQty;
+                    int forcedTc = System.Math.Max(0, take - nonTc);
+                    int maxTc = System.Math.Min(take, v.ThermocoupledQty);
+                    int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
+
+                    v.Quantity -= take;
+                    v.ThermocoupledQty -= tcTake;
+                    remaining -= take;
+                    remainingTc = System.Math.Max(0, remainingTc - tcTake);
+                    pulls.Add($"{take}{(tcTake > 0 ? $" [{tcTake} TC]" : "")} from V{v.VariantNumber} ({v.FdaString})");
+                }
+            }
+
+            // LOAN STARTS HERE. Loanable units that ACTUALLY left the
+            // shelf are now out and expected back (Controls: everything
+            // pulled; Motors: the TC pulled). Based on what shipped, not
+            // what was ordered, so a short pickup can't over-count a loan.
+            int pulledQty = it.Quantity - remaining;
+            int pulledTc = it.ThermocoupledCount - remainingTc;
+            // Pass 6B: call the shared helper instead of repeating the
+            // rule inline. This block WAS a duplicate of
+            // InventoryService.LoanableQuantity -- which meant the helper
+            // had zero callers, and adding compressors to it changed
+            // nothing while this copy still returned 0 for them.
+            //
+            // Equivalent for the existing types: pulledTc can never exceed
+            // pulledQty (TC is a subset of what was pulled), so the Min()
+            // inside the helper resolves to pulledTc for motors exactly as
+            // before. Controls are unchanged. Compressors now count.
+            it.LoanOutstanding = InventoryService.LoanableQuantity(
+                inv.Type, pulledQty, pulledTc);
+
+            // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
+            // physical unit actually pulled (pulledQty, not the ordered
+            // qty -- a short pickup can't log units that never left the
+            // shelf). Lab#/Serial# are both soft: whatever pairs were
+            // posted for this line get used in order; anything past the
+            // posted count (or left blank) just logs null/null. Missing
+            // values are summarized onto the pickup log line below, not
+            // blocked here.
+            int missingLab = 0, missingSerial = 0, matchedUnits = 0;
+            if (InventoryService.IsCompressorType(inv.Type) && pulledQty > 0)
+            {
+                List<(string? Lab, string? Serial)>? pairs = null;
+                compressorUnits?.TryGetValue(it.Id, out pairs);
+                var now = System.DateTime.UtcNow;
+
+                // MATCH-OR-CREATE (Pass 6A). CompressorUnits is now a
+                // roster, so a serial typed at pickup may already be on
+                // it as On Hand stock. Blindly inserting would violate
+                // IX_CompressorUnits_ItemId_SerialNumber and crash the
+                // pickup for doing exactly the right thing -- reading
+                // the number off the machine in your hands.
+                //
+                // Tracked (no AsNoTracking) so flips persist on SaveChanges.
+                var onHand = _db.CompressorUnits
+                    .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand)
+                    .OrderBy(c => c.RecordedAt)
+                    .ToList();
+
+                for (int u = 0; u < pulledQty; u++)
+                {
+                    string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
+                    string? serial = (pairs != null && u < pairs.Count) ? pairs[u].Serial : null;
+                    lab = string.IsNullOrWhiteSpace(lab) ? null : lab.Trim();
+                    serial = string.IsNullOrWhiteSpace(serial) ? null : serial.Trim();
+                    if (lab == null) missingLab++;
+                    if (serial == null) missingSerial++;
+
+                    CompressorUnit? known = null;
+                    if (serial != null)
+                    {
+                        known = onHand.FirstOrDefault(c =>
+                            !string.IsNullOrWhiteSpace(c.SerialNumber) &&
+                            string.Equals(c.SerialNumber, serial, System.StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (known != null)
+                    {
+                        // A unit we already knew about is leaving the shelf.
+                        // Flip it -- its history (and lab number) carries forward.
+                        onHand.Remove(known);
+                        known.Status = UnitStatus.PickedUp;
+                        known.OrderId = orderId;
+                        known.OrderItemId = it.Id;
+                        known.PickedUpAt = now;
+                        known.PickedUpBy = _currentUser.Name;
+                        known.ItemVariantId = null;   // off the shelf; 6B sets it again on return
+                        if (lab != null) known.LabNumber = lab;
+                        matchedUnits++;
+                    }
+                    else
+                    {
+                        // First time we've seen this one. Recorded and
+                        // picked up in the same breath.
+                        _db.CompressorUnits.Add(new CompressorUnit
+                        {
+                            ItemId = it.ItemId,
+                            ItemVariantId = null,
+                            SerialNumber = serial,
+                            LabNumber = lab,
+                            Status = UnitStatus.PickedUp,
+                            RecordedAt = now,
+                            RecordedBy = _currentUser.Name,
+                            OrderId = orderId,
+                            OrderItemId = it.Id,
+                            PickedUpAt = now,
+                            PickedUpBy = _currentUser.Name
+                        });
+                    }
+                }
+            }
+
+            var flagParts = new List<string>();
+            if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
+            if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
+            if (matchedUnits > 0) flagParts.Add($"{matchedUnits} matched to known unit(s)");
+            string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
+
+            // LOG THE PICKUP HERE! Details snapshot the actual pull
+            // locations at this moment -- variant numbers can be
+            // reused later, so the log must not rely on lookups.
+            // QuantityChange logs what actually left (pulledQty), not what
+            // was ordered -- the pre-check above means the two always match
+            // for a line that reaches this point, but pulledQty is the
+            // honest source regardless (see the short-pull writeup: ordered
+            // != pulled is exactly the bug that let exports overstate).
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = System.DateTime.UtcNow,
+                ActionType = "Order Picked Up",
+                ItemId = it.ItemId,
+                QuantityChange = -pulledQty,
+                Details = (pulls.Count > 0
+                    ? $"Order #{orderId} — pulled {string.Join(", ", pulls)}"
+                    : $"Order #{orderId}") + compressorFlag,
+                User = _currentUser.Name
+            });
+
+            it.Status = "Completed";
+            return null;
+        }
+
+        /// <summary>
+        /// The other half of the short-pull flow (see FulfillOrderItem). The
+        /// picker reports what's ACTUALLY on the shelf, location by location, for
+        /// a line that came up short. This adjusts real stock to match what was
+        /// seen -- an audit-logged correction, not a fulfillment -- then
+        /// immediately issues and picks up a fresh order for the corrected
+        /// quantity so the picker leaves with a clean pickup in one action. This
+        /// consolidated action is what the widened Standard-level permission
+        /// covers: it used to take a runner to find the shortage, an Engineer to
+        /// cancel, and the requester to re-order.
+        ///
+        /// corrections: VariantId -> the count the picker actually saw there.
+        /// Only include locations that need correcting; anything left out keeps
+        /// its current recorded quantity.
+        /// </summary>
+        public PickupResult ReportShortPull(int orderId, int orderItemId, Dictionary<int, int> corrections)
+        {
+            using var tx = _db.Database.BeginTransaction();
+            try
+            {
+                var it = _db.OrderItems.Include(o => o.Order).FirstOrDefault(o => o.Id == orderItemId && o.OrderId == orderId);
+                if (it == null) throw new InvalidOperationException("Order line not found.");
+                if (it.Status != "Cancelled")
+                    throw new InvalidOperationException("This line isn't flagged short -- nothing to correct.");
+
+                var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
+                if (inv == null) throw new InvalidOperationException("That item no longer exists in inventory.");
+
+                // Flip out of "Cancelled" immediately so a double-click or a
+                // retried form post can't sail past the guard above and apply
+                // this same correction (and reissue a duplicate order) twice.
+                it.Status = "Corrected";
+
+                var now = System.DateTime.UtcNow;
+                foreach (var kv in corrections)
+                {
+                    var v = inv.Variants.FirstOrDefault(x => x.Id == kv.Key && !x.IsRetired);
+                    if (v == null) continue;
+                    int before = v.Quantity;
+                    int after = System.Math.Max(0, kv.Value);
+                    if (after == before) continue;
+
+                    v.Quantity = after;
+                    v.ThermocoupledQty = System.Math.Min(v.ThermocoupledQty, after);
+
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now,
+                        ActionType = "Stock Adjustment",
+                        ItemId = it.ItemId,
+                        QuantityChange = after - before,
+                        Details = $"Short-pull correction on Order #{orderId}: V{v.VariantNumber} ({v.FdaString}) recorded {before}, actually {after}.",
+                        User = _currentUser.Name
+                    });
+                }
+
+                int available = inv.Variants.Where(v => !v.IsRetired).Sum(v => v.Quantity);
+                int correctedQty = System.Math.Min(it.Quantity, available);
+
+                var result = new PickupResult { OrderId = orderId };
+
+                if (correctedQty <= 0)
+                {
+                    // Nothing to reissue -- the correction found zero real stock.
+                    _db.SaveChanges();
+                    tx.Commit();
+                    return result;
+                }
+
+                var newOrder = new Order
+                {
+                    CreatedAt = now,
+                    Status = "Pending",
+                    RequestedBy = it.Order.RequestedBy
+                };
+                _db.Orders.Add(newOrder);
+                _db.SaveChanges();   // generates newOrder.Id
+
+                var newItem = new OrderItem
+                {
+                    OrderId = newOrder.Id,
+                    Order = newOrder,
+                    ItemId = it.ItemId,
+                    Quantity = correctedQty,
+                    Status = "Pending"
+                };
+                _db.OrderItems.Add(newItem);
+                _db.SaveChanges();
+
+                // Pick it up immediately -- the picker is already standing here
+                // with the corrected count in hand. This IS the "pick up clean"
+                // step; no second trip through the queue.
+                var shortLine = FulfillOrderItem(newItem, newOrder.Id, null, null);
+                if (shortLine == null)
+                {
+                    newOrder.Status = "Completed";
+                    newOrder.FulfilledBy = _currentUser.Name;
+                    newOrder.FulfilledAt = now;
+                    result.NewOrderId = newOrder.Id;
+                }
+                else
+                {
+                    // Came up short again (e.g. two corrections raced on the same
+                    // shelf) -- leave it Pending in the normal queue instead of
+                    // silently failing.
+                    result.ShortLines.Add(shortLine);
+                }
+
+                _db.SaveChanges();
+                tx.Commit();
+                return result;
+            }
+            catch { tx.Rollback(); throw; }
         }
 
         // Return loaned units to inventory: adds stock back at a chosen active
