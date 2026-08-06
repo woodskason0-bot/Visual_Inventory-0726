@@ -14,8 +14,8 @@ namespace Visual_Inventory_System.Services
     {
         public static readonly Dictionary<string, string[]> BranchLines = new()
         {
-            ["Residential Air"] = new[] { "Residential OD", "Residential Coils/AH", "Residential Gas Furnace" },
-            ["Commercial Air"] = new[] { "Commercial Package/Splits", "Residential Package", "International" }
+            ["Residential Air"] = new[] { "Residential OD", "Residential Coils/AH", "Residential Gas Furnaces" },
+            ["Commercial Air"] = new[] { "Commercial Packaged/Splits", "Residential Packaged", "International" }
         };
 
         public static readonly string[] AllLines = BranchLines.Values.SelectMany(x => x).ToArray();

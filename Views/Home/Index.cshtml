@@ -1142,22 +1142,29 @@
                     few units listed below for a while; that gap closes as more get logged.
                 </p>
 
-                <!-- Filter bar: Unclaimed = no Team AND no Line assigned. Purely
-                     client-side (the modal is fully rendered already), so filtering
-                     never closes the modal or round-trips the page. -->
+                <!-- Filter bar: Unclaimed = no Team AND no Line assigned. All filters
+                     AND together. Purely client-side (the modal is fully rendered
+                     already), so filtering never closes the modal or round-trips the
+                     page. Listeners are wired in JS (not inline onchange) since this
+                     modal's script lives inside a scoping IIFE further down the file. -->
                 <div class="d-flex flex-wrap gap-2 align-items-center mb-3 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
                     <div class="form-check form-check-inline mb-0">
-                        <input class="form-check-input" type="checkbox" id="compFilterUnclaimed" onchange="compApplyFilter()">
+                        <input class="form-check-input" type="checkbox" id="compFilterUnclaimed">
                         <label class="form-check-label small" for="compFilterUnclaimed">Unclaimed only</label>
                     </div>
-                    <select id="compFilterTeam" class="form-select form-select-sm" style="width:auto;" onchange="compApplyFilter()">
+                    <!-- Options populated by the shared wireLineCascade() helper, same as
+                         the registration form and Ownership pane -- one source of truth
+                         (orgStructure) instead of a fourth hand-typed copy of the list. -->
+                    <select id="compFilterBranch" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="compFilterLine" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="compFilterTeam" class="form-select form-select-sm" style="width:auto;">
                         <option value="">All Teams</option>
                         @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
                         {
                             <option value="@t.Name">@t.Name</option>
                         }
                     </select>
-                    <select id="compFilterBrand" class="form-select form-select-sm" style="width:auto;" onchange="compApplyFilter()">
+                    <select id="compFilterBrand" class="form-select form-select-sm" style="width:auto;">
                         <option value="">All Brands</option>
                         @foreach (var b in compressorBrands)
                         {
@@ -1176,9 +1183,31 @@
                     @foreach (var it in compressorItems)
                     {
                         var units = compressorUnitsByItem.TryGetValue(it.ItemId, out var u) ? u : new List<Visual_Inventory_System.Models.CompressorUnit>();
+                        var onHandUnits = units.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
+                        var historyUnits = units.Where(x => x.Status != Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
                         var collapseId = "compUnits-" + it.ItemId.Replace(" ", "");
                         var isUnclaimed = string.IsNullOrWhiteSpace(it.Team) && string.IsNullOrWhiteSpace(it.Line);
-                        <div class="comp-row mb-2 p-2" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                        var itBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
+
+                        @* The roster: one row per physical unit on the shelf, padded with
+                           blank rows up to each location's Quantity so a passerby can log a
+                           serial that was never picked up -- the other entrance to
+                           CompressorUnits besides PickUpOrder's match-or-create. Grouped by
+                           variant because 18 models split across two locations; a flat list
+                           of 16 blanks couldn't say which shelf a given blank belongs to. *@
+                        var roster = new List<(int UnitId, int VariantId, string? Serial, string? Lab, string VariantLabel)>();
+                        foreach (var v in it.ActiveVariants.OrderBy(v => v.VariantNumber))
+                        {
+                            var label = $"V{v.VariantNumber} — {v.FdaString}";
+                            var atThisVariant = onHandUnits.Where(x => x.ItemVariantId == v.Id).ToList();
+                            foreach (var cu in atThisVariant)
+                                roster.Add((cu.Id, v.Id, cu.SerialNumber, cu.LabNumber, label));
+                            int blanksNeeded = System.Math.Max(0, v.Quantity - atThisVariant.Count);
+                            for (int b = 0; b < blanksNeeded; b++)
+                                roster.Add((0, v.Id, null, null, label));
+                        }
+
+                        <div class="comp-row mb-2 p-2" data-branch="@itBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
                             <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
                                  data-bs-toggle="collapse" data-bs-target="#@collapseId">
                                 <div>
@@ -1187,29 +1216,61 @@
                                 </div>
                                 <div>
                                     <span class="badge bg-primary me-2">Qty @it.Quantity</span>
-                                    @{ var onHandCount = units.Count(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand); }
                                     <span class="badge bg-secondary" title="Units with a serial on record, out of the quantity on hand">
-                                        @onHandCount / @it.Quantity tracked
+                                        @onHandUnits.Count / @it.Quantity tracked
                                     </span>
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </div>
                             </div>
                             <div class="collapse mt-2" id="@collapseId">
-                                @if (!units.Any())
+                                @if (!roster.Any())
                                 {
-                                    <p class="text-light-gray small mb-0">No serials on record for this model yet.</p>
+                                    <p class="text-light-gray small mb-0">Nothing on hand right now.</p>
                                 }
                                 else
                                 {
-                                    @* Pass 6A: this is a ROSTER now, not a pickup log -- it lists
-                                       units still On Hand alongside ones that have left. PickedUpAt/By
-                                       are NULL for anything on a shelf, so both are guarded. *@
+                                    <form asp-controller="Home" asp-action="LogCompressorUnits" method="post" class="mb-2">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="itemId" value="@it.ItemId" />
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead><tr><th>Location</th><th>Serial #</th><th>Lab #</th></tr></thead>
+                                            <tbody>
+                                                @{ string? lastLabel = null; int rowIdx = 0; }
+                                                @foreach (var row in roster)
+                                                {
+                                                    <tr>
+                                                        <td class="text-light-gray small">@(row.VariantLabel == lastLabel ? "" : row.VariantLabel)</td>
+                                                        <td>
+                                                            <input type="hidden" name="unitId_@rowIdx" value="@row.UnitId" />
+                                                            <input type="hidden" name="variantId_@rowIdx" value="@row.VariantId" />
+                                                            <input type="text" name="serial_@rowIdx" value="@row.Serial"
+                                                                   placeholder="@(row.UnitId == 0 ? "(unrecorded)" : "")"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="text" name="lab_@rowIdx" value="@row.Lab"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                    </tr>
+                                                    lastLabel = row.VariantLabel;
+                                                    rowIdx++;
+                                                }
+                                            </tbody>
+                                        </table>
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Save Serials / Lab #s</button>
+                                    </form>
+                                }
+                                @if (historyUnits.Any())
+                                {
+                                    @* Pass 6A: units that have left the shelf (or been scrapped).
+                                       Read-only -- their identity is fixed once they're off the
+                                       roster; corrections belong on whatever's actually On Hand. *@
+                                    <p class="text-light-gray small mb-1">History</p>
                                     <table class="table table-sm table-hover align-middle mb-0">
                                         <thead><tr><th>Serial #</th><th>Lab #</th><th>Status</th><th>When</th><th>By</th></tr></thead>
                                         <tbody>
-                                            @foreach (var cu in units)
+                                            @foreach (var cu in historyUnits)
                                             {
-                                                var onHand = cu.Status == Visual_Inventory_System.Models.UnitStatus.OnHand;
                                                 var scrapped = cu.Status == Visual_Inventory_System.Models.UnitStatus.Scrapped;
                                                 var stamp = cu.PickedUpAt ?? cu.RecordedAt;
                                                 var who = string.IsNullOrWhiteSpace(cu.PickedUpBy) ? cu.RecordedBy : cu.PickedUpBy;
@@ -1217,12 +1278,9 @@
                                                     <td class="@(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "text-warning" : "")">
                                                         @(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "(missing)" : cu.SerialNumber)
                                                     </td>
-                                                    @* Lab numbers are recorded, never assigned -- blank is the
-                                                       normal state until a numbering process exists, so it is
-                                                       dimmed rather than flagged. *@
                                                     <td class="text-light-gray">@(string.IsNullOrWhiteSpace(cu.LabNumber) ? "—" : cu.LabNumber)</td>
                                                     <td>
-                                                        <span class="badge @(onHand ? "bg-success" : scrapped ? "bg-danger" : "bg-warning text-dark")">
+                                                        <span class="badge @(scrapped ? "bg-danger" : "bg-warning text-dark")">
                                                             @cu.Status
                                                         </span>
                                                     </td>
@@ -1956,6 +2014,20 @@
 
 <!-- 8. SCRIPTS -->
 <script>
+    // These three are read by functions defined throughout this whole script
+    // block, some of which (the Ownership pane's Branch/Line cascade) now run
+    // immediately at page load rather than waiting for a user action. They
+    // MUST come first: a const declared further down is in the temporal dead
+    // zone until its own line executes, and any earlier synchronous reference
+    // to it throws ReferenceError and kills the rest of the script silently --
+    // that's exactly what broke Handle Stock/Add to Cart on 2026-08-05, moved
+    // here as the fix.
+    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    // Team -> home Line, e.g. { "Samurai": "Commercial Packaged/Splits" }. A
+    // team with no assigned Line simply has no key here.
+    const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+
     function executeSubmit(id, btnElement) {
         const f = document.getElementById(id);
         if (f) {
@@ -2367,12 +2439,15 @@
         // seeds them itself. Edit Details no longer touches them.
     }
 
-    // ---- Internal - Transfer: Branch/Line cascade ---------------------------
-    // Line reassignment is instant/complete (no transfer window) -- location
-    // and ownership are decoupled, so this just overwrites item.Line.
-    // Element ids kept as edit-line-branch / edit-line: they were named for the
-    // pane Pass 3 put them in, and renaming them would touch five more call sites
-    // for no behavioural gain.
+    // ---- Shared Branch -> Line cascade ---------------------------------
+    // One vocabulary (orgStructure), reused everywhere a Branch select drives
+    // a paired Line select, instead of each caller hand-rolling its own copy.
+    // That's the exact failure shape the location vocabulary hit eight times
+    // over (the same small piece of org data re-typed in multiple places,
+    // silently drifting) -- same risk here at smaller scale. Three callers as
+    // of this pass: the Ownership pane (edit-line-branch/edit-line), New Item
+    // Registry (reg-line-branch/reg-line), and the compressor filter
+    // (compFilterBranch/compFilterLine).
     function branchForLine(line) {
         for (var branch in orgStructure) {
             if (orgStructure[branch].indexOf(line) !== -1) return branch;
@@ -2380,10 +2455,9 @@
         return "";
     }
 
-    function populateEditBranches() {
-        const branchSelect = document.getElementById('edit-line-branch');
+    function populateBranchSelect(branchSelect, placeholder) {
         if (!branchSelect) return;
-        branchSelect.innerHTML = '<option value="">-- Branch --</option>';
+        branchSelect.innerHTML = '<option value="">' + (placeholder || '-- Branch --') + '</option>';
         Object.keys(orgStructure).forEach(function (branch) {
             const opt = document.createElement('option');
             opt.value = branch;
@@ -2392,10 +2466,9 @@
         });
     }
 
-    function populateEditLines(branch, selectedLine) {
-        const lineSelect = document.getElementById('edit-line');
+    function populateLineSelect(lineSelect, branch, selectedLine, placeholder) {
         if (!lineSelect) return;
-        lineSelect.innerHTML = '<option value="">Unassigned</option>';
+        lineSelect.innerHTML = '<option value="">' + (placeholder || 'Unassigned') + '</option>';
         const lines = orgStructure[branch] || [];
         lines.forEach(function (line) {
             const opt = document.createElement('option');
@@ -2406,20 +2479,53 @@
         });
     }
 
-    function populateEditLinePickers(currentLine) {
-        const branchSelect = document.getElementById('edit-line-branch');
-        if (!branchSelect) return;
-        populateEditBranches();
-        const currentBranch = branchForLine(currentLine);
-        if (currentBranch) branchSelect.value = currentBranch;
-        populateEditLines(currentBranch, currentLine);
+    // Wires a Branch select + its paired Line select into a live cascade:
+    // populates both immediately, and on Branch change repopulates Line's
+    // options to just that branch's lines. Call once per pair, at setup time.
+    // `onChange`, if given, fires after EITHER select changes (after the
+    // cascade has already updated) -- e.g. to refresh a live ID preview or
+    // re-apply a filter. `branchPlaceholder`/`linePlaceholder` let each
+    // caller use its own wording ("Unassigned" vs "All Lines").
+    function wireLineCascade(branchSelect, lineSelect, onChange, branchPlaceholder, linePlaceholder) {
+        if (!branchSelect || !lineSelect) return;
+        populateBranchSelect(branchSelect, branchPlaceholder);
+        populateLineSelect(lineSelect, branchSelect.value, '', linePlaceholder);
+        branchSelect.addEventListener('change', function () {
+            populateLineSelect(lineSelect, branchSelect.value, '', linePlaceholder);
+            if (onChange) onChange();
+        });
+        if (onChange) lineSelect.addEventListener('change', onChange);
     }
 
-    (function bindEditLineBranch() {
-        const branchSelect = document.getElementById('edit-line-branch');
-        if (!branchSelect) return;
-        branchSelect.addEventListener('change', function () {
-            populateEditLines(branchSelect.value, '');
+    // Seeds both selects to reflect a KNOWN current Line (e.g. the item's
+    // existing Line when the Ownership pane opens, or a Team's assigned
+    // Line when auto-filling). Silent -- does not fire onChange; callers
+    // that need a reaction call it themselves afterward if they want one.
+    function setLineCascade(branchSelect, lineSelect, currentLine, branchPlaceholder, linePlaceholder) {
+        if (!branchSelect || !lineSelect) return;
+        populateBranchSelect(branchSelect, branchPlaceholder);
+        const branch = branchForLine(currentLine || '');
+        if (branch) branchSelect.value = branch;
+        populateLineSelect(lineSelect, branch, currentLine || '', linePlaceholder);
+    }
+
+    function populateEditLinePickers(currentLine) {
+        setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), currentLine);
+    }
+
+    wireLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'));
+
+    // Auto-fill: picking a Team in the Ownership pane suggests its home Line
+    // (same convenience-not-lock behavior as registration). The pane seeds
+    // from the item's CURRENT line each time it's opened (populateEditLinePickers
+    // above); this only reacts to the human actually changing Team afterward.
+    (function bindEditTeamAutoFill() {
+        const editTeam = document.getElementById('edit-team');
+        if (!editTeam) return;
+        editTeam.addEventListener('change', function () {
+            const suggested = teamLines[editTeam.value];
+            if (!suggested) return;
+            setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), suggested);
         });
     })();
 
@@ -3048,9 +3154,6 @@
         if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
     });
 
-    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
-    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
-
     function bindAutocomplete(inputId, listId, idOutputId, isAlertModal) {
         const searchInput = document.getElementById(inputId);
         const autoList = document.getElementById(listId);
@@ -3179,22 +3282,19 @@
         // ---- Registration: Branch/Line cascade -----------------------------
         const regLineBranch = document.getElementById('reg-line-branch');
         const regLine = document.getElementById('reg-line');
-        if (regLineBranch && regLine) {
-            Object.keys(orgStructure).forEach(function (branch) {
-                const opt = document.createElement('option');
-                opt.value = branch;
-                opt.textContent = branch;
-                regLineBranch.appendChild(opt);
-            });
-            regLineBranch.addEventListener('change', function () {
-                regLine.innerHTML = '<option value="">Unassigned</option>';
-                const lines = orgStructure[regLineBranch.value] || [];
-                lines.forEach(function (line) {
-                    const opt = document.createElement('option');
-                    opt.value = line;
-                    opt.textContent = line;
-                    regLine.appendChild(opt);
-                });
+        wireLineCascade(regLineBranch, regLine);
+
+        // Auto-fill: picking a Team suggests its home Line, but doesn't lock
+        // it -- a team with no assigned Line does nothing, and a manual
+        // Branch/Line change after this stands until a DIFFERENT team is
+        // picked (which re-suggests, on the read that re-picking a team on
+        // purpose is more common than wanting to keep an unrelated override).
+        if (teamSel) {
+            teamSel.addEventListener('change', function () {
+                const suggested = teamLines[teamSel.value];
+                if (!suggested) return;
+                setLineCascade(regLineBranch, regLine, suggested);
+                regPreviewId();
             });
         }
 
@@ -3216,12 +3316,7 @@
         // of waiting on a Line selection underneath it.
         function regGroupWord() {
             const lineVal = (regLine && regLine.value) ? regLine.value.trim() : '';
-            let branch = '';
-            if (lineVal) {
-                for (const b in orgStructure) {
-                    if ((orgStructure[b] || []).indexOf(lineVal) !== -1) { branch = b; break; }
-                }
-            }
+            let branch = lineVal ? branchForLine(lineVal) : '';
             if (!branch) branch = (regLineBranch && regLineBranch.value) ? regLineBranch.value.trim() : '';
             if (!branch) return 'Commercial';
             return /\sair$/i.test(branch) ? branch.slice(0, -4) : branch;
@@ -3259,13 +3354,18 @@
         const newItemModal = document.getElementById('newItemModal');
         if (newItemModal) newItemModal.addEventListener('shown.bs.modal', regPreviewId);
 
-        // ---- Compressor filter (Unclaimed / Team / Brand) -----------------
+        // ---- Compressor filter (Unclaimed / Branch / Line / Team / Brand) --
         // Client-side only: the modal is fully rendered already, so filtering
         // just shows/hides .comp-row blocks by their data-* attributes rather
-        // than round-tripping the page. Same treatment can be reused for
-        // Motors later -- parked until that's scoped.
+        // than round-tripping the page. All active filters AND together. Same
+        // treatment can be reused for Motors later -- parked until that's
+        // scoped. Wired via addEventListener (not inline onchange) because
+        // this whole block sits inside the enclosing IIFE, so a global
+        // onchange="compApplyFilter()" attribute can't see it.
         function compApplyFilter() {
             const unclaimedOnly = document.getElementById('compFilterUnclaimed')?.checked;
+            const branch = document.getElementById('compFilterBranch')?.value || '';
+            const line = document.getElementById('compFilterLine')?.value || '';
             const team = document.getElementById('compFilterTeam')?.value || '';
             const brand = document.getElementById('compFilterBrand')?.value || '';
             const rows = document.querySelectorAll('#compressorRegistryModal .comp-row');
@@ -3273,6 +3373,8 @@
             rows.forEach(function (row) {
                 let visible = true;
                 if (unclaimedOnly && row.dataset.unclaimed !== '1') visible = false;
+                if (branch && row.dataset.branch !== branch) visible = false;
+                if (line && row.dataset.line !== line) visible = false;
                 if (team && row.dataset.team !== team) visible = false;
                 if (brand && row.dataset.brand !== brand) visible = false;
                 row.style.display = visible ? '' : 'none';
@@ -3280,6 +3382,28 @@
             });
             const countEl = document.getElementById('compFilterCount');
             if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' shown';
+        }
+        ['compFilterUnclaimed', 'compFilterBrand'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', compApplyFilter);
+        });
+        // Branch/Line get the shared cascade (options populated from
+        // orgStructure, Line narrows to the picked Branch) instead of a
+        // fourth hand-typed copy of the vocabulary; compApplyFilter re-runs
+        // after either changes, same as the other four controls.
+        const compFilterBranchEl = document.getElementById('compFilterBranch');
+        const compFilterLineEl = document.getElementById('compFilterLine');
+        wireLineCascade(compFilterBranchEl, compFilterLineEl, compApplyFilter, 'All Branches', 'All Lines');
+        // Feed: picking a Team suggests its Branch/Line filters too (still
+        // overridable) -- not the reverse, since more than one team can
+        // share a Line (Spartan/Ninja/Samurai all sit on the same one).
+        const compFilterTeamEl = document.getElementById('compFilterTeam');
+        if (compFilterTeamEl) {
+            compFilterTeamEl.addEventListener('change', function () {
+                const suggested = teamLines[compFilterTeamEl.value];
+                if (suggested) setLineCascade(compFilterBranchEl, compFilterLineEl, suggested, 'All Branches', 'All Lines');
+                compApplyFilter();
+            });
         }
         const compressorRegistryModal = document.getElementById('compressorRegistryModal');
         if (compressorRegistryModal) compressorRegistryModal.addEventListener('shown.bs.modal', compApplyFilter);

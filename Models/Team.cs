@@ -35,5 +35,21 @@ namespace Visual_Inventory_System.Models
         /// the pickers without orphaning the items that already reference it.
         /// </summary>
         public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// The team's home Line, e.g. "Commercial Packaged/Splits". Null = not
+        /// yet assigned. Plain string like everywhere else Line appears -- no FK,
+        /// must be one of OrgStructure.AllLines. Branch is NOT stored here; it's
+        /// derived via OrgStructure.BranchFor(Line), same as for items and users.
+        ///
+        /// PURE METADATA -- does not gate visibility. Team never has; that's
+        /// Line's job (Pass 3), and this field doesn't change that. It only
+        /// feeds a convenience auto-fill (picking this Team suggests this Line
+        /// on the registration/ownership forms) and the compressor filter
+        /// (picking this Team suggests this Branch/Line there too). Both are
+        /// suggestions a human can override, never an enforced constraint.
+        /// </summary>
+        [MaxLength(60)]
+        public string? Line { get; set; }
     }
 }

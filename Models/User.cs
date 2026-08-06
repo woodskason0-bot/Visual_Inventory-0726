@@ -40,7 +40,7 @@ namespace Visual_Inventory_System.Models
 
         /// <summary>
         /// Fixed org placement -- one of the six OrgStructure.AllLines values
-        /// (e.g. "Commercial Package/Splits"). NULL/blank = not yet assigned,
+        /// (e.g. "Commercial Packaged/Splits"). NULL/blank = not yet assigned,
         /// which fails OPEN (sees everything) rather than closed, so nobody's
         /// dashboard looks broken mid-rollout. Set only from Settings.
         /// </summary>

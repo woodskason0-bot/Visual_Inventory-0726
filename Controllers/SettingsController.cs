@@ -772,6 +772,46 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index");
         }
 
+        // A team's home Branch/Line. Pure metadata -- does not gate visibility
+        // (that's still Line on the item/user, untouched here). Feeds the
+        // registration/ownership auto-fill and the compressor filter's Team
+        // suggestion. Same validation pattern as UpdateLine (Users).
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult UpdateTeamLine(int teamId, string? line)
+        {
+            var team = _db.Teams.FirstOrDefault(t => t.Id == teamId);
+            if (team == null)
+            {
+                TempData["Error"] = "That team no longer exists.";
+                return RedirectToAction("Index");
+            }
+
+            line = (line ?? "").Trim();
+            if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+            {
+                TempData["Error"] = $"'{line}' isn't a recognized Line.";
+                return RedirectToAction("Index");
+            }
+
+            string oldLine = team.Line ?? "";
+            team.Line = line.Length > 0 ? line : null;
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Team Updated",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Team '{team.Name}' Line '{(oldLine.Length > 0 ? oldLine : "unassigned")}' -> '{(line.Length > 0 ? line : "unassigned")}'.",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"{team.Name}'s home Line is now {(line.Length > 0 ? line : "unassigned")}.";
+            return RedirectToAction("Index");
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         public IActionResult ToggleTeamActive(int teamId)

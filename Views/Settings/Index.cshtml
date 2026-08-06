@@ -294,7 +294,7 @@
 
     <table class="table table-sm align-middle">
         <thead>
-            <tr><th>Team</th><th>Project Code</th><th>In Use</th><th class="text-end">Status</th></tr>
+            <tr><th>Team</th><th>Project Code</th><th>Home Branch / Line</th><th>In Use</th><th class="text-end">Status</th></tr>
         </thead>
         <tbody>
         @foreach (var t in (List<Visual_Inventory_System.Models.Team>)ViewBag.Teams)
@@ -307,6 +307,21 @@
                         <input type="hidden" name="teamId" value="@t.Id" />
                         <input type="text" name="projectCode" value="@t.ProjectCode" maxlength="30"
                                class="form-control form-control-sm" style="width:120px;" placeholder="(none)" />
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                    </form>
+                </td>
+                <td>
+                    @* Metadata only -- does not gate visibility. Feeds the registration/
+                       ownership auto-fill and the compressor filter's Team suggestion. *@
+                    <form asp-controller="Settings" asp-action="UpdateTeamLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@t.Line">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="teamId" value="@t.Id" />
+                        <select class="form-select form-select-sm branch-select" style="width: 150px;">
+                            <option value="">-- Branch --</option>
+                        </select>
+                        <select name="line" class="form-select form-select-sm line-select" style="width: 170px;">
+                            <option value="">Unassigned</option>
+                        </select>
                         <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
                     </form>
                 </td>

@@ -117,6 +117,13 @@ namespace Visual_Inventory_System.Controllers
             // teams are offered; hidden ones stay on the items already using them.
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
                 .Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
+            // Team -> home Line, for the registration/ownership auto-fill and the
+            // compressor filter's Team suggestion. Metadata only -- picking a Team
+            // suggests this Line, never enforces it. Teams with no Line assigned
+            // are simply absent from the map (JS treats a missing key as "no suggestion").
+            ViewBag.TeamLinesJson = System.Text.Json.JsonSerializer.Serialize(
+                _db.Teams.AsNoTracking().Where(t => t.IsActive && t.Line != null)
+                    .ToDictionary(t => t.Name, t => t.Line));
             // The export filter offers HIDDEN teams too -- you still need to pull a
             // report on a team that was retired last quarter.
             ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
@@ -1007,6 +1014,47 @@ namespace Visual_Inventory_System.Controllers
 
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("PickupQueue") : Redirect(referer);
+        }
+
+        // Logs/corrects On Hand compressor serials directly from the Compressors
+        // modal roster -- the other entrance besides PickUpOrder's match-or-create.
+        // Standard-level on purpose: anyone passing a shelf who notices an
+        // unrecorded unit (or a typo'd one) should be able to fix it on the spot.
+        // Rows are posted as serial_{n}/lab_{n}, each paired with unitId_{n}
+        // (an existing On Hand unit's id, or 0 for a blank pad row the human
+        // filled in) and variantId_{n} (only meaningful when unitId is 0).
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult LogCompressorUnits(string itemId)
+        {
+            try
+            {
+                var rows = new List<(int UnitId, int? VariantId, string? Serial, string? Lab)>();
+                var indices = Request.Form.Keys
+                    .Where(k => k.StartsWith("serial_"))
+                    .Select(k => k.Substring("serial_".Length))
+                    .Distinct();
+
+                foreach (var idx in indices)
+                {
+                    int.TryParse(Request.Form[$"unitId_{idx}"], out int unitId);
+                    int? variantId = int.TryParse(Request.Form[$"variantId_{idx}"], out int vId) ? vId : (int?)null;
+                    string? serial = Request.Form[$"serial_{idx}"];
+                    string? lab = Request.Form[$"lab_{idx}"];
+                    rows.Add((unitId, variantId, serial, lab));
+                }
+
+                var result = _inventoryService.LogCompressorUnits(itemId, rows, _currentUser.Name);
+                if (result.Errors.Count > 0)
+                    TempData["Error"] = string.Join(" ", result.Errors);
+                else if (result.Changed)
+                    TempData["Success"] = $"{itemId}: {result.Created.Count} logged, {result.Updated.Count} corrected.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+
+            string referer2 = Request.Headers["Referer"].ToString();
+            return string.IsNullOrEmpty(referer2) ? RedirectToAction("Index") : Redirect(referer2);
         }
 
         [HttpPost]

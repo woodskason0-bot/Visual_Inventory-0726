@@ -539,6 +539,110 @@ namespace Visual_Inventory_System.Services
                 .ToList();
         }
 
+        public class UnitLogResult
+        {
+            public List<string> Created { get; } = new();
+            public List<string> Updated { get; } = new();
+            public List<string> Errors { get; } = new();
+            public bool Changed => Created.Count > 0 || Updated.Count > 0;
+        }
+
+        /// <summary>
+        /// Logs/corrects On Hand compressor units directly from the roster view --
+        /// the other entrance to CompressorUnits besides PickUpOrder's match-or-
+        /// create. Lets anyone passing a shelf record a serial that was never
+        /// picked up (825 units, ~184 have a serial as of the 7/28 intake -- this
+        /// is how that gap actually closes over time instead of only at pickup).
+        ///
+        /// Each row is either an edit to an EXISTING On Hand unit (unitId > 0) or
+        /// a NEW one at a given location (unitId == 0, variantId required). A row
+        /// with both fields blank is a no-op -- the caller pads the roster with
+        /// blank rows up to each variant's Quantity, and most stay blank.
+        /// </summary>
+        public UnitLogResult LogCompressorUnits(string itemId,
+            List<(int UnitId, int? VariantId, string? Serial, string? Lab)> rows, string recordedBy)
+        {
+            var result = new UnitLogResult();
+            var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
+            if (inv == null) { result.Errors.Add("Item not found."); return result; }
+
+            var now = System.DateTime.UtcNow;
+            foreach (var row in rows)
+            {
+                string? serial = string.IsNullOrWhiteSpace(row.Serial) ? null : row.Serial.Trim();
+                string? lab = string.IsNullOrWhiteSpace(row.Lab) ? null : row.Lab.Trim();
+
+                if (row.UnitId > 0)
+                {
+                    // Editing an existing On Hand unit's serial/lab.
+                    var unit = _db.CompressorUnits.FirstOrDefault(c =>
+                        c.Id == row.UnitId && c.ItemId == itemId && c.Status == UnitStatus.OnHand);
+                    if (unit == null) continue; // picked up / scrapped between page load and save -- skip quietly
+                    if (unit.SerialNumber == serial && unit.LabNumber == lab) continue; // unchanged
+
+                    if (serial != null && _db.CompressorUnits.Any(c =>
+                        c.Id != unit.Id && c.ItemId == itemId && c.SerialNumber == serial))
+                    {
+                        result.Errors.Add($"Serial '{serial}' is already recorded on this model.");
+                        continue;
+                    }
+                    unit.SerialNumber = serial;
+                    unit.LabNumber = lab;
+                    result.Updated.Add(serial ?? lab ?? $"unit #{unit.Id}");
+                }
+                else
+                {
+                    // A blank pad row the human actually filled in.
+                    if (serial == null && lab == null) continue;
+                    if (!row.VariantId.HasValue)
+                    {
+                        result.Errors.Add("Missing location for a new unit.");
+                        continue;
+                    }
+                    var variant = inv.Variants.FirstOrDefault(v => v.Id == row.VariantId.Value && !v.IsRetired);
+                    if (variant == null)
+                    {
+                        result.Errors.Add("That location is no longer active.");
+                        continue;
+                    }
+                    if (serial != null && _db.CompressorUnits.Any(c => c.ItemId == itemId && c.SerialNumber == serial))
+                    {
+                        result.Errors.Add($"Serial '{serial}' is already recorded on this model.");
+                        continue;
+                    }
+                    _db.CompressorUnits.Add(new CompressorUnit
+                    {
+                        ItemId = itemId,
+                        ItemVariantId = variant.Id,
+                        SerialNumber = serial,
+                        LabNumber = lab,
+                        Status = UnitStatus.OnHand,
+                        RecordedAt = now,
+                        RecordedBy = recordedBy
+                    });
+                    result.Created.Add(serial ?? lab ?? "(no serial)");
+                }
+            }
+
+            if (result.Changed)
+            {
+                _db.TransactionLogs.Add(new TransactionLog
+                {
+                    Timestamp = now,
+                    ActionType = "Unit Logged",
+                    ItemId = itemId,
+                    QuantityChange = 0,
+                    Details = $"{result.Created.Count} new unit(s) logged, {result.Updated.Count} corrected"
+                        + (result.Created.Count + result.Updated.Count > 0
+                            ? $": {string.Join(", ", result.Created.Concat(result.Updated))}" : "") + ".",
+                    User = recordedBy
+                });
+                _db.SaveChanges();
+            }
+
+            return result;
+        }
+
 
         // =====================================================================
         // BULK INTAKE (Pass 9)
