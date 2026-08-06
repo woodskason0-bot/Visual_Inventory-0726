@@ -71,6 +71,24 @@
         .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
     var compressorUnitsByItem = invSvc?.GetCompressorUnitsGrouped()
         ?? new Dictionary<string, List<Visual_Inventory_System.Models.CompressorUnit>>();
+
+    // TC motor tracking: CompressorUnit's sibling, but only TC comes from the
+    // manufacturer (VIS never does it), so a motor model only shows up here if
+    // it currently has TC stock on hand OR TC units out on loan -- a model
+    // that's fully out (0 on-hand TC, some picked up) must still show, which
+    // is why this isn't just "TotalThermocoupled > 0".
+    var motorUnitsByItem = invSvc?.GetMotorUnitsGrouped()
+        ?? new Dictionary<string, List<Visual_Inventory_System.Models.MotorUnit>>();
+    var motorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsMotorType(i.Type)
+            && (i.TotalThermocoupled > 0 || (motorUnitsByItem.TryGetValue(i.ItemId, out var muCheck)
+                && muCheck.Any(x => x.Status != Visual_Inventory_System.Models.UnitStatus.Scrapped))))
+        .OrderBy(i => i.ItemName).ToList();
+    var totalTcOnHand = motorItems.Sum(i => i.TotalThermocoupled);
+    var totalTcOnLoan = motorUnitsByItem.Values.SelectMany(v => v)
+        .Count(x => x.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp);
+    var motorBrands = motorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
+        .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
+
     var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
 
     // A location segment only "counts" if it's present and not the 0 placeholder.
@@ -829,7 +847,7 @@
         <label class="small fw-bold border-bottom mb-2 p-1">Quick Filters</label>
         <a href="/Home/Index?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
         <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
-        <a href="/Home/Index?mode=Filter&filterType=Motor" class="btn btn-sm btn-outline-primary py-2">Motors</a>
+        <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
         <hr class="my-1" />
         <a href="/Home/Index?mode=Omni&omniSearch=Commercial" class="btn btn-sm btn-outline-secondary py-1">Commercial</a>
         <a href="/Home/Index?mode=Omni&omniSearch=Residential" class="btn btn-sm btn-outline-secondary py-1">Residential</a>
@@ -1300,6 +1318,143 @@
     </div>
 </div>
 
+<!-- MOTORS (TC only) -- CompressorUnit's sibling roster, no serial. A model
+     only appears here while it has TC stock to track: on hand, out on loan,
+     or both. Scrapped units drop off entirely -- nothing left to correct. -->
+<div class="modal fade" id="motorRegistryModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-fan me-2 text-primary"></i>TC Motors (@motorItems.Count model@(motorItems.Count == 1 ? "" : "s"))</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 65vh; overflow-y: auto;">
+                <p class="text-light-gray small mb-3">
+                    TC (thermocoupled) comes from the manufacturer -- VIS never adds it, so only
+                    the TC subset of a motor model's stock is tracked here. No serial numbers;
+                    lab #s are recorded, not assigned, and often blank until a numbering process
+                    exists. Units still out on loan stay editable, not just what's on the shelf.
+                </p>
+
+                <!-- Filter bar: same shape as the Compressors modal (Unclaimed = no
+                     Team AND no Line, Branch/Line/Team/Brand AND together), same
+                     shared cascade helper. Visibility is inherited for free -- this
+                     only narrows within motorItems, which is already Line-filtered
+                     with the Level 5 bypass upstream via allItems. -->
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="motorFilterUnclaimed">
+                        <label class="form-check-label small" for="motorFilterUnclaimed">Unclaimed only</label>
+                    </div>
+                    <select id="motorFilterBranch" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="motorFilterLine" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="motorFilterTeam" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Teams</option>
+                        @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                        {
+                            <option value="@t.Name">@t.Name</option>
+                        }
+                    </select>
+                    <select id="motorFilterBrand" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Brands</option>
+                        @foreach (var b in motorBrands)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                    <span id="motorFilterCount" class="text-light-gray small ms-auto"></span>
+                </div>
+
+                @if (!motorItems.Any())
+                {
+                    <p class="text-light-gray mb-0">No TC motor stock to track right now.</p>
+                }
+                else
+                {
+                    @foreach (var it in motorItems)
+                    {
+                        var muAll = motorUnitsByItem.TryGetValue(it.ItemId, out var muList)
+                            ? muList : new List<Visual_Inventory_System.Models.MotorUnit>();
+                        var onHandMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
+                        var outOnLoanMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp).ToList();
+                        var collapseId = "motorUnits-" + it.ItemId.Replace(" ", "");
+                        var isUnclaimedMotor = string.IsNullOrWhiteSpace(it.Team) && string.IsNullOrWhiteSpace(it.Line);
+                        var motorBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
+
+                        var roster = new List<(int UnitId, int VariantId, string? Lab, string GroupLabel)>();
+                        foreach (var v in it.ActiveVariants.OrderBy(v => v.VariantNumber))
+                        {
+                            if (v.ThermocoupledQty <= 0) continue;
+                            var label = $"On Hand — V{v.VariantNumber} — {v.FdaString}";
+                            var atThisVariant = onHandMotors.Where(x => x.ItemVariantId == v.Id).ToList();
+                            foreach (var mu in atThisVariant)
+                                roster.Add((mu.Id, v.Id, mu.LabNumber, label));
+                            int blanksNeeded = System.Math.Max(0, v.ThermocoupledQty - atThisVariant.Count);
+                            for (int b = 0; b < blanksNeeded; b++)
+                                roster.Add((0, v.Id, null, label));
+                        }
+                        foreach (var mu in outOnLoanMotors)
+                            roster.Add((mu.Id, 0, mu.LabNumber, "Out on Loan"));
+
+                        <div class="motor-row mb-2 p-2" data-branch="@motorBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimedMotor ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                                 data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                <div>
+                                    <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
+                                    <span class="text-light-gray ms-2" style="font-size:11px;">@(string.IsNullOrEmpty(it.Line) ? "" : $"[{it.Line}]")</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary me-2">TC @it.TotalThermocoupled on hand</span>
+                                    @if (outOnLoanMotors.Count > 0)
+                                    {
+                                        <span class="badge bg-warning text-dark me-2">@outOnLoanMotors.Count out on loan</span>
+                                    }
+                                    <i class="bi bi-chevron-down ms-1"></i>
+                                </div>
+                            </div>
+                            <div class="collapse mt-2" id="@collapseId">
+                                @if (!roster.Any())
+                                {
+                                    <p class="text-light-gray small mb-0">Nothing to track right now.</p>
+                                }
+                                else
+                                {
+                                    <form asp-controller="Home" asp-action="LogMotorUnits" method="post">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="itemId" value="@it.ItemId" />
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead><tr><th>Location</th><th>Lab #</th></tr></thead>
+                                            <tbody>
+                                                @{ string? lastGroup = null; int rowIdx = 0; }
+                                                @foreach (var row in roster)
+                                                {
+                                                    <tr>
+                                                        <td class="text-light-gray small">@(row.GroupLabel == lastGroup ? "" : row.GroupLabel)</td>
+                                                        <td>
+                                                            <input type="hidden" name="unitId_@rowIdx" value="@row.UnitId" />
+                                                            <input type="hidden" name="variantId_@rowIdx" value="@row.VariantId" />
+                                                            <input type="text" name="lab_@rowIdx" value="@row.Lab"
+                                                                   placeholder="@(row.UnitId == 0 ? "(unrecorded)" : "")"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                    </tr>
+                                                    lastGroup = row.GroupLabel;
+                                                    rowIdx++;
+                                                }
+                                            </tbody>
+                                        </table>
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Save Lab #s</button>
+                                    </form>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- NEEDS RHEEM PN BACKLOG (dashboard stat click) -->
 <div class="modal fade" id="pnBacklogModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -1753,9 +1908,14 @@
                             <label class="form-label small fw-bold text-light-gray">Item ID (Auto)</label>
                             <input type="text" name="ItemId" id="reg-itemid" class="form-control fw-bold text-white" style="background-color: var(--vis-card-border);" value="@ViewBag.NextItemId" placeholder="Auto-assigned" readonly />
                         </div>
-                        <div class="col-md-7">
+                        <div class="col-md-7 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Item Name</label>
-                            <input type="text" name="ItemName" class="form-control" required />
+                            <input type="text" name="ItemName" id="reg-name" class="form-control" required autocomplete="off" />
+                            @* Live matches only -- registering something new is the whole point of
+                               this form, so unlike Modify Stock's search this never forces a pick
+                               from the list. It's a heads-up ("something similar may already
+                               exist"), not a gate; free text always submits. *@
+                            <div id="reg-name-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
                         </div>
                         <div class="col-md-2">
                             <label class="form-label small fw-bold text-success">Initial Qty</label>
@@ -2647,6 +2807,18 @@
             locDiv.style.display = 'block';
             locInput.disabled = false;
             clampInto(locInput, floor, Math.max(floor, ceil), locHelp, 'How many moved are TC?');
+        } else if (action === 'Adjustment') {
+            // Reclassifying EXISTING on-hand stock as TC -- independent of
+            // whatever quantity delta this same adjustment also makes ("take
+            // my current N, mark X of those as TC" rather than adding new TC
+            // stock, which Add already covers). Capped by what's not already
+            // TC at this location right now.
+            const v = getSelectedVariant(item);
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, 0, nonTc, stockHelp, 'How many of the existing stock should be marked thermocoupled?');
         }
     }
 
@@ -3154,10 +3326,16 @@
         if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
     });
 
-    function bindAutocomplete(inputId, listId, idOutputId, isAlertModal) {
+    // selectable = false is the New Item Registry case: matches show as a
+    // heads-up ("something similar may already exist"), but there's no
+    // idOutputId to populate and clicking one never gates or blocks typing a
+    // brand new name -- registering something NEW is the whole point of that
+    // form, unlike Modify Stock/Alerts where picking an existing item is
+    // required for the rest of the pane to function.
+    function bindAutocomplete(inputId, listId, idOutputId, isAlertModal, selectable = true) {
         const searchInput = document.getElementById(inputId);
         const autoList = document.getElementById(listId);
-        const idInput = document.getElementById(idOutputId);
+        const idInput = idOutputId ? document.getElementById(idOutputId) : null;
 
         if (searchInput) {
             searchInput.addEventListener('input', function() {
@@ -3180,9 +3358,11 @@
                         btn.innerHTML = `<strong class="text-primary">${m.id}</strong>${m.rpn ? ' <span class="text-info">[' + m.rpn + ']</span>' : ''} - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
 
                         btn.onclick = function() {
+                            autoList.style.display = 'none';
+                            if (!selectable) return; // informational only -- don't touch the typed name
+
                             searchInput.value = m.name;
                             idInput.value = m.id;
-                            autoList.style.display = 'none';
 
                             if (isAlertModal) {
                                 document.getElementById('alert-threshold').value = m.threshold;
@@ -3211,6 +3391,7 @@
 
     bindAutocomplete('alert-search', 'alert-autocomplete-list', 'alert-item-id', true);
     bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
+    bindAutocomplete('reg-name', 'reg-name-autocomplete-list', null, false, false);
 
     // Registration dup-check: warn live if the typed Rheem PN already belongs
     // to an existing item ("add stock to that item instead of a twin").
@@ -3407,6 +3588,48 @@
         }
         const compressorRegistryModal = document.getElementById('compressorRegistryModal');
         if (compressorRegistryModal) compressorRegistryModal.addEventListener('shown.bs.modal', compApplyFilter);
+
+        // ---- Motor filter (Unclaimed / Branch / Line / Team / Brand) -------
+        // Same shape as the compressor filter above, same shared cascade
+        // helper -- see that block's comments for the reasoning.
+        function motorApplyFilter() {
+            const unclaimedOnly = document.getElementById('motorFilterUnclaimed')?.checked;
+            const branch = document.getElementById('motorFilterBranch')?.value || '';
+            const line = document.getElementById('motorFilterLine')?.value || '';
+            const team = document.getElementById('motorFilterTeam')?.value || '';
+            const brand = document.getElementById('motorFilterBrand')?.value || '';
+            const rows = document.querySelectorAll('#motorRegistryModal .motor-row');
+            let shown = 0;
+            rows.forEach(function (row) {
+                let visible = true;
+                if (unclaimedOnly && row.dataset.unclaimed !== '1') visible = false;
+                if (branch && row.dataset.branch !== branch) visible = false;
+                if (line && row.dataset.line !== line) visible = false;
+                if (team && row.dataset.team !== team) visible = false;
+                if (brand && row.dataset.brand !== brand) visible = false;
+                row.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            const countEl = document.getElementById('motorFilterCount');
+            if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' shown';
+        }
+        ['motorFilterUnclaimed', 'motorFilterBrand'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', motorApplyFilter);
+        });
+        const motorFilterBranchEl = document.getElementById('motorFilterBranch');
+        const motorFilterLineEl = document.getElementById('motorFilterLine');
+        wireLineCascade(motorFilterBranchEl, motorFilterLineEl, motorApplyFilter, 'All Branches', 'All Lines');
+        const motorFilterTeamEl = document.getElementById('motorFilterTeam');
+        if (motorFilterTeamEl) {
+            motorFilterTeamEl.addEventListener('change', function () {
+                const suggested = teamLines[motorFilterTeamEl.value];
+                if (suggested) setLineCascade(motorFilterBranchEl, motorFilterLineEl, suggested, 'All Branches', 'All Lines');
+                motorApplyFilter();
+            });
+        }
+        const motorRegistryModal = document.getElementById('motorRegistryModal');
+        if (motorRegistryModal) motorRegistryModal.addEventListener('shown.bs.modal', motorApplyFilter);
 
         // Location hierarchy (friendly names only). Codes are derived by the
         // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),

@@ -643,6 +643,97 @@ namespace Visual_Inventory_System.Services
             return result;
         }
 
+        // All MotorUnit rows, grouped by ItemId. CompressorUnit's sibling --
+        // see MotorUnit.cs for why it's a separate table instead of one
+        // generalized over both.
+        public Dictionary<string, List<MotorUnit>> GetMotorUnitsGrouped()
+        {
+            return _db.MotorUnits
+                .AsNoTracking()
+                .OrderByDescending(c => c.RecordedAt)
+                .ToList()
+                .GroupBy(c => c.ItemId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        /// <summary>
+        /// Logs/corrects TC motor units. Unlike LogCompressorUnits, edits reach
+        /// BOTH On Hand AND Picked Up (out on loan) rows -- [decided] a motor's
+        /// lab number is worth capturing whenever someone notices it, not just
+        /// while it happens to be on a shelf, since there's no serial to fall
+        /// back on for identity. Scrapped rows are terminal, same as compressors.
+        /// New rows (blank pad filled in) are still On-Hand-only -- you can't
+        /// invent a unit that's out on loan, only correct one that already
+        /// exists because PickUpOrder created it.
+        /// </summary>
+        public UnitLogResult LogMotorUnits(string itemId,
+            List<(int UnitId, int? VariantId, string? Lab)> rows, string recordedBy)
+        {
+            var result = new UnitLogResult();
+            var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
+            if (inv == null) { result.Errors.Add("Item not found."); return result; }
+
+            var now = System.DateTime.UtcNow;
+            foreach (var row in rows)
+            {
+                string? lab = string.IsNullOrWhiteSpace(row.Lab) ? null : row.Lab.Trim();
+
+                if (row.UnitId > 0)
+                {
+                    var unit = _db.MotorUnits.FirstOrDefault(c =>
+                        c.Id == row.UnitId && c.ItemId == itemId && c.Status != UnitStatus.Scrapped);
+                    if (unit == null) continue; // scrapped between page load and save -- skip quietly
+                    if (unit.LabNumber == lab) continue; // unchanged
+
+                    unit.LabNumber = lab;
+                    result.Updated.Add(lab ?? $"unit #{unit.Id}");
+                }
+                else
+                {
+                    if (lab == null) continue; // blank pad row left blank
+                    if (!row.VariantId.HasValue)
+                    {
+                        result.Errors.Add("Missing location for a new unit.");
+                        continue;
+                    }
+                    var variant = inv.Variants.FirstOrDefault(v => v.Id == row.VariantId.Value && !v.IsRetired);
+                    if (variant == null)
+                    {
+                        result.Errors.Add("That location is no longer active.");
+                        continue;
+                    }
+                    _db.MotorUnits.Add(new MotorUnit
+                    {
+                        ItemId = itemId,
+                        ItemVariantId = variant.Id,
+                        LabNumber = lab,
+                        Status = UnitStatus.OnHand,
+                        RecordedAt = now,
+                        RecordedBy = recordedBy
+                    });
+                    result.Created.Add(lab);
+                }
+            }
+
+            if (result.Changed)
+            {
+                _db.TransactionLogs.Add(new TransactionLog
+                {
+                    Timestamp = now,
+                    ActionType = "Unit Logged",
+                    ItemId = itemId,
+                    QuantityChange = 0,
+                    Details = $"{result.Created.Count} new TC motor unit(s) logged, {result.Updated.Count} corrected"
+                        + (result.Created.Count + result.Updated.Count > 0
+                            ? $": {string.Join(", ", result.Created.Concat(result.Updated))}" : "") + ".",
+                    User = recordedBy
+                });
+                _db.SaveChanges();
+            }
+
+            return result;
+        }
+
 
         // =====================================================================
         // BULK INTAKE (Pass 9)
@@ -942,11 +1033,21 @@ namespace Visual_Inventory_System.Services
             {
                 qtyChange = quantity;
                 pv!.Quantity += quantity;
-                // Adjustment never asks for TC, but a downward adjust can push
-                // Qty below the existing TC count -- clamp so TC <= Qty holds.
+                // [decided] Adjustment can also RECLASSIFY existing on-hand stock
+                // as thermocoupled without changing the total count -- "take my
+                // existing N, mark X of those as TC" is a different action from
+                // Add's "these NEW units include X that are TC". thermocoupledQty
+                // here is a delta onto whatever's already on the shelf, not tied
+                // to `quantity` at all (quantity can be 0 -- a pure reclassify).
+                if (isMotor && thermocoupledQty > 0)
+                    pv.ThermocoupledQty = System.Math.Min(pv.ThermocoupledQty + thermocoupledQty, pv.Quantity);
+                // A downward adjust can still push Qty below the TC count --
+                // clamp so TC <= Qty holds regardless of which direction got it there.
                 if (pv.ThermocoupledQty > pv.Quantity)
                     pv.ThermocoupledQty = System.Math.Max(0, pv.Quantity);
-                details = $"Manual adjustment of {(quantity >= 0 ? "+" : "")}{quantity} unit(s) (Variant {pv.VariantNumber}).";
+                string tcNote = (isMotor && thermocoupledQty > 0)
+                    ? $"; {thermocoupledQty} of the existing stock reclassified as thermocoupled" : "";
+                details = $"Manual adjustment of {(quantity >= 0 ? "+" : "")}{quantity} unit(s) (Variant {pv.VariantNumber}){tcNote}.";
             }
             else if (actionType == "Ownership")
             {

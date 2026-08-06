@@ -22,6 +22,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<AppSetting> AppSettings { get; set; } = null!;
         public DbSet<NotificationSubscription> NotificationSubscriptions { get; set; } = null!;
         public DbSet<CompressorUnit> CompressorUnits { get; set; } = null!;
+        public DbSet<MotorUnit> MotorUnits { get; set; } = null!;
         public DbSet<Team> Teams { get; set; } = null!;
         public DbSet<Location> Locations { get; set; } = null!;
         public DbSet<LocationZone> LocationZones { get; set; } = null!;
@@ -152,6 +153,17 @@ namespace Visual_Inventory_System.Data
                 b.HasIndex(c => new { c.ItemId, c.SerialNumber })
                  .IsUnique()
                  .HasFilter("\"SerialNumber\" IS NOT NULL AND \"SerialNumber\" <> ''");
+            });
+
+            modelBuilder.Entity<MotorUnit>(b =>
+            {
+                // Same reasoning as CompressorUnit above -- every read is "all
+                // units for this ItemId", and an un-declared index here is
+                // exactly the PendingModelChangesWarning trap that blocked
+                // several earlier passes. No SerialNumber-style unique index:
+                // LabNumber is the only identifying field and won't always be
+                // present, so it can't carry a uniqueness constraint.
+                b.HasIndex(c => c.ItemId);
             });
         }
     }

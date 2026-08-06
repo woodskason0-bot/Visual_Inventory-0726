@@ -1057,6 +1057,42 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer2) ? RedirectToAction("Index") : Redirect(referer2);
         }
 
+        // TC motor equivalent of LogCompressorUnits. No serial_{n} field --
+        // motors only ever carry a lab_{n}. Rows can target either an On Hand
+        // OR a Picked Up (out on loan) unit; see InventoryService.LogMotorUnits.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult LogMotorUnits(string itemId)
+        {
+            try
+            {
+                var rows = new List<(int UnitId, int? VariantId, string? Lab)>();
+                var indices = Request.Form.Keys
+                    .Where(k => k.StartsWith("lab_"))
+                    .Select(k => k.Substring("lab_".Length))
+                    .Distinct();
+
+                foreach (var idx in indices)
+                {
+                    int.TryParse(Request.Form[$"unitId_{idx}"], out int unitId);
+                    int? variantId = int.TryParse(Request.Form[$"variantId_{idx}"], out int vId) ? vId : (int?)null;
+                    string? lab = Request.Form[$"lab_{idx}"];
+                    rows.Add((unitId, variantId, lab));
+                }
+
+                var result = _inventoryService.LogMotorUnits(itemId, rows, _currentUser.Name);
+                if (result.Errors.Count > 0)
+                    TempData["Error"] = string.Join(" ", result.Errors);
+                else if (result.Changed)
+                    TempData["Success"] = $"{itemId}: {result.Created.Count} logged, {result.Updated.Count} corrected.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+
+            string referer3 = Request.Headers["Referer"].ToString();
+            return string.IsNullOrEmpty(referer3) ? RedirectToAction("Index") : Redirect(referer3);
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Engineer)]

@@ -43,6 +43,7 @@
         <tr>
             <th>Item ID</th>
             <th>Name</th>
+            <th>Brand</th>
             <th>Description</th>
             <th>Location</th>
             <th class="text-end">Quantity</th>
@@ -57,6 +58,7 @@
         <tr class="@(wasShort ? "text-muted" : "")">
             <td>@it.ItemId</td>
             <td>@(inv?.ItemName ?? "Unknown item")@(string.IsNullOrWhiteSpace(inv?.RheemPartNumber) ? "" : $" — PN: {inv!.RheemPartNumber}")</td>
+            <td>@(string.IsNullOrWhiteSpace(inv?.Brand) ? "----" : inv.Brand)</td>
             <td>@(string.IsNullOrWhiteSpace(inv?.Description) ? "-" : inv.Description)</td>
             <td>
                 @(

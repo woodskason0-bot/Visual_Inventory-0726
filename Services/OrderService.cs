@@ -499,6 +499,51 @@ namespace Visual_Inventory_System.Services
                 }
             }
 
+            // TC MOTOR UNITS: mirrors the compressor block above, minus the
+            // serial match step (motors have none to match on -- there's
+            // nothing to key "is this the same physical unit" off of, so
+            // every pull just draws the oldest On Hand rows first). Only the
+            // TC subset of the pull gets a row; a non-TC motor never does.
+            if (InventoryService.IsMotorType(inv.Type) && pulledTc > 0)
+            {
+                var now = System.DateTime.UtcNow;
+                var onHandMotors = _db.MotorUnits
+                    .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand)
+                    .OrderBy(c => c.RecordedAt)
+                    .Take(pulledTc)
+                    .ToList();
+
+                foreach (var known in onHandMotors)
+                {
+                    known.Status = UnitStatus.PickedUp;
+                    known.OrderId = orderId;
+                    known.OrderItemId = it.Id;
+                    known.PickedUpAt = now;
+                    known.PickedUpBy = _currentUser.Name;
+                    known.ItemVariantId = null;
+                }
+
+                // Untracked TC stock (no on-hand row existed) still needs to
+                // be trackable once it's out -- created straight into Picked
+                // Up, same as an unmatched compressor serial at pickup.
+                for (int u = onHandMotors.Count; u < pulledTc; u++)
+                {
+                    _db.MotorUnits.Add(new MotorUnit
+                    {
+                        ItemId = it.ItemId,
+                        ItemVariantId = null,
+                        LabNumber = null,
+                        Status = UnitStatus.PickedUp,
+                        RecordedAt = now,
+                        RecordedBy = _currentUser.Name,
+                        OrderId = orderId,
+                        OrderItemId = it.Id,
+                        PickedUpAt = now,
+                        PickedUpBy = _currentUser.Name
+                    });
+                }
+            }
+
             var flagParts = new List<string>();
             if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
             if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
@@ -728,6 +773,32 @@ namespace Visual_Inventory_System.Services
                     cu.PickedUpBy = null;
                 }
 
+                // TC motor units have no serial for a human to tick, so unlike
+                // compressors this isn't a selection -- the oldest `give` units
+                // still out ON THIS ORDER LINE flip back automatically. Scoped
+                // to OrderItemId so a return can't accidentally pull in a
+                // different order's outstanding units for the same model.
+                if (asTc)
+                {
+                    var returningMotors = _db.MotorUnits
+                        .Where(c => c.OrderItemId == it.Id && c.Status == UnitStatus.PickedUp)
+                        .OrderBy(c => c.PickedUpAt)
+                        .Take(give)
+                        .ToList();
+                    foreach (var mu in returningMotors)
+                    {
+                        mu.Status = UnitStatus.OnHand;
+                        mu.ItemVariantId = dest.Id;
+                        mu.OrderId = null;
+                        mu.OrderItemId = null;
+                        mu.PickedUpAt = null;
+                        mu.PickedUpBy = null;
+                    }
+                    var labs = returningMotors.Where(m => !string.IsNullOrWhiteSpace(m.LabNumber))
+                        .Select(m => m.LabNumber).ToList();
+                    if (labs.Count > 0) unitNote = $" [{string.Join(", ", labs)}]";
+                }
+
                 it.LoanOutstanding -= give;
                 inv.LastUpdated = System.DateTime.UtcNow;
                 inv.UpdatedBy = _currentUser.Name;
@@ -765,6 +836,9 @@ namespace Visual_Inventory_System.Services
                 int drop = System.Math.Min(qty, it.LoanOutstanding);
                 if (drop <= 0) throw new InvalidOperationException("Nothing outstanding to scrap on this line.");
 
+                bool isMotor = InventoryService.IsMotorType(
+                    _db.InventoryItems.AsNoTracking().Where(i => i.ItemId == it.ItemId).Select(i => i.Type).FirstOrDefault());
+
                 // Pass 6B: act on the individual units the user ticked. Units are a
                 // PARTIAL overlay -- only 184 of 825 compressors have a serial, so a
                 // line of 3 may name 1 unit and leave 2 as pure quantity. This loop
@@ -791,6 +865,26 @@ namespace Visual_Inventory_System.Services
                 {
                     cu.Status = UnitStatus.Scrapped;
                     cu.ItemVariantId = null;
+                }
+
+                // Same auto-select reasoning as ReturnLoan: no serial to pick
+                // from, so the oldest `drop` units still out on THIS order line
+                // become the ones scrapped.
+                if (isMotor)
+                {
+                    var scrappingMotors = _db.MotorUnits
+                        .Where(c => c.OrderItemId == it.Id && c.Status == UnitStatus.PickedUp)
+                        .OrderBy(c => c.PickedUpAt)
+                        .Take(drop)
+                        .ToList();
+                    foreach (var mu in scrappingMotors)
+                    {
+                        mu.Status = UnitStatus.Scrapped;
+                        mu.ItemVariantId = null;
+                    }
+                    var labs = scrappingMotors.Where(m => !string.IsNullOrWhiteSpace(m.LabNumber))
+                        .Select(m => m.LabNumber).ToList();
+                    if (labs.Count > 0) unitNote = $" [{string.Join(", ", labs)}]";
                 }
 
                 it.LoanOutstanding -= drop;
