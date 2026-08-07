@@ -1,7 +1,7 @@
 ---
 title: VIS — Consolidated Context Addendum
 description: Merged from four sources. Companion to VIS_Handoff_State.md, which stays authoritative for code and architecture.
-sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–13 working method
+sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–14 working method
 merged: 2026-08-04, updated 2026-08-07
 status: consolidated
 ---
@@ -30,6 +30,7 @@ sequence at all. Resolved:
 | Aug 3 | Handoff first written | |
 | Aug 5–6 | **Passes 10–12** | Went live for real. See handoff. |
 | Aug 6–7 | **Pass 13** | Data reconciliation, access-control pass, Delete Item, Branches/Lines redesign. See handoff. |
+| Aug 7 | **Pass 14** | RCR compressor rename, Quick Filter/access polish, Activity Feed fix, 9 new users. The Pass 13/14 db is now actually on the host, not just staged. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge
@@ -165,8 +166,9 @@ replaced the compressor slice — 825 units across two locations.)
 
 **Roster provenance (Jul 13):** 29 users at go-live = 20 pre-existing + 9 added, including
 Luis Zapata, Karthig Kathirvel, Derek Brausell, David Gudapati, Preston Davis, Javier
-Lucio, Swapnil Khaire, Andrew Blevins, Hunter Little. I'm the sole Level 5. (Roster is at
-42 users as of Pass 13 — see the handoff for what's changed since.)
+Lucio, Swapnil Khaire, Andrew Blevins, Hunter Little. Not the sole Level 5 anymore as of
+Pass 13 (Derek and Luis Zapata also have full Admin now). Roster is at 51 users as of
+Pass 14 — see the handoff for what's changed since.
 
 ## People and the decision path
 

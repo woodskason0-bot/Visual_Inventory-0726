@@ -691,7 +691,7 @@
     <div class="grid-item r1 c6">
         <a asp-controller="Home" asp-action="PickupQueue" class="grid-card pickup-box h-100 w-100 text-center text-decoration-none fw-bold text-white">
             <div>
-                <i class="bi bi-box-seam me-2"></i> Pick Up Orders
+                <i class="bi bi-box-seam me-2"></i> Available Tasks
             </div>
         </a>
     </div>
@@ -852,8 +852,21 @@
         <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
         <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
         <hr class="my-1" />
-        <a href="/Home/Index?mode=Omni&omniSearch=Commercial" class="btn btn-sm btn-outline-secondary py-1">Commercial</a>
-        <a href="/Home/Index?mode=Omni&omniSearch=Residential" class="btn btn-sm btn-outline-secondary py-1">Residential</a>
+        @{
+            // Only Admin sees all 3 branch quick filters usable. Everyone else
+            // gets the other two grayed out -- unless they're not scoped to any
+            // one Branch at all (blank Line and blank Branch), in which case
+            // there's nothing to restrict since they already see everything.
+            string myBranch = ViewBag.MyBranch as string ?? "";
+            bool isAdmin = CurrentUser.Level >= AccessLevels.Admin;
+            Func<string, string> branchBtnClass = branchName =>
+                (isAdmin || myBranch.Length == 0 || myBranch == branchName)
+                    ? "btn btn-sm btn-outline-secondary py-1"
+                    : "btn btn-sm btn-outline-secondary py-1 disabled opacity-50";
+        }
+        <a href="/Home/Index?mode=Omni&omniSearch=Commercial" class="@branchBtnClass("Commercial Air")">Commercial</a>
+        <a href="/Home/Index?mode=Omni&omniSearch=Residential" class="@branchBtnClass("Residential Air")">Residential</a>
+        <a href="/Home/Index?mode=Omni&omniSearch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
 
         <!-- LIVE HISTORY TIMELINE FEED (ACTIVITY FEED) -->
         <div class="flex-grow-1 border rounded d-flex flex-column overflow-hidden mt-2 vis-feed-panel" style="border-color: var(--vis-card-border) !important; background-color: #1A1C20;">
@@ -869,10 +882,23 @@
                         @for (int idx = 0; idx < recentActivity.Count; idx++)
                         {
                             var log = recentActivity[idx];
-                            var item = invSvc?.GetById(log.ItemId);
+                            // Blank ItemId is the real discriminator, not ActionType --
+                            // every Settings-driven log (users, teams, branches, lines,
+                            // locations, zones, notifications...) is logged with ItemId
+                            // = "" on purpose, since none of them are about an inventory
+                            // item. Branching on that instead of hand-listing every
+                            // ActionType means a brand new Settings action reads
+                            // correctly here the moment it's added, the same way it
+                            // already does on View Logs -- no ternary to remember to
+                            // update.
+                            bool isItemAction = !string.IsNullOrWhiteSpace(log.ItemId);
+                            var item = isItemAction ? invSvc?.GetById(log.ItemId) : null;
 
-                            // Map DB actions to human-friendly operation titles
-                            string actionTitle =
+                            // Map DB actions to human-friendly operation titles (item
+                            // actions only -- non-item actions just show their own
+                            // ActionType, which already reads as a title: "Branch Added",
+                            // "Access Level Changed", "User Active Toggled", etc.)
+                            string actionTitle = !isItemAction ? log.ActionType :
                                 log.ActionType == "Add" || log.ActionType == "Quick Add" ? "Stock Added" :
                                 log.ActionType == "Scrap" ? "Item Scrapped" :
                                 log.ActionType == "Ownership" ? "Item Moved" :
@@ -890,8 +916,12 @@
                                                  localTs.ToString("h:mm tt") :
                                                  localTs.ToString("h:mm tt MM/dd/yyyy");
 
-                            // Dot color by action type (same in both themes).
-                            string dotColor =
+                            // Dot color by action type (same in both themes). Every
+                            // non-item (Settings/admin) action shares one muted slate
+                            // dot -- a single consistent "this was a config change, not
+                            // a stock action" signal, rather than a color per ActionType
+                            // that would need updating every time a new one is added.
+                            string dotColor = !isItemAction ? "#64748B" :               // slate  - settings/admin
                                 log.ActionType == "Add" || log.ActionType == "Quick Add" ? "#22C55E" : // green  - added
                                 log.ActionType == "Scrap" ? "#D82B33" :                                // red    - scrapped
                                 log.ActionType == "Ownership" ? "#A855F7" :                            // purple - moved
@@ -908,7 +938,14 @@
 
                                 <div style="padding-right: 12px; flex-grow: 1;">
                                     <strong class="text-bright-white d-block" style="font-size: 13px; font-weight: 700;">@actionTitle</strong>
-                                    <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@log.ItemId: @TruncName(item?.ItemName ?? (string.IsNullOrWhiteSpace(log.ItemName) ? "Unknown item" : log.ItemName), 15)</small>
+                                    @if (isItemAction)
+                                    {
+                                        <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@log.ItemId: @TruncName(item?.ItemName ?? (string.IsNullOrWhiteSpace(log.ItemName) ? "Unknown item" : log.ItemName), 15)</small>
+                                    }
+                                    else
+                                    {
+                                        <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@TruncName(log.Details, 60)</small>
+                                    }
                                 </div>
 
                                 <div class="text-end text-muted" style="font-size: 11px; white-space: nowrap; color: #94A3B8 !important;">

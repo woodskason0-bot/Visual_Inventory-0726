@@ -36,6 +36,14 @@ namespace Visual_Inventory_System.Controllers
         {
             var allItems = _inventoryService.GetAll().ToList();
 
+            // The Branch this session is scoped to, for graying out the other
+            // Quick Filter branch buttons -- a specific Line wins (derive its
+            // Branch), else a whole-Branch assignment, else blank (unscoped,
+            // sees everything, so nothing gets grayed out for them either).
+            ViewBag.MyBranch = !string.IsNullOrWhiteSpace(_currentUser.Line)
+                ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
+                : (_currentUser.Branch ?? "");
+
             // 1. MAP OVERLAY STATS (header cards above the map)
             ViewBag.TotalItems = allItems.Count;
             ViewBag.LowStockCount = allItems.Count(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold && i.Quantity > 0);

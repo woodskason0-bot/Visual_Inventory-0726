@@ -1,9 +1,11 @@
 # VIS (Visual Inventory System) — Handoff State
 
 **Supersedes the July 2026 handoff (stopped at Pass 4) and the Pass 9 handoff below it.**
-Current as of the 2026-08-06/07 Claude Code session (Passes 10–13). I went live against
-my real copied-in database during this window, then followed up the same night with
-data cleanup, an access-control pass, and the Branches/Lines redesign below.
+Current as of the 2026-08-07 Claude Code session (Passes 10–14). I went live against
+my real copied-in database during this window, then followed up the same stretch with
+data cleanup, an access-control pass, the Branches/Lines redesign, and a follow-on round
+of UI/data polish — all below. The Pass 13 db (with all its data work) has now actually
+been copied to the host and is what I'm testing against going forward.
 
 I'm the owner (Rheem). Built on ASP.NET Core MVC (`net10.0`), EF Core + SQLite, Razor,
 Bootstrap 5 dark theme. Session-based name-only "identify" (no password) plus a numeric
@@ -32,8 +34,10 @@ only confirmed by static reading and a clean build, and the difference is spelle
 
 ```
 Migrations       33   (latest: 20260807043630_AddBranchesAndLines)
-Items           484   (compressor ownership reconciled against real claim sheets;
-                 4 leftover test-fixture rows removed; 1 exact duplicate merged)
+Items           487   (compressor ownership reconciled against real claim sheets;
+                 leftover test-fixture rows removed; one exact duplicate merged;
+                 63 Residential OD compressors re-minted with an RCR- prefix and
+                 Group flipped to Residential -- see Pass 14)
 Compressor units count evolving -- On Hand roster is directly editable, not just
                  a pickup-time log
 Motor units      TC only, seeded from real pickups
@@ -44,7 +48,7 @@ Teams             8   Samurai, Ninja, Falcon, Polaris, Hurricane, T-Rex, Spartan
 Branches          3   Residential Air, Commercial Air, Sustaining -- now managed
                  in Settings, not hardcoded (see Pass 13)
 Lines            10   managed alongside Branches, same place
-Users            42
+Users            51   (9 added in Pass 14 -- see Pass log)
 ```
 
 Publishes **self-contained** (`-r win-x64 --self-contained`) to `C:\VIS_Publish` on the
@@ -183,6 +187,25 @@ retroactively), but that join returns nothing for a deleted item. This column is
 fallback for exactly that case — populated at every item-transaction log site going
 forward; logs written before this existed just fall back further, to "Unknown item."
 
+**The Activity Feed reads a blank `TransactionLog.ItemId` as the real discriminator for
+"this isn't about an inventory item" (Pass 14).** Every Settings/admin action (users,
+teams, branches, lines, locations, zones, notifications — 20 log sites) is logged with
+`ItemId = ""` on purpose, since none of them are about one. The feed used to assume
+every log row was an item action and tried to look one up regardless, which rendered as
+`": Unknown item"` for all of these. Fixed by branching on whether `ItemId` is blank:
+item actions keep the existing item-name-lookup path, non-item actions just show their
+own `ActionType` as the title and `Details` as the subtitle — the same thing View Logs
+already did correctly, just brought over. This is deliberately **not** a per-ActionType
+ternary — a brand new Settings action reads correctly here automatically the moment it's
+added, with nothing else to update.
+
+**A user's effective Branch, for UI purposes, is: their `Line`'s Branch if set, else
+their `Branch` field directly, else blank (Pass 14).** `ViewBag.MyBranch` in
+`HomeController.Index` computes this once per request. It currently only drives graying
+out the two Quick Filter branch buttons a user isn't on (Admin sees all three, same as
+Luis/Derek/me) — it is **not** a visibility mechanism, `ApplyLineVisibility` is still the
+only thing that actually gates data.
+
 ---
 
 ## Pass log
@@ -291,6 +314,36 @@ Delete Item, Branches/Lines redesign.** The big one. In order:
   above. Verified live: added a real test Branch and Line through the running Settings
   UI, confirmed it appeared in every picker across the app immediately with no restart,
   then removed it.
+
+**Pass 14 (2026-08-07) — RCR rename, Quick Filter/access polish, Activity Feed fix,
+roster growth.**
+
+- **63 Residential OD compressors re-minted `CCR-` → `RCR-0001`...`RCR-0063`,
+  `Group` flipped `Commercial` → `Residential`.** These were the compressors reconciled
+  onto Residential OD in Pass 13 but still carrying a `CCR-` id and `Group="Commercial"`
+  frozen from their original (wrong) registration — a real rename, not a delete/re-add:
+  cascaded to the 63 `TransactionLogs` rows and 3 `CompressorUnits` rows that referenced
+  the old id, zero stale references left anywhere afterward. This is the one deliberate
+  exception to "Group is frozen forever" in this project's history — done because these
+  63 were never actually Commercial to begin with, not because a later reassignment
+  should retroactively rewrite history in general.
+- **Sustaining added as a third Quick Filter button**, alongside the existing
+  Commercial/Residential (still Omni-Search-based, matching the existing mechanism —
+  worth knowing this reads `Group`/other text fields, not `Line`, same caveat as those
+  two already had).
+- **Quick Filter branch buttons gray out for the two Branches a user isn't on**, via
+  `ViewBag.MyBranch` — see Architecture above. Admin bypasses.
+- **"Pick Up Orders" dashboard widget renamed to "Available Tasks."** Flagged, not
+  renamed, for a later pass: the `PickupQueue` action/route/view filename, the
+  `pickup-box` CSS class, and — worth resolving — that the destination page's own
+  heading already reads "Tasks Available" (reverse word order from the widget's new
+  "Available Tasks").
+- **Activity Feed now formats every Settings/admin action correctly.** See
+  Architecture above.
+- **9 users added:** Cedric Martis (Engineer, Residential Coils/AH); Nathan Gibson
+  (Standard), Jacob Moffett, Chase Binz, Mohamed Elrifae, Ethan Phan, Luis Fragoso,
+  Marco Balcazar (Engineer), Travis Gregory (Management) — all eight to International
+  (Commercial Air).
 
 ---
 
@@ -470,18 +523,34 @@ the DOM, the browser console, and the server's live SQL/exception log after each
 - Branches & Lines: added a real test Branch and Line through the live Settings UI,
   confirmed it appeared in every picker across the app immediately, then removed it.
 
+**Pass 14:**
+- The Sustaining Quick Filter, the "Available Tasks" text, and the Activity Feed fix
+  were all confirmed live in the running app in a single pass — signed in, checked the
+  dashboard, toggled a couple of real Settings actions, and watched them render
+  correctly in the feed for the first time.
+- The RCR rename was verified with before/after queries and a post-write integrity
+  check, plus a stale-reference sweep across `TransactionLogs`/`CompressorUnits`
+  confirming zero old `CCR-` ids left anywhere.
+- The branch-graying logic was verified for the Admin case (all three buttons enabled
+  for my own session) by direct inspection of the rendered button classes; the non-Admin
+  graying path was verified by code review, not by actually signing in as a non-Admin
+  user.
+
 **Not verified live:** `ReturnLoan`/`ScrapLoan`'s auto-select logic for `MotorUnit`
 specifically (pickup was confirmed on Order 10, but a Return or Scrap on that same loan
-wasn't separately exercised).
+wasn't separately exercised). The non-Admin case of the Pass 14 branch-button graying.
 
 ---
 
 ## Current state
 
-Went live for real starting Pass 10. This session (Pass 13) closed out the data-quality
-and access-control gaps found along the way and added Branches/Lines as managed
-vocabulary. Remaining before I'd call it fully settled: run the actual host deploy with
-this session's db and code, do one real Return or Scrap on a TC motor loan, and resolve
-the letter-family hypothesis for the still-unclaimed compressor items. Everything else
-on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is expansion work,
-not a blocker.
+Went live for real starting Pass 10. Pass 13 closed out the data-quality and
+access-control gaps found along the way and added Branches/Lines as managed vocabulary;
+Pass 14 followed up with the RCR rename, a round of dashboard/access polish, and 9 more
+real users. **The Pass 13/14 database has now been copied to the host** — this is no
+longer just sitting in a scratchpad copy, it's what I'm actually testing against.
+Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
+loan, resolve the letter-family hypothesis for the still-unclaimed compressor items, and
+sign in as a non-Admin user at least once to confirm the branch-button graying looks
+right in practice. Everything else on the scaling list (SQL Server/Azure SQL move, SSO,
+backup story) is expansion work, not a blocker.
