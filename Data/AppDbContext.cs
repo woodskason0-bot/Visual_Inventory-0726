@@ -28,6 +28,8 @@ namespace Visual_Inventory_System.Data
         public DbSet<LocationZone> LocationZones { get; set; } = null!;
         public DbSet<IntakeBatch> IntakeBatches { get; set; } = null!;
         public DbSet<IntakeRow> IntakeRows { get; set; } = null!;
+        public DbSet<Branch> Branches { get; set; } = null!;
+        public DbSet<OrgLine> OrgLines { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -130,6 +132,26 @@ namespace Visual_Inventory_System.Data
                 // NAME as a plain string (same convention as Line), so this is a
                 // picker source, not a foreign key.
                 b.HasIndex(t => t.Name).IsUnique();
+            });
+
+            modelBuilder.Entity<Branch>(b =>
+            {
+                // One row per branch name, same vocabulary-table convention as Team.
+                b.HasIndex(x => x.Name).IsUnique();
+            });
+
+            modelBuilder.Entity<OrgLine>(b =>
+            {
+                // Global uniqueness, not per-branch: User/InventoryItem/Team.Line
+                // are flat strings with no branch qualifier, so two branches can't
+                // share a Line name without an ambiguous reverse lookup.
+                b.HasIndex(x => x.Name).IsUnique();
+                b.HasIndex(x => x.BranchId);
+
+                b.HasOne(x => x.Branch)
+                 .WithMany()
+                 .HasForeignKey(x => x.BranchId)
+                 .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<CompressorUnit>(b =>

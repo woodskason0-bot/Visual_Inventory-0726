@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Visual_Inventory_System.Data;
 
@@ -10,9 +11,11 @@ using Visual_Inventory_System.Data;
 namespace Visual_Inventory_System.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260807043250_AddTransactionLogItemName")]
+    partial class AddTransactionLogItemName
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
@@ -46,28 +49,6 @@ namespace Visual_Inventory_System.Migrations
                         .IsUnique();
 
                     b.ToTable("AppSettings");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.Branch", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Name")
-                        .IsUnique();
-
-                    b.ToTable("Branches");
                 });
 
             modelBuilder.Entity("Visual_Inventory_System.Models.CompressorUnit", b =>
@@ -642,33 +623,6 @@ namespace Visual_Inventory_System.Migrations
                     b.ToTable("OrderItems");
                 });
 
-            modelBuilder.Entity("Visual_Inventory_System.Models.OrgLine", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("BranchId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BranchId");
-
-                    b.HasIndex("Name")
-                        .IsUnique();
-
-                    b.ToTable("OrgLines");
-                });
-
             modelBuilder.Entity("Visual_Inventory_System.Models.Team", b =>
                 {
                     b.Property<int>("Id")
@@ -873,17 +827,6 @@ namespace Visual_Inventory_System.Migrations
                         .IsRequired();
 
                     b.Navigation("Order");
-                });
-
-            modelBuilder.Entity("Visual_Inventory_System.Models.OrgLine", b =>
-                {
-                    b.HasOne("Visual_Inventory_System.Models.Branch", "Branch")
-                        .WithMany()
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Branch");
                 });
 
             modelBuilder.Entity("Visual_Inventory_System.Models.IntakeBatch", b =>

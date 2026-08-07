@@ -409,11 +409,22 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Admin)]
-        public IActionResult SystemReset()
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult ClearCart()
         {
             _orderService.StartOrder();
-            TempData["Message"] = "Session reset.";
+            TempData["Message"] = "Cart cleared.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Admin)]
+        public IActionResult DeleteItem(string itemId)
+        {
+            var (ok, message) = _inventoryService.DeleteItem(itemId);
+            if (ok) TempData["Success"] = message;
+            else TempData["Error"] = message;
             return RedirectToAction("Index");
         }
 
@@ -1196,6 +1207,7 @@ namespace Visual_Inventory_System.Controllers
             _currentUser.SetLevel(known?.AccessLevel ?? AccessLevels.Viewer);
             _currentUser.SetTheme(known?.Theme ?? "dark");
             _currentUser.SetLine(known?.Line ?? "");
+            _currentUser.SetBranch(known?.Branch ?? "");
 
             if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
                 return Redirect(returnUrl);

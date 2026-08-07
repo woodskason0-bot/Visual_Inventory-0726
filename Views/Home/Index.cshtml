@@ -700,7 +700,7 @@
     <div class="grid-item r2 c1 row-span-3 d-flex flex-column gap-2">
         @* Pickup requests live on the Tasks Available board ("Go Get These"),
            not in this sidebar. This column holds the cart/orders buttons. *@
-        @if (CurrentUser.Level >= AccessLevels.Engineer)
+        @if (CurrentUser.Level >= AccessLevels.Standard)
         {
             <form asp-action="Index" method="get">
                 <input type="hidden" name="mode" value="Ledger" />
@@ -751,11 +751,14 @@
         </div>
 
         <div class="mt-2 d-flex flex-column gap-2">
-            @if (CurrentUser.Level >= AccessLevels.Engineer)
+            @if (CurrentUser.Level >= AccessLevels.Standard)
             {
                 <button type="button" class="btn btn-success w-100 py-2 fw-bold text-white" style="background-color: var(--vis-green); border-color: var(--vis-green);" data-bs-toggle="modal" data-bs-target="#newItemModal">
                     <i class="bi bi-plus-square me-2"></i> New Item Registry
                 </button>
+            }
+            @if (CurrentUser.Level >= AccessLevels.Standard)
+            {
                 <button type="button" class="btn btn-danger w-100 py-2 fw-bold text-white" data-bs-toggle="modal" data-bs-target="#confirmResetModal">Clear My Cart</button>
             }
         </div>
@@ -876,6 +879,7 @@
                                 log.ActionType == "Location Transfer" ? "Item Relocated" :
                                 log.ActionType == "New Registry" ? "New Item" :
                                 log.ActionType == "Order Picked Up" ? "Order Picked Up" :
+                                log.ActionType == "Item Deleted" ? "Item Deleted" :
                                 "Stock Adjusted";
 
                             // Timestamps are stored UTC; convert to local before
@@ -894,6 +898,7 @@
                                 log.ActionType == "Location Transfer" ? "#0EA5E9" :                     // cyan   - relocated
                                 log.ActionType == "New Registry" ? "#148A8A" :                         // teal   - new item
                                 log.ActionType == "Order Picked Up" ? "#F59E0B" :                      // amber  - picked up
+                                log.ActionType == "Item Deleted" ? "#D82B33" :                         // red    - deleted
                                 "#3B82F6";                                                             // blue   - adjusted
                             string glowStyle = $"background-color: {dotColor} !important; box-shadow: 0 0 8px {dotColor} !important;";
 
@@ -903,7 +908,7 @@
 
                                 <div style="padding-right: 12px; flex-grow: 1;">
                                     <strong class="text-bright-white d-block" style="font-size: 13px; font-weight: 700;">@actionTitle</strong>
-                                    <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@log.ItemId: @TruncName(item?.ItemName ?? "Unknown item", 15)</small>
+                                    <small class="text-muted d-block mt-1" style="font-size: 11px; color: #94A3B8 !important;">@log.ItemId: @TruncName(item?.ItemName ?? (string.IsNullOrWhiteSpace(log.ItemName) ? "Unknown item" : log.ItemName), 15)</small>
                                 </div>
 
                                 <div class="text-end text-muted" style="font-size: 11px; white-space: nowrap; color: #94A3B8 !important;">
@@ -1014,7 +1019,7 @@
                                     }
                                 </div>
                                 <div class="d-flex flex-column align-items-end gap-2">
-                                    @if (CurrentUser.Level >= AccessLevels.Engineer)
+                                    @if (CurrentUser.Level >= AccessLevels.Standard)
                                     {
                                         @if (!inDraft)
                                         {
@@ -1031,6 +1036,12 @@
                                     {
                                         <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
                                             <i class="bi bi-box-seam me-1"></i> Handle Stock
+                                        </button>
+                                    }
+                                    @if (item.Quantity == 0 && CurrentUser.Level >= AccessLevels.Admin)
+                                    {
+                                        <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3" onclick="openDeleteItem('@item.ItemId', '@item.ItemName')">
+                                            <i class="bi bi-trash me-1"></i> Delete Item
                                         </button>
                                     }
                                 </div>
@@ -1532,13 +1543,33 @@
 <div class="modal fade" id="confirmResetModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form asp-controller="Home" asp-action="SystemReset" method="post" id="reset-frm">
+            <form asp-controller="Home" asp-action="ClearCart" method="post" id="reset-frm">
                 @Html.AntiForgeryToken()
                 <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Clear Session Cart</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
                 <div class="modal-body text-white">This will empty your personal shopping cart. Proceed?</div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-danger" onclick="executeSubmit('reset-frm', this)">Clear Cart</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="deleteItemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="DeleteItem" method="post" id="delete-item-frm">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="itemId" id="delete-item-id" />
+                <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Delete Item</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">
+                    <p class="mb-2"><strong id="delete-item-name"></strong> <span class="text-light-gray" id="delete-item-idlabel"></span></p>
+                    <p>This will delete this record from being used. It can be registered again, and only lives in the audit logs now.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="executeSubmit('delete-item-frm', this)">Delete</button>
                 </div>
             </form>
         </div>
@@ -2257,6 +2288,17 @@
         if (searchField) searchField.value = itemId;
         if (typeof toggleStockUI === 'function') toggleStockUI();
         const el = document.getElementById('modifyStockModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    function openDeleteItem(itemId, itemName) {
+        const idField = document.getElementById('delete-item-id');
+        const nameEl = document.getElementById('delete-item-name');
+        const idLabelEl = document.getElementById('delete-item-idlabel');
+        if (idField) idField.value = itemId;
+        if (nameEl) nameEl.textContent = itemName || itemId;
+        if (idLabelEl) idLabelEl.textContent = '(' + itemId + ')';
+        const el = document.getElementById('deleteItemModal');
         if (el) { new bootstrap.Modal(el).show(); }
     }
 

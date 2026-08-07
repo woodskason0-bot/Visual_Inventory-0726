@@ -14,6 +14,7 @@ namespace Visual_Inventory_System.Services
         public const string LevelKey = "_Level";
         public const string ThemeKey = "_Theme";
         public const string LineKey = "_Line";
+        public const string BranchKey = "_Branch";
 
         private readonly IHttpContextAccessor _ctx;
 
@@ -48,6 +49,15 @@ namespace Visual_Inventory_System.Services
                 ? s
                 : "";
 
+        /// <summary>
+        /// A whole OrgStructure Branch this user sees entirely, or "" if not set.
+        /// Only takes effect in visibility filtering when Line is also blank.
+        /// </summary>
+        public string Branch =>
+            _ctx.HttpContext?.Session?.GetString(BranchKey) is string s && !string.IsNullOrWhiteSpace(s)
+                ? s
+                : "";
+
         public bool IsSet =>
             !string.IsNullOrWhiteSpace(_ctx.HttpContext?.Session?.GetString(SessionKey));
 
@@ -63,12 +73,16 @@ namespace Visual_Inventory_System.Services
         public void SetLine(string line) =>
             _ctx.HttpContext?.Session?.SetString(LineKey, line ?? "");
 
+        public void SetBranch(string branch) =>
+            _ctx.HttpContext?.Session?.SetString(BranchKey, branch ?? "");
+
         public void Clear()
         {
             _ctx.HttpContext?.Session?.Remove(SessionKey);
             _ctx.HttpContext?.Session?.Remove(LevelKey);
             _ctx.HttpContext?.Session?.Remove(ThemeKey);
             _ctx.HttpContext?.Session?.Remove(LineKey);
+            _ctx.HttpContext?.Session?.Remove(BranchKey);
         }
     }
 }

@@ -356,6 +356,99 @@
     </div>
 </div>
 
+<!-- ============ BRANCHES & LINES (Pass 13) ============ -->
+<div class="settings-card p-4 mb-4">
+    <h5 class="text-white fw-bold mb-1">Branches &amp; Lines</h5>
+    <p class="text-light-gray small mb-3">
+        The org structure offered everywhere a Branch/Line is picked (registration, transfer,
+        team home line, user assignment). <strong>Line is what gates visibility</strong> on
+        items/users &mdash; hiding one here only removes it from future picks, it never touches
+        a Line string an item or user already carries.
+    </p>
+
+    <h6 class="text-white fw-bold mb-2">Branches</h6>
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr><th>Branch</th><th>Lines</th><th class="text-end">Status</th></tr>
+        </thead>
+        <tbody>
+        @foreach (var b in (List<Visual_Inventory_System.Models.Branch>)ViewBag.Branches)
+        {
+            var linesUnder = ((List<Visual_Inventory_System.Models.OrgLine>)ViewBag.OrgLinesAll)
+                .Where(l => l.BranchId == b.Id).ToList();
+            <tr style="@(b.IsActive ? "" : "opacity:.5;")">
+                <td class="fw-bold">@b.Name</td>
+                <td class="text-light-gray small">@linesUnder.Count(l => l.IsActive) active / @linesUnder.Count total</td>
+                <td class="text-end">
+                    <form asp-controller="Settings" asp-action="ToggleBranchActive" method="post">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="branchId" value="@b.Id" />
+                        <button type="submit" class="btn btn-sm @(b.IsActive ? "btn-outline-warning" : "btn-outline-success")">
+                            @(b.IsActive ? "Hide" : "Restore")
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <form asp-controller="Settings" asp-action="AddBranch" method="post" class="d-flex gap-2 flex-wrap mb-4">
+        @Html.AntiForgeryToken()
+        <input type="text" name="name" placeholder="Branch name" required
+               class="form-control form-control-sm" style="max-width:220px;" />
+        <button type="submit" class="btn btn-sm btn-success fw-bold">Add Branch</button>
+    </form>
+
+    <h6 class="text-white fw-bold mb-2">Lines</h6>
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr><th>Line</th><th>Branch</th><th>In Use</th><th class="text-end">Status</th></tr>
+        </thead>
+        <tbody>
+        @{ var lineUsage = ViewBag.LineUsage as Dictionary<string, int> ?? new Dictionary<string, int>(); }
+        @foreach (var l in (List<Visual_Inventory_System.Models.OrgLine>)ViewBag.OrgLinesAll)
+        {
+            <tr style="@(l.IsActive ? "" : "opacity:.5;")">
+                <td class="fw-bold">@l.Name</td>
+                <td class="text-light-gray small">@(l.Branch?.Name ?? "(unknown)")</td>
+                <td class="text-light-gray small">@(lineUsage.ContainsKey(l.Name) ? lineUsage[l.Name] : 0) item(s)</td>
+                <td class="text-end">
+                    <form asp-controller="Settings" asp-action="ToggleLineActive" method="post">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="lineId" value="@l.Id" />
+                        <button type="submit" class="btn btn-sm @(l.IsActive ? "btn-outline-warning" : "btn-outline-success")">
+                            @(l.IsActive ? "Hide" : "Restore")
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+    <h6 class="text-white fw-bold mb-2 mt-4">Add Line</h6>
+    <form asp-controller="Settings" asp-action="AddLine" method="post" class="d-flex gap-2 flex-wrap">
+        @Html.AntiForgeryToken()
+        <input type="text" name="name" placeholder="Line name" required
+               class="form-control form-control-sm" style="max-width:260px;" />
+        <select name="branchId" required class="form-select form-select-sm" style="max-width:200px;">
+            <option value="">-- Branch --</option>
+            @foreach (var b in (List<Visual_Inventory_System.Models.Branch>)ViewBag.Branches)
+            {
+                if (b.IsActive)
+                {
+                    <option value="@b.Id">@b.Name</option>
+                }
+            }
+        </select>
+        <button type="submit" class="btn btn-sm btn-success fw-bold">Add Line</button>
+    </form>
+    <div class="text-light-gray small mt-2">
+        <i class="bi bi-info-circle me-1"></i>Hiding a Branch takes its Lines out of the pickers
+        with it. Renaming isn't offered here either, same reason as Teams &mdash; add the new
+        name and hide the old one.
+    </div>
+</div>
+
     <div class="settings-card p-4 mb-4">
         <h5 class="text-white fw-bold mb-3">Users &amp; Access</h5>
         <table class="table table-hover align-middle">
@@ -380,10 +473,10 @@
                         <td class="text-dim">@u.UserName</td>
                         <td class="text-dim">@(string.IsNullOrEmpty(u.Team) ? "All" : u.Team)</td>
                         <td>
-                            <form asp-controller="Settings" asp-action="UpdateLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@u.Line">
+                            <form asp-controller="Settings" asp-action="UpdateLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@u.Line" data-current-branch="@u.Branch">
                                 @Html.AntiForgeryToken()
                                 <input type="hidden" name="userId" value="@u.Id" />
-                                <select class="form-select form-select-sm branch-select" style="width: 150px;">
+                                <select name="branch" class="form-select form-select-sm branch-select" style="width: 150px;">
                                     <option value="">-- Branch --</option>
                                 </select>
                                 <select name="line" class="form-select form-select-sm line-select" style="width: 170px;">
@@ -516,6 +609,13 @@
         function populateLines(lineSelect, branch, selectedLine) {
             lineSelect.innerHTML = '<option value="">Unassigned</option>';
             var lines = orgStructure[branch] || [];
+            if (branch) {
+                var wholeBranchOpt = document.createElement('option');
+                wholeBranchOpt.value = '__WHOLE_BRANCH__';
+                wholeBranchOpt.textContent = '— Entire Branch —';
+                if (selectedLine === '__WHOLE_BRANCH__') wholeBranchOpt.selected = true;
+                lineSelect.appendChild(wholeBranchOpt);
+            }
             lines.forEach(function (line) {
                 var opt = document.createElement('option');
                 opt.value = line;
@@ -541,8 +641,17 @@
 
             var currentLine = container.getAttribute('data-current-line') || '';
             var currentBranch = branchForLine(currentLine);
+            var lineToSelect = currentLine;
+            if (!currentBranch) {
+                // No specific Line -- check for a whole-Branch assignment instead.
+                var wholeBranch = container.getAttribute('data-current-branch') || '';
+                if (wholeBranch) {
+                    currentBranch = wholeBranch;
+                    lineToSelect = '__WHOLE_BRANCH__';
+                }
+            }
             if (currentBranch) branchSelect.value = currentBranch;
-            populateLines(lineSelect, currentBranch, currentLine);
+            populateLines(lineSelect, currentBranch, lineToSelect);
 
             branchSelect.addEventListener('change', function () {
                 populateLines(lineSelect, branchSelect.value, '');

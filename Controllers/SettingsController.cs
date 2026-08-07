@@ -93,6 +93,21 @@ namespace Visual_Inventory_System.Controllers
                 .Where(s => s.Category == "PickupRequested")
                 .ToDictionary(s => s.UserId, s => s.Enabled);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+
+            // Branches/Lines management (Pass 13). Shown regardless of IsActive,
+            // same as Teams/Locations above -- Settings needs to see hidden ones
+            // to bring them back.
+            ViewBag.Branches = _db.Branches.OrderByDescending(b => b.IsActive).ThenBy(b => b.Name).ToList();
+            ViewBag.OrgLinesAll = _db.OrgLines.Include(l => l.Branch)
+                .OrderByDescending(l => l.IsActive).ThenBy(l => l.Branch!.Name).ThenBy(l => l.Name).ToList();
+            // How many items/users still carry each Line string -- shown next to
+            // Hide so nobody hides a Line without seeing what references it.
+            ViewBag.LineUsage = _db.InventoryItems
+                .Where(i => i.Line != null && i.Line != "")
+                .GroupBy(i => i.Line)
+                .Select(g => new { Name = g.Key, Count = g.Count() })
+                .ToDictionary(x => x.Name!, x => x.Count);
+
             return View();
         }
 
@@ -167,7 +182,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public IActionResult UpdateLine(int userId, string line)
+        public IActionResult UpdateLine(int userId, string line, string? branch)
         {
             var user = _db.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null)
@@ -177,14 +192,33 @@ namespace Visual_Inventory_System.Controllers
             }
 
             line = (line ?? "").Trim();
-            if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+            string oldDescription = DescribeAssignment(user.Line, user.Branch);
+
+            // "— Entire Branch —" sentinel: assign the whole Branch instead of one
+            // Line. Mutually exclusive with Line, same as the model doc says.
+            if (line == "__WHOLE_BRANCH__")
             {
-                TempData["Error"] = $"'{line}' isn't a recognized Line.";
-                return RedirectToAction("Index");
+                var branchName = (branch ?? "").Trim();
+                if (!OrgStructure.BranchLines.ContainsKey(branchName))
+                {
+                    TempData["Error"] = $"'{branchName}' isn't a recognized Branch.";
+                    return RedirectToAction("Index");
+                }
+                user.Line = null;
+                user.Branch = branchName;
+            }
+            else
+            {
+                if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+                {
+                    TempData["Error"] = $"'{line}' isn't a recognized Line.";
+                    return RedirectToAction("Index");
+                }
+                user.Line = line.Length > 0 ? line : null;
+                user.Branch = null;
             }
 
-            string oldLine = user.Line ?? "";
-            user.Line = line.Length > 0 ? line : null;
+            string newDescription = DescribeAssignment(user.Line, user.Branch);
 
             _db.TransactionLogs.Add(new TransactionLog
             {
@@ -192,13 +226,20 @@ namespace Visual_Inventory_System.Controllers
                 ActionType = "Line Changed",
                 ItemId = "",
                 QuantityChange = 0,
-                Details = $"{user.DisplayName}: '{(oldLine.Length > 0 ? oldLine : "unassigned")}' -> '{(line.Length > 0 ? line : "unassigned")}'",
+                Details = $"{user.DisplayName}: '{oldDescription}' -> '{newDescription}'",
                 User = _currentUser.Name
             });
 
             _db.SaveChanges();
-            TempData["Success"] = $"{user.DisplayName}'s Line is now {(line.Length > 0 ? line : "unassigned")}.";
+            TempData["Success"] = $"{user.DisplayName}'s assignment is now {newDescription}.";
             return RedirectToAction("Index");
+        }
+
+        private static string DescribeAssignment(string? line, string? branch)
+        {
+            if (!string.IsNullOrWhiteSpace(line)) return line!;
+            if (!string.IsNullOrWhiteSpace(branch)) return $"entire {branch} branch";
+            return "unassigned";
         }
 
         [HttpPost]
@@ -346,6 +387,12 @@ namespace Visual_Inventory_System.Controllers
         private void RefreshLocationCodec()
         {
             LocationCodec.Refresh(_db.Locations.Where(l => l.IsActive).Select(l => l.Name).ToList());
+        }
+
+        private void RefreshOrgStructure()
+        {
+            OrgStructure.Refresh(_db.OrgLines.Where(l => l.IsActive && l.Branch!.IsActive)
+                .Select(l => new ValueTuple<string, string>(l.Branch!.Name, l.Name)).ToList());
         }
 
 
@@ -838,6 +885,148 @@ namespace Visual_Inventory_System.Controllers
             TempData["Success"] = team.IsActive
                 ? $"'{team.Name}' is selectable again."
                 : $"'{team.Name}' hidden from the pickers. {inUse} existing item(s) keep it.";
+            return RedirectToAction("Index");
+        }
+
+        // ============================
+        // BRANCHES & LINES (Pass 13) -- replaces the hardcoded OrgStructure.
+        // Same vocabulary-table / soft-hide convention as Teams above. Every
+        // write here ends with RefreshOrgStructure() so the change is live
+        // immediately, not just after the next process restart.
+        // ============================
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddBranch(string name)
+        {
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+            {
+                TempData["Error"] = "A branch needs a name.";
+                return RedirectToAction("Index");
+            }
+            if (_db.Branches.Any(b => b.Name.ToLower() == name.ToLower()))
+            {
+                TempData["Error"] = $"A branch called '{name}' already exists.";
+                return RedirectToAction("Index");
+            }
+
+            _db.Branches.Add(new Branch { Name = name, IsActive = true });
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Branch Added",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Branch '{name}' added.",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshOrgStructure();
+            TempData["Success"] = $"Branch '{name}' added.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult ToggleBranchActive(int branchId)
+        {
+            var branch = _db.Branches.FirstOrDefault(b => b.Id == branchId);
+            if (branch == null)
+            {
+                TempData["Error"] = "That branch no longer exists.";
+                return RedirectToAction("Index");
+            }
+            branch.IsActive = !branch.IsActive;
+
+            // A hidden Branch takes its Lines out of the picker too (OrgStructure.
+            // Refresh only loads lines whose Branch is also active), even though
+            // the OrgLine rows themselves keep IsActive = true underneath it.
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Branch Updated",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Branch '{branch.Name}': IsActive -> {branch.IsActive}. Its Lines go with it in the pickers.",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshOrgStructure();
+            TempData["Success"] = branch.IsActive
+                ? $"'{branch.Name}' is selectable again."
+                : $"'{branch.Name}' hidden from the pickers.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult AddLine(string name, int branchId)
+        {
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+            {
+                TempData["Error"] = "A line needs a name.";
+                return RedirectToAction("Index");
+            }
+            var branch = _db.Branches.FirstOrDefault(b => b.Id == branchId);
+            if (branch == null)
+            {
+                TempData["Error"] = "Pick a branch for this line.";
+                return RedirectToAction("Index");
+            }
+            // Global uniqueness -- User/InventoryItem/Team.Line are flat strings
+            // with no branch qualifier, so two branches can't share a Line name.
+            if (_db.OrgLines.Any(l => l.Name.ToLower() == name.ToLower()))
+            {
+                TempData["Error"] = $"A line called '{name}' already exists.";
+                return RedirectToAction("Index");
+            }
+
+            _db.OrgLines.Add(new OrgLine { Name = name, BranchId = branch.Id, IsActive = true });
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Line Added",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Line '{name}' added under branch '{branch.Name}'.",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshOrgStructure();
+            TempData["Success"] = $"Line '{name}' added under '{branch.Name}'.";
+            return RedirectToAction("Index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult ToggleLineActive(int lineId)
+        {
+            var line = _db.OrgLines.FirstOrDefault(l => l.Id == lineId);
+            if (line == null)
+            {
+                TempData["Error"] = "That line no longer exists.";
+                return RedirectToAction("Index");
+            }
+            line.IsActive = !line.IsActive;
+
+            int inUse = _db.InventoryItems.Count(i => i.Line == line.Name)
+                + _db.Users.Count(u => u.Line == line.Name);
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Line Updated",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Line '{line.Name}': IsActive -> {line.IsActive}. {inUse} item(s)/user(s) still reference it and are unaffected.",
+                User = _currentUser.Name
+            });
+            _db.SaveChanges();
+            RefreshOrgStructure();
+            TempData["Success"] = line.IsActive
+                ? $"'{line.Name}' is selectable again."
+                : $"'{line.Name}' hidden from the pickers. {inUse} existing reference(s) keep it.";
             return RedirectToAction("Index");
         }
 

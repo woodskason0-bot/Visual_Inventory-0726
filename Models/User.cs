@@ -43,8 +43,22 @@ namespace Visual_Inventory_System.Models
         /// (e.g. "Commercial Packaged/Splits"). NULL/blank = not yet assigned,
         /// which fails OPEN (sees everything) rather than closed, so nobody's
         /// dashboard looks broken mid-rollout. Set only from Settings.
+        ///
+        /// Mutually exclusive with Branch below -- a user has either one specific
+        /// Line, or an entire Branch, never both. Line wins if somehow both are
+        /// set (shouldn't happen through the UI, which clears the other).
         /// </summary>
         [MaxLength(50)]
         public string? Line { get; set; }
+
+        /// <summary>
+        /// One of OrgStructure.BranchLines' keys (e.g. "Commercial Air"). Grants
+        /// visibility to every Line under that Branch, for someone who needs
+        /// broader-than-one-Line visibility without going all the way to Admin's
+        /// "sees everything" bypass (e.g. a director who oversees a whole Branch).
+        /// NULL/blank = not set. Only takes effect when Line is also blank.
+        /// </summary>
+        [MaxLength(50)]
+        public string? Branch { get; set; }
     }
 }

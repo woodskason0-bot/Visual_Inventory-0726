@@ -156,6 +156,19 @@ using (var scope = app.Services.CreateScope())
             Console.WriteLine($">>> Backfilled PickupRequested subscription for {missingSub.Count} existing Standard-tier user(s).");
         }
         // -----------------------------------------
+
+        // --- REFRESH DB-BACKED VOCABULARY CACHES ---
+        // OrgStructure (Branches/Lines) and LocationCodec (Locations) are both
+        // static classes read from all over the app with no DB access of their
+        // own -- they're loaded here once at boot, then re-loaded after any
+        // Settings edit (see SettingsController.RefreshOrgStructure /
+        // RefreshLocationCodec). Without this call each fresh process start
+        // would run on the compiled-in seed values until someone happened to
+        // save something in Settings.
+        OrgStructure.Refresh(db.OrgLines.Where(l => l.IsActive && l.Branch!.IsActive)
+            .Select(l => new ValueTuple<string, string>(l.Branch!.Name, l.Name)).ToList());
+        LocationCodec.Refresh(db.Locations.Where(l => l.IsActive).Select(l => l.Name).ToList());
+        // -----------------------------------------
     }
     catch (Exception ex)
     {

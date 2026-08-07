@@ -31,13 +31,27 @@ namespace Visual_Inventory_System.Services
             if (_currentUser.Level >= AccessLevels.Admin) return query;
 
             var myLine = (_currentUser.Line ?? "").Trim();
-            // Not yet assigned a Line -- fail OPEN, not closed, so nobody's
-            // dashboard looks broken while rollout is still in progress.
-            if (myLine.Length == 0) return query;
+            if (myLine.Length > 0)
+            {
+                var myLineLower = myLine.ToLower();
+                // Blank item Line -- also fails open (not yet assigned to any Line).
+                return query.Where(i => i.Line == "" || i.Line.ToLower() == myLineLower);
+            }
 
-            var myLineLower = myLine.ToLower();
-            // Blank item Line -- also fails open (not yet assigned to any Line).
-            return query.Where(i => i.Line == "" || i.Line.ToLower() == myLineLower);
+            // No specific Line -- a whole-Branch assignment sees every Line under
+            // that Branch (plus still-unassigned items), without going all the
+            // way to Admin's full-org bypass. Line above always wins if somehow
+            // both are set; the Settings UI keeps them mutually exclusive.
+            var myBranch = (_currentUser.Branch ?? "").Trim();
+            if (myBranch.Length > 0 && OrgStructure.BranchLines.TryGetValue(myBranch, out var branchLines))
+            {
+                var branchLinesLower = branchLines.Select(l => l.ToLower()).ToList();
+                return query.Where(i => i.Line == "" || branchLinesLower.Contains(i.Line.ToLower()));
+            }
+
+            // Not yet assigned a Line or a Branch -- fail OPEN, not closed, so
+            // nobody's dashboard looks broken while rollout is still in progress.
+            return query;
         }
 
         // ============================
@@ -146,6 +160,7 @@ namespace Visual_Inventory_System.Services
                 Timestamp = System.DateTime.UtcNow,
                 ActionType = "New Registry",
                 ItemId = newItem.ItemId,
+                ItemName = newItem.ItemName,
                 QuantityChange = qty,
                 Details = $"Registered to {newItem.Group}/{newItem.Team} (Line: {(string.IsNullOrEmpty(newItem.Line) ? "unassigned" : newItem.Line)})",
                 User = newItem.UpdatedBy
@@ -325,6 +340,57 @@ namespace Visual_Inventory_System.Services
 
         public int GetTotalDbCount() => _db.InventoryItems.Count();
 
+        /// <summary>
+        /// Hard-deletes an item's catalog row once nothing about it is still live.
+        /// TransactionLogs (and any already-Returned/Scrapped CompressorUnit/MotorUnit
+        /// history rows) are deliberately NOT touched -- same pattern as the soft-hide
+        /// on Team/User, they keep reading sensibly under the now-defunct ItemId
+        /// string. Re-registering the same model later mints a fresh ItemId; numbers
+        /// are never reused.
+        /// </summary>
+        public (bool ok, string message) DeleteItem(string itemId)
+        {
+            var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
+            if (item == null) return (false, "Item not found.");
+
+            int totalQty = item.Variants.Where(v => !v.IsRetired).Sum(v => v.Quantity);
+            if (totalQty != 0)
+                return (false, $"Can't delete -- {itemId} still has {totalQty} unit(s) on hand.");
+
+            bool outOnLoan = _db.CompressorUnits.Any(c => c.ItemId == itemId && c.Status == UnitStatus.PickedUp)
+                || _db.MotorUnits.Any(m => m.ItemId == itemId && m.Status == UnitStatus.PickedUp);
+            if (outOnLoan)
+                return (false, $"Can't delete -- {itemId} has unit(s) still out on loan. Return or scrap them first.");
+
+            bool onPendingOrder = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.Order.Status == "Pending");
+            if (onPendingOrder)
+                return (false, $"Can't delete -- {itemId} is on a pending order.");
+
+            string itemName = item.ItemName;
+
+            _db.ItemVariants.RemoveRange(item.Variants);
+            _db.InventoryItems.Remove(item);
+
+            // Logged AFTER the item's gone, same as every other action -- this is
+            // itself the last entry the audit log will ever see for this ItemId,
+            // so the ItemName snapshot above is what makes it (and everything
+            // before it) still readable in the feed.
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = System.DateTime.UtcNow,
+                ActionType = "Item Deleted",
+                ItemId = itemId,
+                ItemName = itemName,
+                QuantityChange = 0,
+                Details = $"{itemName} ({itemId}) deleted -- quantity was 0, nothing outstanding.",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+
+            return (true, $"{itemId} deleted. Its transaction history remains in the audit log.");
+        }
+
         public IEnumerable<InventoryItem> GetAll() =>
             ApplyLineVisibility(_db.InventoryItems.AsNoTracking().Include(i => i.Variants)).ToList();
 
@@ -433,6 +499,7 @@ namespace Visual_Inventory_System.Services
                 Timestamp = System.DateTime.UtcNow,
                 ActionType = "Edit Details",
                 ItemId = itemId,
+                ItemName = item.ItemName,
                 QuantityChange = 0,
                 Details = string.Join("; ", changes) + ".",
                 User = _currentUser.Name
@@ -631,6 +698,7 @@ namespace Visual_Inventory_System.Services
                     Timestamp = now,
                     ActionType = "Unit Logged",
                     ItemId = itemId,
+                    ItemName = inv.ItemName,
                     QuantityChange = 0,
                     Details = $"{result.Created.Count} new unit(s) logged, {result.Updated.Count} corrected"
                         + (result.Created.Count + result.Updated.Count > 0
@@ -722,6 +790,7 @@ namespace Visual_Inventory_System.Services
                     Timestamp = now,
                     ActionType = "Unit Logged",
                     ItemId = itemId,
+                    ItemName = inv.ItemName,
                     QuantityChange = 0,
                     Details = $"{result.Created.Count} new TC motor unit(s) logged, {result.Updated.Count} corrected"
                         + (result.Created.Count + result.Updated.Count > 0
@@ -849,6 +918,7 @@ namespace Visual_Inventory_System.Services
                     _db.TransactionLogs.Add(new TransactionLog
                     {
                         Timestamp = now, ActionType = "Quick Add", ItemId = existing.ItemId,
+                        ItemName = existing.ItemName,
                         QuantityChange = qty,
                         Details = $"Intake: {qty} unit(s) at {fda} (Variant {nv.VariantNumber}).",
                         User = submittedBy
@@ -881,6 +951,7 @@ namespace Visual_Inventory_System.Services
                     _db.TransactionLogs.Add(new TransactionLog
                     {
                         Timestamp = now, ActionType = "New Registry", ItemId = itemId,
+                        ItemName = item.ItemName,
                         QuantityChange = qty,
                         Details = $"Registered to {grp}/{(team.Length == 0 ? "no team" : team)} (Line: {(line.Length == 0 ? "unassigned" : line)}) via Intake.",
                         User = submittedBy
@@ -1182,6 +1253,7 @@ namespace Visual_Inventory_System.Services
                 Timestamp = System.DateTime.UtcNow,
                 ActionType = actionType,
                 ItemId = itemId,
+                ItemName = item.ItemName,
                 QuantityChange = qtyChange,
                 Details = details,
                 User = _currentUser.Name
@@ -1215,6 +1287,7 @@ namespace Visual_Inventory_System.Services
                     Timestamp = System.DateTime.UtcNow,
                     ActionType = "Quick Add",
                     ItemId = itemId,
+                    ItemName = inv.ItemName,
                     QuantityChange = qty,
                     Details = $"Quick add of {qty} unit(s).",
                     User = _currentUser.Name

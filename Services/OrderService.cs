@@ -563,6 +563,7 @@ namespace Visual_Inventory_System.Services
                 Timestamp = System.DateTime.UtcNow,
                 ActionType = "Order Picked Up",
                 ItemId = it.ItemId,
+                ItemName = inv.ItemName,
                 QuantityChange = -pulledQty,
                 Details = (pulls.Count > 0
                     ? $"Order #{orderId} — pulled {string.Join(", ", pulls)}"
@@ -624,6 +625,7 @@ namespace Visual_Inventory_System.Services
                         Timestamp = now,
                         ActionType = "Stock Adjustment",
                         ItemId = it.ItemId,
+                        ItemName = inv.ItemName,
                         QuantityChange = after - before,
                         Details = $"Short-pull correction on Order #{orderId}: V{v.VariantNumber} ({v.FdaString}) recorded {before}, actually {after}.",
                         User = _currentUser.Name
@@ -808,6 +810,7 @@ namespace Visual_Inventory_System.Services
                     Timestamp = System.DateTime.UtcNow,
                     ActionType = "Loan Return",
                     ItemId = it.ItemId,
+                    ItemName = inv.ItemName,
                     QuantityChange = give,
                     Details = $"Returned {give}{(asTc ? " [TC]" : "")}{unitNote} from Order #{it.OrderId} into V{dest.VariantNumber} ({dest.FdaString}); {it.LoanOutstanding} still out.{reasonNote}",
                     User = _currentUser.Name
@@ -894,6 +897,7 @@ namespace Visual_Inventory_System.Services
                     Timestamp = System.DateTime.UtcNow,
                     ActionType = "Loan Scrap",
                     ItemId = it.ItemId,
+                    ItemName = _db.InventoryItems.AsNoTracking().Where(i => i.ItemId == it.ItemId).Select(i => i.ItemName).FirstOrDefault(),
                     QuantityChange = 0,   // stock already left at pickup; scrap just means it never returns
                     Details = $"Scrapped {drop}{unitNote} out on loan from Order #{it.OrderId}; {it.LoanOutstanding} still out.{reasonNote}",
                     User = _currentUser.Name
