@@ -26,15 +26,6 @@ namespace Visual_Inventory_System.Models
         /// <summary>Soft on/off so someone can be hidden from the picker without losing audit history.</summary>
         public bool IsActive { get; set; } = true;
 
-        /// <summary>
-        /// Team this person owns for low-stock notifications, matching InventoryItem.Team
-        /// (e.g. "Samurai", "Ninja"). NULL/empty = sees ALL teams' low-stock summary
-        /// (managers/admins). Set it only for the supervisors who should be narrowed.
-        /// Requires a migration to add the Users.Team column.
-        /// </summary>
-        [MaxLength(50)]
-        public string? Team { get; set; }
-
         /// <summary>Access tier: 1 Viewer, 2 Standard, 3 Engineer, 4 Management, 5 Admin.</summary>
         public int AccessLevel { get; set; } = 1;
 

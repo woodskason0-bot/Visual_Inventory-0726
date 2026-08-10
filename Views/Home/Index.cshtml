@@ -1208,8 +1208,9 @@
                     few units listed below for a while; that gap closes as more get logged.
                 </p>
 
-                <!-- Filter bar: Unclaimed = no Team AND no Line assigned. All filters
-                     AND together. Purely client-side (the modal is fully rendered
+                <!-- Filter bar: Unclaimed = missing Team OR missing Line (either one
+                     outstanding counts). All filters AND together. Purely client-side
+                     (the modal is fully rendered
                      already), so filtering never closes the modal or round-trips the
                      page. Listeners are wired in JS (not inline onchange) since this
                      modal's script lives inside a scoping IIFE further down the file. -->
@@ -1252,7 +1253,7 @@
                         var onHandUnits = units.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
                         var historyUnits = units.Where(x => x.Status != Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
                         var collapseId = "compUnits-" + it.ItemId.Replace(" ", "");
-                        var isUnclaimed = string.IsNullOrWhiteSpace(it.Team) && string.IsNullOrWhiteSpace(it.Line);
+                        var isUnclaimed = string.IsNullOrWhiteSpace(it.Team) || string.IsNullOrWhiteSpace(it.Line);
                         var itBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
 
                         @* The roster: one row per physical unit on the shelf, padded with
@@ -1384,8 +1385,8 @@
                     exists. Units still out on loan stay editable, not just what's on the shelf.
                 </p>
 
-                <!-- Filter bar: same shape as the Compressors modal (Unclaimed = no
-                     Team AND no Line, Branch/Line/Team/Brand AND together), same
+                <!-- Filter bar: same shape as the Compressors modal (Unclaimed = missing
+                     Team OR missing Line, Branch/Line/Team/Brand AND together), same
                      shared cascade helper. Visibility is inherited for free -- this
                      only narrows within motorItems, which is already Line-filtered
                      with the Level 5 bypass upstream via allItems. -->
@@ -1426,7 +1427,7 @@
                         var onHandMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
                         var outOnLoanMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp).ToList();
                         var collapseId = "motorUnits-" + it.ItemId.Replace(" ", "");
-                        var isUnclaimedMotor = string.IsNullOrWhiteSpace(it.Team) && string.IsNullOrWhiteSpace(it.Line);
+                        var isUnclaimedMotor = string.IsNullOrWhiteSpace(it.Team) || string.IsNullOrWhiteSpace(it.Line);
                         var motorBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
 
                         var roster = new List<(int UnitId, int VariantId, string? Lab, string GroupLabel)>();

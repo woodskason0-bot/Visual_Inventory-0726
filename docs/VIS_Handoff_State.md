@@ -1,12 +1,14 @@
 # VIS (Visual Inventory System) — Handoff State
 
 **Supersedes the July 2026 handoff (stopped at Pass 4) and the Pass 9 handoff below it.**
-Current as of the 2026-08-07 Claude Code session (Passes 10–15). I went live against
+Current as of the 2026-08-10 Claude Code session (Passes 10–16). I went live against
 my real copied-in database during this window, then followed up the same stretch with
 data cleanup, an access-control pass, the Branches/Lines redesign, a round of UI/data
-polish, and finally mandatory-Line registration + Line-scoped log visibility — all
-below. The Pass 13/14 db (with all its data work) has now actually been copied to the
-host and is what I'm testing against going forward.
+polish, mandatory-Line registration + Line-scoped log visibility, and most recently an
+Unclaimed-filter fix, a bulk Line reconciliation, whole-Branch assignment at user
+creation, and User.Team's move to many-to-many — all below. The Pass 13/14 db (with
+all its data work) has now actually been copied to the host and is what I'm testing
+against going forward.
 
 I'm the owner (Rheem). Built on ASP.NET Core MVC (`net10.0`), EF Core + SQLite, Razor,
 Bootstrap 5 dark theme. Session-based name-only "identify" (no password) plus a numeric
@@ -34,7 +36,7 @@ only confirmed by static reading and a clean build, and the difference is spelle
 ## Deployed state
 
 ```
-Migrations       33   (latest: 20260807043630_AddBranchesAndLines)
+Migrations       34   (latest: 20260810182116_AddUserTeams)
 Items           487   (compressor ownership reconciled against real claim sheets;
                  leftover test-fixture rows removed; one exact duplicate merged;
                  63 Residential OD compressors re-minted with an RCR- prefix and
@@ -228,6 +230,57 @@ actions** (Modify Stock, Delete Item, Ownership, etc.) — those still use the u
 `GetById`, unchanged, so someone who knows an `ItemId` can still act on it even if they
 can no longer see it in Search or Logs.
 
+**"Unclaimed" on the Compressor/Motor modals means missing Team OR missing Line, not
+AND (Pass 16).** The original definition required both blank simultaneously, which
+after Pass 13's reconciliation could never be true again — every compressor item came
+out of that pass with at least one of the two set (117 Team-blank/Line-set, 40
+Team-set/Line-blank, zero fully blank), so the checkbox silently showed "0 of 245."
+Motors were worse: all 124 motor-type items have Team set and 100% have Line blank
+(never touched by Line reconciliation at all), so they were *entirely* invisible under
+the old AND logic despite being the biggest gap in the system. Fixed at both call
+sites (`Views/Home/Index.cshtml`'s `isUnclaimed`/`isUnclaimedMotor`).
+
+**All 242 non-compressor items reconciled onto `Line = "Commercial Packaged/Splits"`
+(Pass 16, data-only).** Every Motor/EEV/Coil/Control/etc. item was already Team-tagged
+Samurai or Ninja and Group-tagged Commercial with a blank Line — this is genuinely all
+Commercial Packaged/Splits stock (Samurai and Ninja's own home Line), not a guess.
+Direct SQL against the live db, same pattern as the Pass 13/14 reconciliations.
+Compressors were explicitly excluded (`WHERE Type <> 'Compressor'`) and confirmed
+untouched.
+
+**Add User now supports whole-Branch assignment at creation, not just after (Pass
+16).** The `__WHOLE_BRANCH__` sentinel and Branch/Line cascade already existed for the
+per-row `UpdateLine` picker (how Karthig got scoped to all of Commercial Air); the Add
+User form's Branch/Line `<select>`s were already wired to the same JS cascade
+(`wireLinePicker(addUserForm)`) but the Branch `<select>` had no `name="branch"` so it
+never posted, and `AddUser()` didn't accept the parameter at all. Both fixed to mirror
+`UpdateLine` exactly. Verified live end-to-end: a test user picked as "Commercial Air /
+— Entire Branch —" landed with `Branch = "Commercial Air"`, `Line = NULL` in the real
+db, same shape as Karthig's row.
+
+**`User.Team` is now many-to-many via a new `UserTeams` table, not a single string
+(Pass 16).** A user can belong to several teams at once. Managed *team-centric*, not
+user-centric, per how it's actually used: Settings' "Team Membership" picker (in the
+Teams & Projects card) shows a dropdown of active teams, picking one lists every user
+with a checkbox, Save diffs and applies adds/removes in one action, logged as
+`"Team Membership Changed"`. `UserTeams.TeamName` is a plain string, not a
+`Team.Id` foreign key — same vocabulary-table convention as every other Team/Line/
+Branch reference in this app (`InventoryItem.Team`, `User.Line`, `Team.Line`), so
+hiding or (hypothetically) renaming a team behaves the same way it already does
+everywhere else. The Add User form's free-text "Team (optional)" field is gone — it
+was the one place in the app where a Team value could actually be typed instead of
+picked from the managed list, and team assignment now happens through the
+team-centric picker after a user exists, not at creation. `User.Team` was confirmed
+dead everywhere except display (Settings Users table) and one real consumer,
+`SetDefaultThreshold` (bulk `AlertThreshold` setter, scoped to "my team's items"),
+which was generalized to "my teams' items" (a list, `Contains` instead of `==`) rather
+than left broken. Migration (`AddUserTeams`) carries forward every existing
+single-Team value before dropping the column — verified live against the real db:
+Conner Walworth (Samurai) and James Masters (Ninja), the only two users who had a
+Team set, both landed correctly in `UserTeams` with zero data loss. Add/remove tested
+live through the actual Settings UI (add Kason to Samurai, confirm, remove, confirm
+back to original state) with `TransactionLog` entries checked after each.
+
 ---
 
 ## Pass log
@@ -377,6 +430,24 @@ roster growth.**
   `InventoryService.ApplyLogVisibility()`. See Architecture above for the full rule.
   Verified live with a real before/after comparison across an Admin and a Line-scoped
   user, not just a clean build.
+
+**Pass 16 (2026-08-10) — Unclaimed filter fix, bulk Line reconciliation, whole-Branch
+at creation, User.Team → many-to-many.**
+
+- **Compressor/Motor "Unclaimed only" fixed from AND to OR.** Was showing "0 of 245"
+  for compressors and hiding all 124 motor items outright. See Architecture above.
+- **242 non-compressor items bulk-set to `Line = "Commercial Packaged/Splits"`**, direct
+  SQL against the live db, compressors explicitly excluded and confirmed untouched. See
+  Architecture above.
+- **Add User supports whole-Branch assignment at creation**, mirroring the per-row
+  `UpdateLine` picker's existing `__WHOLE_BRANCH__` sentinel. See Architecture above.
+- **`User.Team` rebuilt as many-to-many (`UserTeams` table) with a team-centric
+  membership picker in Settings**, replacing the single string field (which had no UI
+  path to set it at all) and the free-text "Team (optional)" field on Add User. See
+  Architecture above for the full mechanism, migration behavior, and what was verified
+  live.
+- New migration: `AddUserTeams` (34th). Applied cleanly against the real db, no
+  `PendingModelChangesWarning`.
 
 ---
 
@@ -584,6 +655,35 @@ specifically (pickup was confirmed on Order 10, but a Return or Scrap on that sa
 wasn't separately exercised). The non-Admin case of the Pass 14 branch-button graying.
 The actual server-side rejection of a blank-Line submission (Pass 15) end to end.
 
+**Pass 16:**
+- Unclaimed filter fix confirmed by direct sqlite query against the live db, not just
+  code review: 0 compressor items had both Team and Line blank (the old AND condition),
+  vs. 157 with at least one blank (117 Team-blank/Line-set, 40 Team-set/Line-blank) —
+  the exact set the OR fix now surfaces. Clean build after.
+- The 242-item bulk Line update verified with before/after row counts: 242 updated
+  (exact match to the non-compressor item count), compressors confirmed untouched (the
+  142 compressors already on that Line predate this update, from Pass 13), total item
+  count unchanged at 487.
+- Add User whole-Branch: tested through the actual live Settings UI end-to-end — picked
+  "Commercial Air / — Entire Branch —", submitted, confirmed the resulting row in the
+  real db had `Branch = "Commercial Air"`, `Line = NULL`, then deleted the test user and
+  its audit log entry.
+- `UserTeams` migration: verified the pre-migration snapshot (2 users had a Team:
+  Conner Walworth/Samurai, James Masters/Ninja) matched exactly post-migration.
+  Team-centric picker tested live: added Kason to Samurai, confirmed the `UserTeams` row
+  and `TransactionLog` entry, removed him, confirmed back to the original 1-row state.
+  Users table's joined-team display spot-checked for three users (Conner → "Samurai",
+  James → "Ninja", Kason → "All").
+- `SetDefaultThreshold` (touched only because removing `User.Team` broke its build,
+  not because it was in scope) exercised live with a true no-op value (0 → 0, since all
+  487 items already sit at threshold 0) — submitted without error, dashboard reloaded
+  clean.
+
+**Worth knowing:** the `vis-dev` launch profile points at the same
+`C:\VIS_Inventory\inventory.db` as production — there's no separate test database, so
+"verified live" in this doc means the real data, with test rows/log entries cleaned up
+immediately after.
+
 ---
 
 ## Current state
@@ -591,10 +691,14 @@ The actual server-side rejection of a blank-Line submission (Pass 15) end to end
 Went live for real starting Pass 10. Pass 13 closed out the data-quality and
 access-control gaps found along the way and added Branches/Lines as managed vocabulary;
 Pass 14 followed up with the RCR rename, a round of dashboard/access polish, and 9 more
-real users; Pass 15 made Line mandatory going forward and closed the log-visibility gap.
+real users; Pass 15 made Line mandatory going forward and closed the log-visibility gap;
+Pass 16 fixed the Unclaimed filter, reconciled all non-compressor items onto their real
+Line, closed the whole-Branch-at-creation gap, and rebuilt Team as many-to-many.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
-sitting in a scratchpad copy, it's what I'm actually testing against. Pass 15 is code
-only, no new data, so nothing further needs copying for it specifically.
+sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15 and 16
+were tested directly against that same live db through the running app (Pass 16 also
+made real data changes to it — the 242-item Line reconciliation — beyond the schema
+migration), so nothing further needs copying for either.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
 loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
 sign in as a non-Admin user to confirm the branch-button graying looks right in

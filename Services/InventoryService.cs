@@ -548,11 +548,11 @@ namespace Visual_Inventory_System.Services
         // blank (e.g. Kevin / Admin with no team), every item is set. Returns the
         // number of items affected. All downstream alert displays and the manager
         // low-stock summary read AlertThreshold, so they pick this up immediately.
-        public int SetDefaultThreshold(string? team, int threshold)
+        public int SetDefaultThreshold(List<string>? teams, int threshold)
         {
             var q = _db.InventoryItems.AsQueryable();
-            if (!string.IsNullOrWhiteSpace(team))
-                q = q.Where(i => i.Team == team);
+            if (teams != null && teams.Count > 0)
+                q = q.Where(i => teams.Contains(i.Team));
 
             var items = q.ToList();
             foreach (var it in items)

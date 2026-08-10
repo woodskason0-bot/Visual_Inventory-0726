@@ -1,8 +1,8 @@
 ---
 title: VIS — Consolidated Context Addendum
 description: Merged from four sources. Companion to VIS_Handoff_State.md, which stays authoritative for code and architecture.
-sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–14 working method
-merged: 2026-08-04, updated 2026-08-07
+sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–16 working method
+merged: 2026-08-04, updated 2026-08-10
 status: consolidated
 ---
 
@@ -32,6 +32,7 @@ sequence at all. Resolved:
 | Aug 6–7 | **Pass 13** | Data reconciliation, access-control pass, Delete Item, Branches/Lines redesign. See handoff. |
 | Aug 7 | **Pass 14** | RCR compressor rename, Quick Filter/access polish, Activity Feed fix, 9 new users. The Pass 13/14 db is now actually on the host, not just staged. See handoff. |
 | Aug 7 | **Pass 15** | Mandatory Line on new registrations; View Logs/Activity Feed now Line-scoped like browsing already was. Code only, no data changes. See handoff. |
+| Aug 10 | **Pass 16** | Unclaimed compressor/motor filter fixed (AND → OR); 242 non-compressor items bulk-reconciled onto Commercial Packaged/Splits; Add User gained whole-Branch assignment at creation; `User.Team` rebuilt as many-to-many with a team-centric membership picker. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge
@@ -56,8 +57,8 @@ Superseded, not merely outdated:
    visibility and need a correction before further distribution.
 4. **Group is derived and frozen at creation**, removed from the registration form in
    Pass 7A.
-5. **Migration count.** 15 → 26 → 33 as of Pass 13. Anything reasoning from migration
-   numbers is stale.
+5. **Migration count.** 15 → 26 → 33 as of Pass 13 → 34 as of Pass 16. Anything
+   reasoning from migration numbers is stale.
 6. **Claude hand-authors migration files now, when it has shell access.** Old rule was
    "supply the model + DbSet diff and stop." Both the Cowork and Passes 1–4 threads ran
    under the old rule. I still compile, run, and test everything myself either way.

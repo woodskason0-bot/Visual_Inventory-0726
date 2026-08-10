@@ -241,9 +241,9 @@ namespace Visual_Inventory_System.Controllers
 
         // Bulk default: set the alert threshold for many items at once.
         // Management+ only (supervisors/management), NOT engineers. Scope follows
-        // the same team rule as the low-stock summary: a manager WITH a team sets
-        // it for their team's items; a null-team manager (e.g. Kevin) sets it for
-        // every item. Drives all alert displays + notifications via AlertThreshold.
+        // the same team rule as the low-stock summary: a manager with team(s) sets
+        // it for those teams' items; a manager with no teams (e.g. Kevin) sets it
+        // for every item. Drives all alert displays + notifications via AlertThreshold.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Management)]
@@ -251,20 +251,20 @@ namespace Visual_Inventory_System.Controllers
         {
             if (threshold < 0) return RedirectToAction("Index");
 
-            string? myTeam = null;
+            List<string> myTeams = new List<string>();
             try
             {
-                myTeam = _db.Users.AsNoTracking()
-                    .Where(u => u.UserName == _currentUser.Name)
-                    .Select(u => u.Team)
-                    .FirstOrDefault();
+                myTeams = (from u in _db.Users.AsNoTracking()
+                           join ut in _db.UserTeams.AsNoTracking() on u.Id equals ut.UserId
+                           where u.UserName == _currentUser.Name
+                           select ut.TeamName).ToList();
             }
-            catch { myTeam = null; }
+            catch { myTeams = new List<string>(); }
 
-            int count = _inventoryService.SetDefaultThreshold(myTeam, threshold);
-            TempData["Success"] = string.IsNullOrWhiteSpace(myTeam)
+            int count = _inventoryService.SetDefaultThreshold(myTeams, threshold);
+            TempData["Success"] = myTeams.Count == 0
                 ? $"All item alert thresholds have been set to {threshold} ({count} items)."
-                : $"All {myTeam} item alert thresholds have been set to {threshold} ({count} items).";
+                : $"All {string.Join("/", myTeams)} item alert thresholds have been set to {threshold} ({count} items).";
             return RedirectToAction("Index");
         }
 

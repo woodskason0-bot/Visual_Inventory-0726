@@ -63,9 +63,19 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index", "Home");
         }
 
-        public IActionResult Index()
+        public IActionResult Index(string? manageTeam)
         {
             ViewBag.Teams = _db.Teams.OrderByDescending(t => t.IsActive).ThenBy(t => t.Name).ToList();
+            // Team-centric membership picker: pick a team, see/edit who's on it.
+            // Shown on the Users table as a joined list ("Samurai, Ninja").
+            ViewBag.UserTeamNames = _db.UserTeams
+                .GroupBy(ut => ut.UserId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.TeamName).OrderBy(n => n).ToList());
+            manageTeam = (manageTeam ?? "").Trim();
+            ViewBag.ManageTeam = manageTeam;
+            ViewBag.TeamMemberIds = manageTeam.Length > 0
+                ? _db.UserTeams.Where(ut => ut.TeamName == manageTeam).Select(ut => ut.UserId).ToHashSet()
+                : new HashSet<int>();
             // Pass 9: intakes held because their location wasn't recognised.
             ViewBag.PendingIntakes = _db.IntakeBatches.Include(b => b.Rows)
                 .Where(b => b.Status == IntakeStatus.Pending)
@@ -244,7 +254,7 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
-        public IActionResult AddUser(string displayName, string? team, int accessLevel, string? line)
+        public IActionResult AddUser(string displayName, int accessLevel, string? line, string? branch)
         {
             displayName = (displayName ?? "").Trim();
             var parts = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -261,10 +271,31 @@ namespace Visual_Inventory_System.Controllers
             }
 
             line = (line ?? "").Trim();
-            if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+
+            // "— Entire Branch —" sentinel: same convention as UpdateLine. Mutually
+            // exclusive with Line.
+            string? assignedLine;
+            string? assignedBranch;
+            if (line == "__WHOLE_BRANCH__")
             {
-                TempData["Error"] = $"'{line}' isn't a recognized Line.";
-                return RedirectToAction("Index");
+                var branchName = (branch ?? "").Trim();
+                if (!OrgStructure.BranchLines.ContainsKey(branchName))
+                {
+                    TempData["Error"] = $"'{branchName}' isn't a recognized Branch.";
+                    return RedirectToAction("Index");
+                }
+                assignedLine = null;
+                assignedBranch = branchName;
+            }
+            else
+            {
+                if (line.Length > 0 && !OrgStructure.IsValidLine(line))
+                {
+                    TempData["Error"] = $"'{line}' isn't a recognized Line.";
+                    return RedirectToAction("Index");
+                }
+                assignedLine = line.Length > 0 ? line : null;
+                assignedBranch = null;
             }
 
             // Same First.Last convention as the Program.cs seed list and Identify.
@@ -282,8 +313,8 @@ namespace Visual_Inventory_System.Controllers
             {
                 DisplayName = normalizedDisplay,
                 UserName = userName,
-                Team = string.IsNullOrWhiteSpace(team) ? null : team.Trim(),
-                Line = line.Length > 0 ? line : null,
+                Line = assignedLine,
+                Branch = assignedBranch,
                 Theme = "dark",
                 IsActive = true,
                 AccessLevel = accessLevel
@@ -886,6 +917,60 @@ namespace Visual_Inventory_System.Controllers
                 ? $"'{team.Name}' is selectable again."
                 : $"'{team.Name}' hidden from the pickers. {inUse} existing item(s) keep it.";
             return RedirectToAction("Index");
+        }
+
+        // Team-centric membership: pick a team (the dropdown above the checkbox
+        // list), check/uncheck who belongs to it, Save replaces the full
+        // membership set for that team in one diff. Team is still a label, not a
+        // visibility gate -- this only changes what shows in the Users table.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult UpdateTeamMembers(string teamName, List<int>? userIds)
+        {
+            teamName = (teamName ?? "").Trim();
+            var team = _db.Teams.FirstOrDefault(t => t.Name == teamName);
+            if (team == null)
+            {
+                TempData["Error"] = "That team no longer exists.";
+                return RedirectToAction("Index");
+            }
+
+            var desired = (userIds ?? new List<int>()).ToHashSet();
+            var existing = _db.UserTeams.Where(ut => ut.TeamName == teamName).ToList();
+            var existingIds = existing.Select(ut => ut.UserId).ToHashSet();
+
+            var toAdd = desired.Except(existingIds).ToList();
+            var toRemove = existing.Where(ut => !desired.Contains(ut.UserId)).ToList();
+
+            if (toAdd.Count == 0 && toRemove.Count == 0)
+            {
+                TempData["Success"] = $"No changes to '{teamName}'s membership.";
+                return RedirectToAction("Index", new { manageTeam = teamName });
+            }
+
+            var namesById = _db.Users
+                .Where(u => toAdd.Contains(u.Id) || toRemove.Select(r => r.UserId).Contains(u.Id))
+                .ToDictionary(u => u.Id, u => u.DisplayName);
+
+            foreach (var userId in toAdd)
+                _db.UserTeams.Add(new UserTeam { UserId = userId, TeamName = teamName });
+            _db.UserTeams.RemoveRange(toRemove);
+
+            string addedNames = toAdd.Count > 0 ? string.Join(", ", toAdd.Select(id => namesById.GetValueOrDefault(id, $"#{id}"))) : "none";
+            string removedNames = toRemove.Count > 0 ? string.Join(", ", toRemove.Select(ut => namesById.GetValueOrDefault(ut.UserId, $"#{ut.UserId}"))) : "none";
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Team Membership Changed",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"'{teamName}': added [{addedNames}], removed [{removedNames}].",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+            TempData["Success"] = $"'{teamName}'s membership updated -- {toAdd.Count} added, {toRemove.Count} removed.";
+            return RedirectToAction("Index", new { manageTeam = teamName });
         }
 
         // ============================

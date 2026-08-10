@@ -30,6 +30,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<IntakeRow> IntakeRows { get; set; } = null!;
         public DbSet<Branch> Branches { get; set; } = null!;
         public DbSet<OrgLine> OrgLines { get; set; } = null!;
+        public DbSet<UserTeam> UserTeams { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -186,6 +187,18 @@ namespace Visual_Inventory_System.Data
                 // LabNumber is the only identifying field and won't always be
                 // present, so it can't carry a uniqueness constraint.
                 b.HasIndex(c => c.ItemId);
+            });
+
+            modelBuilder.Entity<UserTeam>(b =>
+            {
+                // One membership row per (user, team) -- the team-centric picker's
+                // Save diffs against this.
+                b.HasIndex(x => new { x.UserId, x.TeamName }).IsUnique();
+
+                b.HasOne<User>()
+                 .WithMany()
+                 .HasForeignKey(x => x.UserId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

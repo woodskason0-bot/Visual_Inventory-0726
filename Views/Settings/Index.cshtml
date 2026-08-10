@@ -5,6 +5,9 @@
     var users = ViewBag.Users as List<User> ?? new List<User>();
     var pickupSubs = ViewBag.PickupSubscriptions as Dictionary<int, bool> ?? new Dictionary<int, bool>();
     var orgStructureJson = ViewBag.OrgStructureJson as string ?? "{}";
+    var userTeamNames = ViewBag.UserTeamNames as Dictionary<int, List<string>> ?? new Dictionary<int, List<string>>();
+    var manageTeam = ViewBag.ManageTeam as string ?? "";
+    var teamMemberIds = ViewBag.TeamMemberIds as HashSet<int> ?? new HashSet<int>();
 }
 
 <style>
@@ -354,6 +357,51 @@
         existing items untouched. Renaming isn't offered &mdash; items store the team name directly,
         so a rename would orphan them. Add the new name and hide the old one.
     </div>
+
+    <h6 class="text-white fw-bold mb-2 mt-4">Team Membership</h6>
+    <p class="text-light-gray small mb-2">
+        Team-centric, not user-centric: pick a team, see everyone on it, check/uncheck to add or
+        remove. A user can belong to more than one team at once.
+    </p>
+    <select id="teamMembershipPicker" class="form-select form-select-sm mb-3" style="max-width:260px;">
+        <option value="">-- Pick a team --</option>
+        @foreach (var t in ((List<Visual_Inventory_System.Models.Team>)ViewBag.Teams).Where(t => t.IsActive))
+        {
+            if (t.Name == manageTeam)
+            {
+                <option value="@t.Name" selected>@t.Name</option>
+            }
+            else
+            {
+                <option value="@t.Name">@t.Name</option>
+            }
+        }
+    </select>
+
+    @if (manageTeam.Length == 0)
+    {
+        <p class="text-light-gray small mb-0">Pick a team above to see and edit its members.</p>
+    }
+    else
+    {
+        <form asp-controller="Settings" asp-action="UpdateTeamMembers" method="post">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="teamName" value="@manageTeam" />
+            <div class="row row-cols-2 row-cols-md-4 g-1 mb-2 p-2" style="max-height: 280px; overflow-y: auto; background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                @foreach (var u in users)
+                {
+                    bool isMember = teamMemberIds.Contains(u.Id);
+                    <div class="col">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="userIds" value="@u.Id" id="tm-@u.Id" @(isMember ? "checked" : "") />
+                            <label class="form-check-label small text-light-gray" for="tm-@u.Id">@u.DisplayName</label>
+                        </div>
+                    </div>
+                }
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Save Membership for '@manageTeam'</button>
+        </form>
+    }
 </div>
 
 <!-- ============ BRANCHES & LINES (Pass 13) ============ -->
@@ -468,10 +516,11 @@
                 @foreach (var u in users)
                 {
                     bool subscribed = pickupSubs.TryGetValue(u.Id, out var en) && en;
+                    var uTeams = userTeamNames.TryGetValue(u.Id, out var utn) ? utn : new List<string>();
                     <tr>
                         <td>@u.DisplayName</td>
                         <td class="text-dim">@u.UserName</td>
-                        <td class="text-dim">@(string.IsNullOrEmpty(u.Team) ? "All" : u.Team)</td>
+                        <td class="text-dim">@(uTeams.Count == 0 ? "All" : string.Join(", ", uTeams))</td>
                         <td>
                             <form asp-controller="Settings" asp-action="UpdateLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@u.Line" data-current-branch="@u.Branch">
                                 @Html.AntiForgeryToken()
@@ -541,8 +590,7 @@
             <input type="text" name="displayName" class="form-control form-control-sm" placeholder="First Last"
                    style="max-width: 200px;" required pattern="^[A-Za-z'-]+\s[A-Za-z'-]+$"
                    title="Enter as First Last, e.g. Jane Doe" />
-            <input type="text" name="team" class="form-control form-control-sm" placeholder="Team (optional)" style="max-width: 160px;" />
-            <select class="form-select form-select-sm branch-select" style="max-width: 160px;">
+            <select name="branch" class="form-select form-select-sm branch-select" style="max-width: 160px;">
                 <option value="">-- Branch --</option>
             </select>
             <select name="line" class="form-select form-select-sm line-select" style="max-width: 180px;">
@@ -662,6 +710,20 @@
 
         var addUserForm = document.getElementById('addUserForm');
         if (addUserForm) wireLinePicker(addUserForm);
+
+        // Team Membership picker: a plain server round-trip, same pattern as
+        // every other Settings control -- picking a team reloads the page with
+        // ?manageTeam=<name> so the controller can pre-render that team's
+        // checked/unchecked roster.
+        var teamMembershipPicker = document.getElementById('teamMembershipPicker');
+        if (teamMembershipPicker) {
+            teamMembershipPicker.addEventListener('change', function () {
+                var url = new URL(window.location.href);
+                if (teamMembershipPicker.value) url.searchParams.set('manageTeam', teamMembershipPicker.value);
+                else url.searchParams.delete('manageTeam');
+                window.location.href = url.toString();
+            });
+        }
     })();
 </script>
 
