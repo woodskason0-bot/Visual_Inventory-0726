@@ -57,8 +57,8 @@
                 <select id="in-branch" class="form-select"><option value="">-- Branch --</option></select>
             </div>
             <div class="col-md-3">
-                <label class="form-label small fw-bold text-light-gray">Line</label>
-                <select name="line" id="in-line" class="form-select"><option value="">Unassigned</option></select>
+                <label class="form-label small fw-bold text-light-gray">Line <span class="text-danger">*</span></label>
+                <select name="line" id="in-line" class="form-select" required><option value="">-- Select a Line --</option></select>
             </div>
             <div class="col-md-3">
                 <label class="form-label small fw-bold text-light-gray">Team / Project</label>
@@ -139,7 +139,7 @@
             bSel.appendChild(Object.assign(document.createElement('option'), { value: b, textContent: b }));
         });
         bSel.addEventListener('change', function () {
-            lSel.innerHTML = '<option value="">Unassigned</option>';
+            lSel.innerHTML = '<option value="">-- Select a Line --</option>';
             (orgStructure[bSel.value] || []).forEach(function (l) {
                 lSel.appendChild(Object.assign(document.createElement('option'), { value: l, textContent: l }));
             });

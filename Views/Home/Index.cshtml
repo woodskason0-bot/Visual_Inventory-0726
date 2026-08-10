@@ -2028,11 +2028,11 @@
                             </select>
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label small fw-bold text-light-gray">Line</label>
-                            <select name="Line" id="reg-line" class="form-select">
-                                <option value="">Unassigned</option>
+                            <label class="form-label small fw-bold text-light-gray">Line <span class="text-danger">*</span></label>
+                            <select name="Line" id="reg-line" class="form-select" required>
+                                <option value="">-- Select a Line --</option>
                             </select>
-                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">Who can see this item. Blank = visible to everyone.</small>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">Who can see this item. Required as of Pass 15.</small>
                         </div>
                     </div>
 
@@ -3542,7 +3542,9 @@
         // ---- Registration: Branch/Line cascade -----------------------------
         const regLineBranch = document.getElementById('reg-line-branch');
         const regLine = document.getElementById('reg-line');
-        wireLineCascade(regLineBranch, regLine);
+        // Line is required to register (Pass 15) -- placeholder reads as a
+        // prompt to pick one, not a valid "leave it blank" choice.
+        wireLineCascade(regLineBranch, regLine, null, undefined, '-- Select a Line --');
 
         // Auto-fill: picking a Team suggests its home Line, but doesn't lock
         // it -- a team with no assigned Line does nothing, and a manual

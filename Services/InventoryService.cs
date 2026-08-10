@@ -54,6 +54,30 @@ namespace Visual_Inventory_System.Services
             return query;
         }
 
+        /// <summary>
+        /// Same visibility rule as browsing (Pass 15), applied to TransactionLogs --
+        /// View Logs and the Activity Feed used to show every action for every item
+        /// regardless of the viewer's Line, which is a wider audience than can even
+        /// see those items in Search. Built on top of ApplyLineVisibility rather than
+        /// duplicating the Line/Branch logic: a log row is visible if it isn't about
+        /// an item at all (blank ItemId -- Settings/admin actions), if the item it
+        /// names has since been deleted (nothing left to check a Line against, same
+        /// "keeps reading sensibly" treatment Delete Item already gives these), or if
+        /// the item it names is one this viewer can currently see.
+        /// </summary>
+        public IQueryable<TransactionLog> ApplyLogVisibility(IQueryable<TransactionLog> query)
+        {
+            if (_currentUser.Level >= AccessLevels.Admin) return query;
+
+            var allItemIds = _db.InventoryItems.AsNoTracking().Select(i => i.ItemId);
+            var visibleItemIds = ApplyLineVisibility(_db.InventoryItems.AsNoTracking()).Select(i => i.ItemId);
+
+            return query.Where(log =>
+                log.ItemId == "" ||
+                !allItemIds.Contains(log.ItemId) ||
+                visibleItemIds.Contains(log.ItemId));
+        }
+
         // ============================
         // NEW ITEM REGISTRY LOGIC
         // ============================

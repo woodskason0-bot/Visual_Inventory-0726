@@ -1,11 +1,12 @@
 # VIS (Visual Inventory System) — Handoff State
 
 **Supersedes the July 2026 handoff (stopped at Pass 4) and the Pass 9 handoff below it.**
-Current as of the 2026-08-07 Claude Code session (Passes 10–14). I went live against
+Current as of the 2026-08-07 Claude Code session (Passes 10–15). I went live against
 my real copied-in database during this window, then followed up the same stretch with
-data cleanup, an access-control pass, the Branches/Lines redesign, and a follow-on round
-of UI/data polish — all below. The Pass 13 db (with all its data work) has now actually
-been copied to the host and is what I'm testing against going forward.
+data cleanup, an access-control pass, the Branches/Lines redesign, a round of UI/data
+polish, and finally mandatory-Line registration + Line-scoped log visibility — all
+below. The Pass 13/14 db (with all its data work) has now actually been copied to the
+host and is what I'm testing against going forward.
 
 I'm the owner (Rheem). Built on ASP.NET Core MVC (`net10.0`), EF Core + SQLite, Razor,
 Bootstrap 5 dark theme. Session-based name-only "identify" (no password) plus a numeric
@@ -206,6 +207,27 @@ out the two Quick Filter branch buttons a user isn't on (Admin sees all three, s
 Luis/Derek/me) — it is **not** a visibility mechanism, `ApplyLineVisibility` is still the
 only thing that actually gates data.
 
+**Line is mandatory on new registrations as of Pass 15 — but only new ones.** Both
+`CreateItem` and `SubmitIntake`/Intake now reject a blank `Line` server-side (and the
+form fields carry `required` client-side too). This does **not** retroactively touch the
+~180+ items already sitting blank across Motors/EEVs/Coils/etc. — the "blank Line fails
+open" default from Pass 3 is still exactly as true for everything already in the system.
+This just closes the door going forward.
+
+**`InventoryService.ApplyLogVisibility()` extends the same Line rule to `TransactionLog`
+rows (Pass 15).** View Logs and the dashboard Activity Feed used to show every log entry
+to every signed-in user regardless of Line — a strictly wider audience than could even
+see those items in Search. Built on top of the existing (private) `ApplyLineVisibility`
+rather than duplicating its logic: a log row is visible if it isn't about an item at all
+(blank `ItemId` — every Settings/admin action), if the item it names has since been
+deleted (nothing left to check a Line against — same "keeps reading sensibly" treatment
+Delete Item already gives these), or if the item it names is one the viewer can currently
+see. Verified live: Admin (me) saw 578 rows on View Logs, a user scoped to a single Line
+(Cedric Martis, Residential Coils/AH) saw 349. **Deliberately does not touch direct item
+actions** (Modify Stock, Delete Item, Ownership, etc.) — those still use the unfiltered
+`GetById`, unchanged, so someone who knows an `ItemId` can still act on it even if they
+can no longer see it in Search or Logs.
+
 ---
 
 ## Pass log
@@ -344,6 +366,17 @@ roster growth.**
   (Standard), Jacob Moffett, Chase Binz, Mohamed Elrifae, Ethan Phan, Luis Fragoso,
   Marco Balcazar (Engineer), Travis Gregory (Management) — all eight to International
   (Commercial Air).
+
+**Pass 15 (2026-08-07) — mandatory Line at registration, Line-scoped log visibility.**
+
+- **Line is now required to register an item**, both single-item (`CreateItem`) and
+  bulk (`Intake`/`SubmitIntake`) — server-side rejection plus a client-side `required`
+  field on both forms. See Architecture above for exactly what this does and doesn't
+  cover (new registrations only, nothing retroactive).
+- **View Logs and the Activity Feed are now Line-scoped**, via the new
+  `InventoryService.ApplyLogVisibility()`. See Architecture above for the full rule.
+  Verified live with a real before/after comparison across an Admin and a Line-scoped
+  user, not just a clean build.
 
 ---
 
@@ -536,9 +569,20 @@ the DOM, the browser console, and the server's live SQL/exception log after each
   graying path was verified by code review, not by actually signing in as a non-Admin
   user.
 
+**Pass 15:**
+- `ApplyLogVisibility` verified with a real before/after comparison: signed in as
+  Admin (me) and counted 578 rows on View Logs, then signed in as Cedric Martis
+  (Engineer, scoped to Residential Coils/AH) and counted 349 on the same page. Real
+  reduction confirmed, not just "should filter."
+- The mandatory-Line client-side `required` attribute confirmed present and correctly
+  labeled on both the New Item Registry and Intake forms by direct DOM inspection. The
+  server-side rejection path was confirmed by code/build, not by actually submitting a
+  blank-Line registration and watching it bounce.
+
 **Not verified live:** `ReturnLoan`/`ScrapLoan`'s auto-select logic for `MotorUnit`
 specifically (pickup was confirmed on Order 10, but a Return or Scrap on that same loan
 wasn't separately exercised). The non-Admin case of the Pass 14 branch-button graying.
+The actual server-side rejection of a blank-Line submission (Pass 15) end to end.
 
 ---
 
@@ -547,10 +591,13 @@ wasn't separately exercised). The non-Admin case of the Pass 14 branch-button gr
 Went live for real starting Pass 10. Pass 13 closed out the data-quality and
 access-control gaps found along the way and added Branches/Lines as managed vocabulary;
 Pass 14 followed up with the RCR rename, a round of dashboard/access polish, and 9 more
-real users. **The Pass 13/14 database has now been copied to the host** — this is no
-longer just sitting in a scratchpad copy, it's what I'm actually testing against.
+real users; Pass 15 made Line mandatory going forward and closed the log-visibility gap.
+**The Pass 13/14 database has now been copied to the host** — this is no longer just
+sitting in a scratchpad copy, it's what I'm actually testing against. Pass 15 is code
+only, no new data, so nothing further needs copying for it specifically.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
-loan, resolve the letter-family hypothesis for the still-unclaimed compressor items, and
-sign in as a non-Admin user at least once to confirm the branch-button graying looks
-right in practice. Everything else on the scaling list (SQL Server/Azure SQL move, SSO,
+loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
+sign in as a non-Admin user to confirm the branch-button graying looks right in
+practice, and actually submit a blank-Line registration to watch Pass 15's rejection
+fire for real. Everything else on the scaling list (SQL Server/Azure SQL move, SSO,
 backup story) is expansion work, not a blocker.

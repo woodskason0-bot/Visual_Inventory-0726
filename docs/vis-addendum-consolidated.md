@@ -31,6 +31,7 @@ sequence at all. Resolved:
 | Aug 5–6 | **Passes 10–12** | Went live for real. See handoff. |
 | Aug 6–7 | **Pass 13** | Data reconciliation, access-control pass, Delete Item, Branches/Lines redesign. See handoff. |
 | Aug 7 | **Pass 14** | RCR compressor rename, Quick Filter/access polish, Activity Feed fix, 9 new users. The Pass 13/14 db is now actually on the host, not just staged. See handoff. |
+| Aug 7 | **Pass 15** | Mandatory Line on new registrations; View Logs/Activity Feed now Line-scoped like browsing already was. Code only, no data changes. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge

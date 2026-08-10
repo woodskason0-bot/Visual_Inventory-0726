@@ -50,9 +50,10 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.OutOfStockCount = allItems.Count(i => i.Quantity == 0);
             ViewBag.ActiveLocationsCount = allItems.Select(i => i.Parent).Where(p => !string.IsNullOrEmpty(p)).Distinct().Count();
 
-            // 2. RECENT ACTIVITY FEED (Top 5 latest actions)
-            ViewBag.RecentActivity = _db.TransactionLogs
-                .AsNoTracking()
+            // 2. RECENT ACTIVITY FEED (Top 5 latest actions). Pass 15: same Line
+            // visibility as View Logs -- see ApplyLogVisibility.
+            ViewBag.RecentActivity = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
+                .AsNoTracking())
                 .OrderByDescending(t => t.Timestamp)
                 .Take(5)
                 .ToList();
@@ -369,7 +370,16 @@ namespace Visual_Inventory_System.Controllers
                     ? ""
                     : (_db.Teams.FirstOrDefault(t => t.Name == newItem.Team)?.ProjectCode ?? "");
                 newItem.Line ??= "";
-                if (newItem.Line.Length > 0 && !OrgStructure.IsValidLine(newItem.Line))
+                // Pass 15: Line is mandatory on new registrations going forward -- the
+                // old "blank fails open" rollout default stays true for items already
+                // in the system (nothing here retroactively touches them), but nobody
+                // should be able to register something with no owner from here on.
+                if (newItem.Line.Length == 0)
+                {
+                    TempData["Error"] = "A Line is required to register an item.";
+                    return RedirectToAction("Index");
+                }
+                if (!OrgStructure.IsValidLine(newItem.Line))
                 {
                     TempData["Error"] = $"'{newItem.Line}' isn't a recognized Line.";
                     return RedirectToAction("Index");
@@ -511,9 +521,11 @@ namespace Visual_Inventory_System.Controllers
                 .OrderByDescending(o => o.CreatedAt)
                 .ToList();
 
-            // Pass Transactions to the main Model
-            var transactions = _db.TransactionLogs
-                .AsNoTracking()
+            // Pass Transactions to the main Model. Pass 15: same Line visibility as
+            // browsing -- a log about an item you can't see in Search shouldn't be
+            // readable here either.
+            var transactions = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
+                .AsNoTracking())
                 .OrderByDescending(t => t.Timestamp)
                 .ToList();
 
@@ -618,6 +630,21 @@ namespace Visual_Inventory_System.Controllers
 
             team = (team ?? "").Trim();
             if (string.Equals(team, "N/A", StringComparison.OrdinalIgnoreCase)) team = "";
+
+            // Pass 15: Line is mandatory here too, same as single-item registration --
+            // checked before the pending-location hold path too, so a batch can never
+            // sit in the approval queue with no owner waiting to be discovered later.
+            line = (line ?? "").Trim();
+            if (line.Length == 0)
+            {
+                TempData["Error"] = "A Line is required for intake.";
+                return RedirectToAction("Intake");
+            }
+            if (!OrgStructure.IsValidLine(line))
+            {
+                TempData["Error"] = $"'{line}' isn't a recognized Line.";
+                return RedirectToAction("Intake");
+            }
 
             // ---- location not listed: HOLD the batch, don't lose the work ----
             if (!string.IsNullOrWhiteSpace(requestedLocation) && string.IsNullOrWhiteSpace(parentCode))
