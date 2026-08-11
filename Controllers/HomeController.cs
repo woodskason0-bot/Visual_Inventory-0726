@@ -111,6 +111,7 @@ namespace Visual_Inventory_System.Controllers
             // to be maintained by hand in this view.
             ViewBag.LocationParents = BuildLocationParents();
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
+            ViewBag.LocationHierarchyCodedJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationHierarchyCoded());
             // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
             // -- the one copy of the location vocabulary 7C missed, because it was
             // an image map rather than a dropdown.
@@ -565,6 +566,34 @@ namespace Visual_Inventory_System.Controllers
                         .OrderBy(l => l.Name).Select(l => l.Name).ToList();
                 }
                 tree[p.Name] = majors;
+            }
+            return tree;
+        }
+
+        // Same shape and source as BuildLocationTree() above, but CODE-keyed
+        // (Parent code -> Major code -> [Sub codes]) instead of name-keyed --
+        // what the Modify Stock / Location Transfer cascade actually needs,
+        // since ItemVariant.Parent/Major/Sub store codes, not names. Used to be
+        // built by walking allItems' already-stored codes instead of this
+        // table, which meant a Sub added in Settings couldn't be picked as a
+        // transfer destination until something was already stored there --
+        // Registration/Intake never had that problem because BuildLocationTree()
+        // already reads straight from this same table.
+        private Dictionary<string, Dictionary<string, List<string>>> BuildLocationHierarchyCoded()
+        {
+            var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
+            var tree = new Dictionary<string, Dictionary<string, List<string>>>();
+            foreach (var p in all.Where(l => l.Level == LocationLevel.Parent).OrderBy(l => l.Name))
+            {
+                string pCode = LocationCodec.Encode(p.Name);
+                var majors = new Dictionary<string, List<string>>();
+                foreach (var m in all.Where(l => l.Level == LocationLevel.Major && l.ParentId == p.Id).OrderBy(l => l.Name))
+                {
+                    majors[LocationCodec.Encode(m.Name)] = all
+                        .Where(l => l.Level == LocationLevel.Sub && l.ParentId == m.Id)
+                        .OrderBy(l => l.Name).Select(l => LocationCodec.Encode(l.Name)).ToList();
+                }
+                tree[pCode] = majors;
             }
             return tree;
         }

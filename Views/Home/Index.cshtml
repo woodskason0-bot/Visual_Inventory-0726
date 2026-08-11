@@ -135,19 +135,14 @@
     }
     var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
 
-    // Coded location hierarchy (Parent -> Major -> [Subs]) built from the REAL stored
-    // values, so the Location Transfer cascade always matches what's in the DB (codes,
-    // e.g. ETRD -> CNEA -> CNE6) and can seed an item's current location cleanly.
-    var locHierarchy = allItems
-        .Where(i => realSeg(i.Parent))
-        .GroupBy(i => i.Parent)
-        .ToDictionary(pg => pg.Key, pg => pg
-            .Where(i => realSeg(i.Major))
-            .GroupBy(i => i.Major)
-            .ToDictionary(mg => mg.Key, mg => mg
-                .Where(i => realSeg(i.Sub))
-                .Select(i => i.Sub).Distinct().OrderBy(s => s).ToList()));
-    var locHierarchyJson = System.Text.Json.JsonSerializer.Serialize(locHierarchy);
+    // Coded location hierarchy (Parent -> Major -> [Subs]), straight from the
+    // Locations table (same source as BuildLocationTree()/locMap below) so the
+    // Location Transfer cascade shows every real location immediately, not
+    // just ones that already have stock in them. Used to be built by walking
+    // allItems' already-stored codes instead -- which meant a Sub added in
+    // Settings couldn't be picked as a transfer destination until something
+    // was already stored there.
+    var locHierarchyJson = ViewBag.LocationHierarchyCodedJson as string ?? "{}";
     // Code -> friendly map so the client map drill can show names, not codes.
     var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(Visual_Inventory_System.Services.LocationCodec.DecodeMap);
 }
