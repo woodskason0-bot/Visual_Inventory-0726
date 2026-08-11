@@ -448,6 +448,35 @@ at creation, User.Team → many-to-many.**
   live.
 - New migration: `AddUserTeams` (34th). Applied cleanly against the real db, no
   `PendingModelChangesWarning`.
+- **Dropped the "Who can see this item. Required as of Pass 15." subtext** under New
+  Item Registry's Line field — the red asterisk already carries that meaning; the note
+  was redundant clutter a full pass after Line actually became mandatory.
+- **Location Transfer's cascade fixed to source from the `Locations` table, not
+  existing stock.** Modify Stock's location picker was built by walking `allItems`'
+  already-stored Parent/Major/Sub codes (`Views/Home/Index.cshtml`'s `locHierarchy`),
+  so a Sub added in Settings with zero stock in it could never be picked as a transfer
+  destination — New Item Registry/Intake never had this problem because their cascade
+  (`BuildLocationTree()`) already reads straight from `Locations`. New
+  `HomeController.BuildLocationHierarchyCoded()` mirrors `BuildLocationTree()` exactly,
+  just code-keyed instead of name-keyed (since `ItemVariant.Parent/Major/Sub` store
+  codes). This is the ninth instance of the "one more hardcoded/independently-sourced
+  copy of the location vocabulary" pattern this project keeps finding. Verified live:
+  added a real zero-stock test Sub, confirmed it appeared in the transfer cascade data
+  immediately, removed it.
+- **5 real compressors registered** (Samurai: YGH137W ×4, YGH137T ×2, YGH137R ×4;
+  Hitachi DC80PHDG-D1Y2 ×2 with no Team, Line = International), all at Plant Test
+  Cells/Lean-To. One registration (YGH182W) turned out to already exist as `CCR-0003`
+  — caught via a post-registration duplicate-ItemName check (the pre-check had only
+  covered Rheem PN, which is "N/A" on this whole family), fixed by moving the 2 units
+  onto `CCR-0003` as its second variant (same "stocked at two locations" shape 18 other
+  models already use) and deleting the erroneous duplicate registration, with a
+  corrected `TransactionLog` entry in its place.
+- **New Item Intake Excel template** built for other teams to submit stock lists —
+  dropdowns for Line/Team/Type/Location sourced live from the real Teams/OrgLines/
+  Locations tables at generation time, required fields (Item Name, Quantity, Line,
+  Rheem PN) visually marked. Standalone file, not wired into the app — intended to be
+  bulk-loaded by hand (same as the compressor registrations) or typed through Bulk
+  Intake once filled in.
 
 ---
 
@@ -544,12 +573,50 @@ test copy back off.
   true of Branch/Line rename.
 - Notification categories: table is multi-category, only `PickupRequested` exists.
 - No backup story — `inventory.db` is hand-copied.
+- **New Item Registry's duplicate check only covers Rheem PN, not Item Name** —
+  surfaced in Pass 16 when a Samurai compressor (YGH182W) got registered a second
+  time under a new ItemId, because the whole `YGH*` family carries PN `N/A` so the
+  PN check had nothing to catch. Caught and fixed by hand that time (merged into the
+  original `CCR-0003` as a second variant); worth a real fix — a name-collision
+  heads-up alongside the existing PN check — before the next family-wide-`N/A` model
+  gets registered twice for real.
 - **Motors: only the TC subset is tracked (deliberate).**
 - **Compressor/Motor filter: Team→Branch/Line is one-way on purpose.**
 - **`MyOrders.cshtml` was not extended for motor-unit selection.**
-- **Add User form in Settings doesn't support whole-Branch assignment at creation time**
-  — only the per-row picker on an already-existing user does. Easy to add if it turns
-  out to matter.
+
+- **Unit lifecycle / event history — scoped in Pass 16, not started.** The eventual
+  goal (Kason's framing): full lifecycle tracking on a serialized unit — pick a model
+  in the Compressor/TC-Motor modal, find a specific serial, see everything that's ever
+  happened to it. Immediate use is compressors and TC motors; **the real target is
+  broader** — VIS eventually tracking whole air conditioner units and other serialized
+  asset types the same way, not just compressor/motor components. Whatever gets built
+  should be designed as a general "unit lifecycle" concept from the start, not
+  compressor-specific, or it gets rebuilt when that broader scope lands.
+
+  **Current state:** neither `CompressorUnit` nor `MotorUnit` retains history — both
+  are current-state rows, not event logs. `ReturnLoan` explicitly nulls
+  `OrderId`/`OrderItemId`/`PickedUpAt`/`PickedUpBy` back to blank the moment a unit
+  returns to the shelf (`Services/OrderService.cs`), so a unit picked up twice has
+  already lost the trace of its first cycle in the unit table itself. The only place a
+  real trail exists is `TransactionLog`'s free-text `Details` (pickup/return/scrap/
+  "Unit Logged" all embed the serial when one's on record), but there's no structured
+  link back to a specific unit or serial — just a string that happens to be in there.
+
+  **Two sizes of fix, not yet decided between:**
+  1. *Small, no migration* — a serial search box on the modal that string-matches
+     against `TransactionLogs.Details` for that ItemId. Quick, but a best-effort
+     reconstruction off free text, not a real audit trail — fragile if a log
+     entry's phrasing ever drifts, and can't show more than "log lines that happen
+     to mention this string."
+  2. *Real feature, needs a migration* — turn unit tracking from a current-state row
+     into an append-only event log: a new table (e.g. `UnitEvents` — EventType,
+     Timestamp, By, OrderId, VariantId/location) written alongside the existing row
+     instead of overwriting it, on every write path that currently mutates a unit
+     (`PickUpOrder`, `LogCompressorUnits`, `ReturnLoan`, `ScrapLoan`). This is a
+     genuinely new mechanic — full "spiterate before building" scoping (every field,
+     every event type, how it covers both Compressor and Motor units, how a future
+     "full AC unit" asset type would plug into the same shape) needed before opening
+     a file, not decided here.
 
 ---
 
@@ -678,6 +745,17 @@ The actual server-side rejection of a blank-Line submission (Pass 15) end to end
   not because it was in scope) exercised live with a true no-op value (0 → 0, since all
   487 items already sit at threshold 0) — submitted without error, dashboard reloaded
   clean.
+- Location Transfer fix: added a real Sub location with zero stock (`ZZ_FixVerify_
+  DeleteMe`, under Connex Area) through the live Settings UI, confirmed it appeared in
+  the transfer cascade's actual JS data (`locHierarchyData['ETRD']['CNEA']`) immediately
+  alongside the pre-existing Connex Box 6, then deleted the test location and its
+  log entry. No new migration — pure data-source change, no schema touched.
+- 5 real compressor registrations (4 Samurai + 1 Hitachi) done through the live New
+  Item Registry form exactly as a real user would, not raw SQL — confirmed each one's
+  full row (Type/Brand/Team/Line/ProjectCode/variant/FdaString) after every submission.
+  The one duplicate (YGH182W landing on top of pre-existing `CCR-0003`) was caught by
+  a full-catalog `fetchall()` re-check afterward, not before — the pre-check only
+  covered Rheem PN, which didn't apply to this family (`N/A` on every one of them).
 
 **Worth knowing:** the `vis-dev` launch profile points at the same
 `C:\VIS_Inventory\inventory.db` as production — there's no separate test database, so
@@ -693,12 +771,20 @@ access-control gaps found along the way and added Branches/Lines as managed voca
 Pass 14 followed up with the RCR rename, a round of dashboard/access polish, and 9 more
 real users; Pass 15 made Line mandatory going forward and closed the log-visibility gap;
 Pass 16 fixed the Unclaimed filter, reconciled all non-compressor items onto their real
-Line, closed the whole-Branch-at-creation gap, and rebuilt Team as many-to-many.
+Line, closed the whole-Branch-at-creation gap, rebuilt Team as many-to-many, fixed the
+Location Transfer cascade's location-vocabulary source, and added 5 real compressors
+(the RheemPN duplicate-check gap this surfaced — model-name collisions on a family
+that's uniformly `N/A` for PN — is worth a real fix later, not just something I caught
+by hand this time).
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15 and 16
 were tested directly against that same live db through the running app (Pass 16 also
-made real data changes to it — the 242-item Line reconciliation — beyond the schema
-migration), so nothing further needs copying for either.
+made real data changes to it — the 242-item Line reconciliation, 5 new compressors —
+beyond the schema migration), so nothing further needs copying for either.
+The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
+already published and running; the Location Transfer fix and the subtext removal are
+committed and pushed but **not yet in a published release** — still need a fresh
+`dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
 loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
 sign in as a non-Admin user to confirm the branch-button graying looks right in
