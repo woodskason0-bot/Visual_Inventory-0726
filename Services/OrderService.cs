@@ -241,6 +241,17 @@ namespace Visual_Inventory_System.Services
                 var order = _db.Orders.Include(o => o.Items).FirstOrDefault(o => o.Id == orderId);
                 if (order == null) throw new InvalidOperationException("Order not found.");
                 if (order.Status == "Completed") throw new InvalidOperationException("Already completed.");
+                // Cancelled (or anything else non-Pending) is just as final as
+                // Completed here -- without this, a runner holding a stale queue
+                // page could pull real stock against an order an Engineer already
+                // cancelled, and the pickup would overwrite Cancelled with
+                // Completed as if the cancellation never happened. NB: an
+                // engineer-cancelled order's lines deliberately stay "Pending" --
+                // line-level "Cancelled" specifically means "came up short at
+                // pickup" (ReportShortPull's eligibility, OrderDetails' Short
+                // badge), so this order-level guard is the only thing standing
+                // between a cancelled order and a pull.
+                if (order.Status != "Pending") throw new InvalidOperationException($"Order #{orderId} was cancelled and can no longer be picked up.");
 
                 // Only lines still awaiting pickup -- a second attempt on the same
                 // order (or one that already had a short line pulled aside) must

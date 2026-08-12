@@ -527,6 +527,30 @@ hold-for-approval path fixed (it never actually worked).**
   drawn. Not required, matches the same optional-nudge shape as everything else this
   pass.
 
+**Pass 18 (2026-08-12) — cancelled-order pickup race closed.** Worktree session
+(`claude/sad-shtern-1b1145`), single-file fix in `Services/OrderService.cs`.
+
+- **`PickUpOrder` now rejects any non-Pending order, not just Completed.**
+  Previously the only guard was `Status == "Completed"`, and `CancelPersistedOrder`
+  leaves an order's lines at `"Pending"` — so a runner holding a stale Pickup Queue
+  page could still post `PickUpOrderConfirmed` after an Engineer cancelled: real
+  stock left the shelf for every still-Pending line, and the order's status was
+  overwritten `Cancelled` → `Completed`, erasing the cancellation. New guard:
+  `order.Status != "Pending"` throws "Order #N was cancelled and can no longer be
+  picked up," after the existing "Already completed." check.
+- **`CancelPersistedOrder` deliberately still leaves its lines `"Pending"`.**
+  Considered marking them `"Cancelled"` for consistency and rejected it: line-level
+  `"Cancelled"` specifically means "came up short at pickup" — it's
+  `ReportShortPull`'s eligibility guard (a stock-adjusting correction + reissue) and
+  `OrderDetails`' "Short — reissued separately" badge. An all-lines-short pickup
+  already legitimately produces `Order.Status = "Cancelled"` with `"Cancelled"`
+  lines that ReportShortPull then corrects; marking an engineer-cancelled order's
+  lines the same way would make the two cases indistinguishable and open cancelled
+  orders to short-pull corrections. Nothing else reads line status on a cancelled
+  order — the pending-allocation math (`GetAvailableQuantity`) and Delete Item's
+  outstanding-order gate both key off `Order.Status`, so a cancelled order already
+  releases its allocation regardless of line status.
+
 ---
 
 ## Traps — read before editing
@@ -822,6 +846,17 @@ for the first time rather than trusting it worked. Claude traced the exact misma
 fixed it, and cleaned up the corrupted test item afterward. The
 approve-a-new-Parent-location reminder was built in response but not yet exercised
 live — next real "not listed" approval through Settings should confirm it fires.
+
+**Pass 18:** verified live end-to-end by Claude against a scratchpad **copy** of the
+real db (not the live file — no test rows were written to `C:\VIS_Inventory\
+inventory.db` this session). The exact race was reproduced through the running app
+with two browser tabs: order placed (Order #8, 2 × CCR-0003), Pickup Queue opened in
+one tab, order cancelled from the Orders page in a second tab, then Pick Up clicked
+on the first tab's stale render. The post was rejected with the new toast ("Order #8
+was cancelled and can no longer be picked up."), and a direct db check confirmed the
+order stayed `Cancelled` with no `FulfilledBy`, both CCR-0003 variants untouched
+(6 + 2), zero pickup log rows, and zero `CompressorUnit` rows. Before the fix this
+same sequence would have pulled 2 real units and flipped the order to `Completed`.
 
 ---
 

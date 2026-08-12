@@ -1,8 +1,8 @@
 ---
 title: VIS — Consolidated Context Addendum
 description: Merged from four sources. Companion to VIS_Handoff_State.md, which stays authoritative for code and architecture.
-sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–17 working method
-merged: 2026-08-04, updated 2026-08-11
+sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–18 working method
+merged: 2026-08-04, updated 2026-08-12
 status: consolidated
 ---
 
@@ -34,6 +34,7 @@ sequence at all. Resolved:
 | Aug 7 | **Pass 15** | Mandatory Line on new registrations; View Logs/Activity Feed now Line-scoped like browsing already was. Code only, no data changes. See handoff. |
 | Aug 10 | **Pass 16** | Unclaimed compressor/motor filter fixed (AND → OR); 242 non-compressor items bulk-reconciled onto Commercial Packaged/Splits; Add User gained whole-Branch assignment at creation; `User.Team` rebuilt as many-to-many with a team-centric membership picker. See handoff. |
 | Aug 11 | **Pass 17** | Serial (compressors) / TC-count (motors) capture added to New Item Registry and Bulk Intake; a real pre-existing bug in Bulk Intake's "hold for unrecognized location" path (never actually worked -- `"__NEW__"` leaked into real data) found and fixed. See handoff. |
+| Aug 12 | **Pass 18** | Cancelled-order pickup race closed: `PickUpOrder` now rejects any non-Pending order, so a stale Pickup Queue page can no longer pull real stock against an order an Engineer already cancelled (which also silently flipped it back to Completed). One guard line; cancelled orders' lines deliberately stay `Pending`. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge
