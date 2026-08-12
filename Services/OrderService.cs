@@ -763,6 +763,7 @@ namespace Visual_Inventory_System.Services
                         IsRetired = false
                     };
                     inv.Variants.Add(dest);
+                    _db.SaveChanges();   // need dest.Id before unit rows can reference it -- ItemVariantId has no FK/navigation, so EF does no fixup and would store 0
                 }
 
                 // Pass 6B: act on the individual units the user ticked. Units are a
