@@ -318,6 +318,12 @@ namespace Visual_Inventory_System.Controllers
                     // Edge-triggered low-stock email: fires only on the crossing.
                     _emailService.CheckAndSendStockAlert(result.Value.item, result.Value.oldQty, result.Value.newQty);
                 }
+                else
+                {
+                    // null now only means the item lookup failed -- used to fall
+                    // through with no toast at all.
+                    TempData["Error"] = $"Transaction '{actionType}' was not applied — item '{itemId}' not found.";
+                }
             }
             catch (Exception ex)
             {
@@ -767,7 +773,16 @@ namespace Visual_Inventory_System.Controllers
             {
                 TempData["IntakePreview"] = System.Text.Json.JsonSerializer.Serialize(result);
                 if (!result.Ok && !preview)
-                    TempData["Error"] = "Nothing was imported — fix the problems listed and try again.";
+                {
+                    // CommitIntake saves per row, so rows without errors DID land --
+                    // only the erroring rows didn't. Resubmitting the whole batch is
+                    // safe: rows already in are skipped, not duplicated.
+                    int imported = result.NewItems.Count + result.AddedToExisting.Count;
+                    TempData["Error"] = imported == 0
+                        ? $"Nothing was imported — {result.Errors.Count} row(s) failed. Fix the problems listed and try again."
+                        : $"Partial import: {imported} row(s) went in ({result.UnitsIn} unit(s)), {result.Errors.Count} failed. "
+                          + "Fix the problems listed and resubmit — already-imported rows are skipped, not duplicated.";
+                }
                 return RedirectToAction("Intake");
             }
 

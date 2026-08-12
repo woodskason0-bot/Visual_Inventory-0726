@@ -1181,8 +1181,11 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Scrap")
             {
-                qtyChange = -quantity;
+                // A scrap past what's on the shelf clamps to what's actually there;
+                // the log (and ExportToCsv's ScrappedQty, which sums these) must
+                // record the clamped amount, not the request.
                 int actualScrap = System.Math.Min(quantity, pv!.Quantity);
+                qtyChange = -actualScrap;
                 // How many scrapped units are TC. Floor: if there aren't enough
                 // non-TC units to cover the scrap, the overflow MUST come out of
                 // TC (you can't leave more TC than total). Ceiling: the TC on hand.
@@ -1190,10 +1193,12 @@ namespace Visual_Inventory_System.Services
                 int forcedTc = System.Math.Max(0, actualScrap - nonTc);
                 int tcScrap = System.Math.Min(pv.ThermocoupledQty,
                                 System.Math.Max(forcedTc, System.Math.Min(thermocoupledQty, actualScrap)));
-                pv.Quantity = System.Math.Max(0, pv.Quantity - quantity);
+                pv.Quantity -= actualScrap;
                 pv.ThermocoupledQty = System.Math.Max(0, pv.ThermocoupledQty - tcScrap);
                 string tcNote = (isMotor && tcScrap > 0) ? $" ({tcScrap} thermocoupled)" : "";
-                details = $"Scrapped {quantity} unit(s){tcNote} (Variant {pv.VariantNumber}, {pv.FdaString}).";
+                string clampNote = actualScrap < quantity
+                    ? $" ({quantity} requested, only {actualScrap} were on hand)" : "";
+                details = $"Scrapped {actualScrap} unit(s){tcNote}{clampNote} (Variant {pv.VariantNumber}, {pv.FdaString}).";
             }
             else if (actionType == "Adjustment")
             {
@@ -1235,8 +1240,13 @@ namespace Visual_Inventory_System.Services
                     string ln = newLine.Trim();
                     // Blank is legal -- it means unassigned, which fails OPEN
                     // (visible to everyone), the Pass 3 rollout default.
+                    // An unrecognized Line used to return the success-shaped tuple
+                    // with nothing changed/logged/saved, so the controller toasted
+                    // "applied" over a no-op. Throw instead -- the controller's
+                    // catch turns this into a visible error toast.
                     if (ln.Length > 0 && !OrgStructure.IsValidLine(ln))
-                        return (item, oldQty, item.Quantity);
+                        throw new System.InvalidOperationException(
+                            $"'{ln}' isn't a recognized Line — the item was left unchanged.");
                     item.Line = ln;
                 }
                 if (newTeam != null)
