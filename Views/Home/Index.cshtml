@@ -1983,7 +1983,7 @@
                         </div>
                         <div class="col-md-2">
                             <label class="form-label small fw-bold text-success">Initial Qty</label>
-                            <input type="number" name="Quantity" class="form-control text-success fw-bold" value="1" min="0" required />
+                            <input type="number" name="Quantity" id="reg-qty" class="form-control text-success fw-bold" value="1" min="0" required />
                         </div>
                     </div>
 
@@ -2057,6 +2057,25 @@
                         <div class="col-12">
                             <label class="form-label small fw-bold text-light-gray">Description</label>
                             <input type="text" name="Description" class="form-control" />
+                        </div>
+                    </div>
+
+                    @* Serial (compressors) / thermocoupled count (motors) capture at
+                       registration -- neither is required, both are optional
+                       opportunities the form surfaces automatically based on Type.
+                       See InventoryService.CreateItem for what these feed into. *@
+                    <div id="reg-compressor-serials" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Serial # <span class="text-light-gray">(optional, one per unit)</span></label>
+                        <div id="reg-serial-rows"></div>
+                    </div>
+                    <div id="reg-motor-tc" class="mb-3" style="display:none;">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="reg-tc-check">
+                            <label class="form-check-label small fw-bold text-light-gray" for="reg-tc-check">Are any of these thermocoupled?</label>
+                        </div>
+                        <div id="reg-tc-qty-wrap" class="mt-2" style="display:none; max-width:160px;">
+                            <label class="form-label small fw-bold text-light-gray">How many?</label>
+                            <input type="number" name="thermocoupledQty" id="reg-tc-qty" class="form-control" min="0" value="0" disabled />
                         </div>
                     </div>
 
@@ -3802,6 +3821,93 @@
         bindCascadingLocation('reg-parent', 'reg-major', 'reg-sub', 'reg-rack', 'reg-row', 'reg-fda');
         bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', null, null, 'exp-fda');
     })();
+
+    // New Item Registry: serial capture for compressors, TC-count declaration
+    // for motors. Neither is required -- both are opportunities the form
+    // surfaces automatically based on Type, mirroring the roster's own Serial/
+    // Lab shape for compressors. See InventoryService.CreateItem.
+    (function bindRegUnitCapture() {
+        const typeEl = document.getElementById('reg-type');
+        const qtyEl = document.getElementById('reg-qty');
+        const compWrap = document.getElementById('reg-compressor-serials');
+        const serialRows = document.getElementById('reg-serial-rows');
+        const motorWrap = document.getElementById('reg-motor-tc');
+        const tcCheck = document.getElementById('reg-tc-check');
+        const tcQtyWrap = document.getElementById('reg-tc-qty-wrap');
+        const tcQty = document.getElementById('reg-tc-qty');
+        if (!typeEl || !qtyEl || !compWrap || !motorWrap) return;
+
+        // Keep in lockstep with InventoryService.IsCompressorType -- exact
+        // match only, same rule the server enforces.
+        function isCompressorTypeLocal(t) {
+            return !!t && String(t).trim().toLowerCase() === 'compressor';
+        }
+        function isMotorTypeLocal(t) {
+            return typeof isMotorType === 'function' ? isMotorType(t)
+                : (!!t && String(t).trim().toLowerCase().endsWith('motor'));
+        }
+
+        function rebuildSerialRows() {
+            const n = Math.max(0, parseInt(qtyEl.value, 10) || 0);
+            serialRows.innerHTML = '';
+            for (let i = 0; i < n; i++) {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.name = 'serial_' + i;
+                input.className = 'form-control form-control-sm mb-1';
+                input.placeholder = 'Unit ' + (i + 1) + ' serial (optional)';
+                serialRows.appendChild(input);
+            }
+        }
+
+        function sync() {
+            const t = typeEl.value;
+            if (isCompressorTypeLocal(t)) {
+                compWrap.style.display = '';
+                motorWrap.style.display = 'none';
+                rebuildSerialRows();
+            } else if (isMotorTypeLocal(t)) {
+                compWrap.style.display = 'none';
+                serialRows.innerHTML = '';
+                motorWrap.style.display = '';
+            } else {
+                compWrap.style.display = 'none';
+                motorWrap.style.display = 'none';
+                serialRows.innerHTML = '';
+            }
+        }
+
+        tcCheck.addEventListener('change', function () {
+            tcQtyWrap.style.display = tcCheck.checked ? '' : 'none';
+            tcQty.disabled = !tcCheck.checked;
+            if (!tcCheck.checked) tcQty.value = '0';
+        });
+        tcQty.addEventListener('input', function () {
+            const cap = Math.max(0, parseInt(qtyEl.value, 10) || 0);
+            if (parseInt(tcQty.value, 10) > cap) tcQty.value = String(cap);
+        });
+
+        typeEl.addEventListener('input', sync);
+        qtyEl.addEventListener('input', function () {
+            if (isCompressorTypeLocal(typeEl.value)) rebuildSerialRows();
+            if (tcCheck.checked) {
+                const cap = Math.max(0, parseInt(qtyEl.value, 10) || 0);
+                if (parseInt(tcQty.value, 10) > cap) tcQty.value = String(cap);
+            }
+        });
+
+        // Reset every time the modal opens, same as the ID preview does --
+        // otherwise a prior registration's leftover rows/checked state lingers.
+        const newItemModal = document.getElementById('newItemModal');
+        if (newItemModal) newItemModal.addEventListener('shown.bs.modal', function () {
+            tcCheck.checked = false;
+            tcQtyWrap.style.display = 'none';
+            tcQty.disabled = true;
+            tcQty.value = '0';
+            sync();
+        });
+    })();
+
     function updateLiveTrackingTime() {
         const now = new Date();
         let hours = now.getHours();

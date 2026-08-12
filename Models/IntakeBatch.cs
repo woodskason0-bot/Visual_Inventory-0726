@@ -67,8 +67,19 @@ namespace Visual_Inventory_System.Models
 
         public int Quantity { get; set; } = 1;
 
-        /// <summary>Compressors only. Becomes an On Hand CompressorUnit at commit.</summary>
-        [MaxLength(50)] public string? SerialNumber { get; set; }
+        /// <summary>
+        /// Compressors only. Comma-joined -- a row can name more than one unit's
+        /// serial now, not just the first. Each becomes an On Hand CompressorUnit
+        /// at commit. Parse with a plain Split(',') at the read site.
+        /// </summary>
+        [MaxLength(500)] public string? Serials { get; set; }
+
+        /// <summary>
+        /// Motors only. "How many of these are thermocoupled" -- a count, not
+        /// per-unit identity. Becomes ItemVariant.ThermocoupledQty plus that many
+        /// blank (no lab yet) On Hand MotorUnit rows at commit.
+        /// </summary>
+        public int ThermocoupledQty { get; set; }
 
         public IntakeBatch? Batch { get; set; }
     }

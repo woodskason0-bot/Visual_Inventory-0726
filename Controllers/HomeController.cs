@@ -329,7 +329,7 @@ namespace Visual_Inventory_System.Controllers
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
-        public IActionResult CreateItem(InventoryItem newItem)
+        public IActionResult CreateItem(InventoryItem newItem, int thermocoupledQty = 0)
         {
             try
             {
@@ -418,7 +418,16 @@ namespace Visual_Inventory_System.Controllers
                     new[] { pCode, mCode, sCode, rack, row }
                         .Where(s => !string.IsNullOrWhiteSpace(s)));
 
-                _inventoryService.CreateItem(newItem);
+                // Compressor serials, posted as serial_0, serial_1, ... (same flat
+                // prefix-scan convention LogCompressorUnits already uses). No-op
+                // for a non-compressor Type -- CreateItem gates on it internally.
+                var serials = Request.Form.Keys
+                    .Where(k => k.StartsWith("serial_"))
+                    .Select(k => Request.Form[k].ToString())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToList();
+
+                _inventoryService.CreateItem(newItem, serials, thermocoupledQty);
                 TempData["Success"] = $"Item '{newItem.ItemName}' registered as {newItem.ItemId}.";
             }
             catch (Exception ex) { TempData["Error"] = $"Failed to register item: {ex.Message}"; }
@@ -634,13 +643,43 @@ namespace Visual_Inventory_System.Controllers
             string line, string? team,
             string? parentCode, string? majorCode, string? subCode, string? rack, string? row,
             string? requestedLocation,
-            string[]? itemName, string[]? type, string[]? brand, string[]? rpn, int[]? qty, string[]? serial,
+            string[]? itemName, string[]? type, string[]? brand, string[]? rpn, int[]? qty,
+            string[]? serial,
             bool preview = false)
         {
+            // Extra serial boxes beyond each row's first (compressor rows with
+            // Qty > 1) and each row's TC count (motor rows) are both posted with
+            // a per-row index baked into the field name -- extraSerial_{row}_{slot}
+            // and thermocoupledQty_{row} -- since a row can carry more than one
+            // of the former and array-parameter binding can't key by row. Same
+            // flat prefix-scan convention LogCompressorUnits already uses.
+            var extraSerialsByRow = new Dictionary<int, List<string>>();
+            foreach (var key in Request.Form.Keys.Where(k => k.StartsWith("extraSerial_")))
+            {
+                var parts = key.Substring("extraSerial_".Length).Split('_');
+                if (parts.Length != 2 || !int.TryParse(parts[0], out int rowIdx)) continue;
+                var val = Request.Form[key].ToString();
+                if (string.IsNullOrWhiteSpace(val)) continue;
+                if (!extraSerialsByRow.TryGetValue(rowIdx, out var list)) extraSerialsByRow[rowIdx] = list = new List<string>();
+                list.Add(val.Trim());
+            }
+            var tcByRow = new Dictionary<int, int>();
+            foreach (var key in Request.Form.Keys.Where(k => k.StartsWith("thermocoupledQty_")))
+            {
+                if (!int.TryParse(key.Substring("thermocoupledQty_".Length), out int rowIdx)) continue;
+                if (int.TryParse(Request.Form[key], out int tcVal)) tcByRow[rowIdx] = tcVal;
+            }
+
             var lines = new List<InventoryService.IntakeLine>();
             for (int i = 0; itemName != null && i < itemName.Length; i++)
             {
                 if (string.IsNullOrWhiteSpace(itemName[i])) continue;
+
+                var rowSerials = new List<string>();
+                if (serial != null && i < serial.Length && !string.IsNullOrWhiteSpace(serial[i]))
+                    rowSerials.Add(serial[i].Trim());
+                if (extraSerialsByRow.TryGetValue(i, out var extras)) rowSerials.AddRange(extras);
+
                 lines.Add(new InventoryService.IntakeLine
                 {
                     ItemName = itemName[i],
@@ -648,7 +687,8 @@ namespace Visual_Inventory_System.Controllers
                     Brand = brand != null && i < brand.Length ? brand[i] : "",
                     RheemPartNumber = rpn != null && i < rpn.Length && !string.IsNullOrWhiteSpace(rpn[i]) ? rpn[i] : "N/A",
                     Quantity = qty != null && i < qty.Length ? qty[i] : 1,
-                    SerialNumber = serial != null && i < serial.Length ? serial[i] : null
+                    Serials = rowSerials,
+                    ThermocoupledQty = tcByRow.TryGetValue(i, out var tc) ? tc : 0
                 });
             }
             if (lines.Count == 0)
@@ -676,7 +716,14 @@ namespace Visual_Inventory_System.Controllers
             }
 
             // ---- location not listed: HOLD the batch, don't lose the work ----
-            if (!string.IsNullOrWhiteSpace(requestedLocation) && string.IsNullOrWhiteSpace(parentCode))
+            // The Parent <select>'s "Not listed..." option posts the literal
+            // sentinel "__NEW__", not blank -- checking only for blank meant
+            // this branch could never actually trigger through the real UI;
+            // "__NEW__" fell straight through to CommitIntake and got stored
+            // as if it were a real location code (see CCR-0255).
+            bool parentUnresolved = string.IsNullOrWhiteSpace(parentCode)
+                || string.Equals(parentCode, "__NEW__", StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(requestedLocation) && parentUnresolved)
             {
                 var batch = new IntakeBatch
                 {
@@ -691,11 +738,23 @@ namespace Visual_Inventory_System.Controllers
                     batch.Rows.Add(new IntakeRow
                     {
                         ItemName = l.ItemName, Type = l.Type, Brand = l.Brand,
-                        RheemPartNumber = l.RheemPartNumber, Quantity = l.Quantity, SerialNumber = l.SerialNumber
+                        RheemPartNumber = l.RheemPartNumber, Quantity = l.Quantity,
+                        Serials = l.Serials.Count > 0 ? string.Join(",", l.Serials) : null,
+                        ThermocoupledQty = l.ThermocoupledQty
                     });
                 _db.IntakeBatches.Add(batch);
                 _db.SaveChanges();
                 TempData["Success"] = $"Sent for approval — {lines.Count} row(s) held until '{requestedLocation.Trim()}' is sorted out. Nothing is lost.";
+                return RedirectToAction("Intake");
+            }
+
+            // "Not listed..." picked but nothing typed for it -- same sentinel
+            // problem as above, just with no requestedLocation to hold against.
+            // Refuse rather than let "__NEW__" reach CommitIntake as if it were
+            // a real location code.
+            if (parentUnresolved)
+            {
+                TempData["Error"] = "Pick a location, or choose \"Not listed...\" and say what you call it.";
                 return RedirectToAction("Intake");
             }
 

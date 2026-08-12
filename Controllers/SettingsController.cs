@@ -450,6 +450,12 @@ namespace Visual_Inventory_System.Controllers
 
             Location? target;
             string how;
+            // Only a newly-created Parent needs a nudge -- Majors/Subs are
+            // reached through their Parent's post-click menu, not their own
+            // map zone (see Locations -- Map), and mapping onto something that
+            // already exists means whatever zone it has (or doesn't) predates
+            // this approval and isn't this action's business to remind about.
+            bool remindDrawZone = false;
 
             if (mapToLocationId.HasValue && mapToLocationId.Value > 0)
             {
@@ -484,6 +490,7 @@ namespace Visual_Inventory_System.Controllers
                 _db.SaveChanges();
                 RefreshLocationCodec();
                 how = $"created {newLevel} '{newName}' for requested '{batch.RequestedLocation}'";
+                remindDrawZone = newLevel == LocationLevel.Parent;
             }
 
             // Walk up from the resolved location so the batch lands at the right
@@ -509,7 +516,11 @@ namespace Visual_Inventory_System.Controllers
             var lines = batch.Rows.Select(r => new InventoryService.IntakeLine
             {
                 ItemName = r.ItemName, Type = r.Type, Brand = r.Brand,
-                RheemPartNumber = r.RheemPartNumber, Quantity = r.Quantity, SerialNumber = r.SerialNumber
+                RheemPartNumber = r.RheemPartNumber, Quantity = r.Quantity,
+                Serials = string.IsNullOrWhiteSpace(r.Serials)
+                    ? new List<string>()
+                    : r.Serials.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList(),
+                ThermocoupledQty = r.ThermocoupledQty
             }).ToList();
 
             // The submitter's own Line still drives the ItemId prefix, not the
@@ -542,7 +553,10 @@ namespace Visual_Inventory_System.Controllers
                 User = _currentUser.Name
             });
             _db.SaveChanges();
-            TempData["Success"] = $"Batch #{batch.Id} imported — {how}. {result.UnitsIn} unit(s) in.";
+            TempData["Success"] = $"Batch #{batch.Id} imported — {how}. {result.UnitsIn} unit(s) in."
+                + (remindDrawZone
+                    ? $" Reminder: '{target.Name}' has no map zone yet — draw one below under Locations — Map so it's clickable on the facility map (not required, but it stays invisible there until you do)."
+                    : "");
             return RedirectToAction("Index");
         }
 

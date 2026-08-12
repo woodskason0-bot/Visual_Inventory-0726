@@ -92,14 +92,15 @@
             </div>
 
             <table class="table table-sm mt-2 mb-2">
-                <thead><tr><th>Model</th><th>Type</th><th>Brand</th><th>PN</th><th>Qty</th><th>Serial</th></tr></thead>
+                <thead><tr><th>Model</th><th>Type</th><th>Brand</th><th>PN</th><th>Qty</th><th>Serial(s)</th><th>TC</th></tr></thead>
                 <tbody>
                 @foreach (var r in b.Rows)
                 {
                     <tr>
                         <td class="fw-bold">@r.ItemName</td><td>@r.Type</td><td>@r.Brand</td>
                         <td>@r.RheemPartNumber</td><td>@r.Quantity</td>
-                        <td class="text-light-gray small">@(string.IsNullOrWhiteSpace(r.SerialNumber) ? "—" : r.SerialNumber)</td>
+                        <td class="text-light-gray small">@(string.IsNullOrWhiteSpace(r.Serials) ? "—" : r.Serials.Replace(",", ", "))</td>
+                        <td class="text-light-gray small">@(r.ThermocoupledQty > 0 ? r.ThermocoupledQty.ToString() : "—")</td>
                     </tr>
                 }
                 </tbody>

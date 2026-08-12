@@ -148,7 +148,12 @@ namespace Visual_Inventory_System.Services
             return $"{gi}{tFirst}{tLast}-";
         }
 
-        public void CreateItem(InventoryItem newItem)
+        // serials: compressors only, one CompressorUnit per non-blank entry.
+        // thermocoupledQty: motors only, clamped to Quantity -- sets
+        // ItemVariant.ThermocoupledQty and mints that many blank (no lab yet)
+        // MotorUnit rows, same shared entrance Intake uses (LogIntakeSerials/
+        // LogIntakeThermocoupled) so both forms feed the roster identically.
+        public void CreateItem(InventoryItem newItem, List<string>? serials = null, int thermocoupledQty = 0)
         {
             newItem.LastUpdated = System.DateTime.UtcNow;
             newItem.UpdatedBy = _currentUser.Name;
@@ -161,10 +166,12 @@ namespace Visual_Inventory_System.Services
             // setters) BEFORE adding the variant -- once a variant exists, the
             // getters read from it instead of the staging fields.
             int qty = newItem.Quantity;
+            int tcQty = System.Math.Max(0, System.Math.Min(thermocoupledQty, qty));
             var variantOne = new ItemVariant
             {
                 VariantNumber = 1,
                 Quantity = qty,
+                ThermocoupledQty = tcQty,
                 Parent = newItem.Parent,
                 Major = newItem.Major,
                 Sub = newItem.Sub,
@@ -190,7 +197,17 @@ namespace Visual_Inventory_System.Services
                 User = newItem.UpdatedBy
             });
 
-            _db.SaveChanges();
+            _db.SaveChanges();   // need variantOne.Id before unit rows can reference it
+
+            var cleanSerials = (serials ?? new List<string>())
+                .Select(s => (s ?? "").Trim()).Where(s => s.Length > 0)
+                .Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
+            if (cleanSerials.Count > 0)
+                LogIntakeSerials(newItem.ItemId, variantOne.Id, cleanSerials, newItem.UpdatedBy,
+                    System.DateTime.UtcNow, new IntakeResult());
+            if (tcQty > 0)
+                LogIntakeThermocoupled(newItem.ItemId, variantOne.Id, tcQty, newItem.UpdatedBy,
+                    System.DateTime.UtcNow, new IntakeResult());
         }
 
         // ============================
@@ -844,7 +861,13 @@ namespace Visual_Inventory_System.Services
             public string Brand { get; set; } = "";
             public string RheemPartNumber { get; set; } = "N/A";
             public int Quantity { get; set; } = 1;
-            public string? SerialNumber { get; set; }
+            // Compressors only. One row, up to Quantity slots -- unlike the old
+            // single-serial field, a row can now name every unit it's bringing in.
+            public List<string> Serials { get; set; } = new();
+            // Motors only. "How many of these are thermocoupled" -- a count, not
+            // per-unit identity (motors have no serial to key on). Clamped to
+            // Quantity server-side regardless of what the client posts.
+            public int ThermocoupledQty { get; set; }
         }
 
         public class IntakeResult
@@ -855,6 +878,7 @@ namespace Visual_Inventory_System.Services
             public List<string> Errors { get; set; } = new();
             public int UnitsIn { get; set; }
             public int SerialsLogged { get; set; }
+            public int TcUnitsLogged { get; set; }
             public bool Ok => Errors.Count == 0;
         }
 
@@ -894,7 +918,11 @@ namespace Visual_Inventory_System.Services
                 string pn = Seg(l.RheemPartNumber);
                 if (pn.Length == 0) pn = "N/A";
                 string type = Seg(l.Type);
-                string serial = Seg(l.SerialNumber);
+                var serials = (l.Serials ?? new List<string>())
+                    .Select(Seg).Where(s => s.Length > 0).Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
+                // Clamped here, not just client-side -- never trust the posted count
+                // past what's actually coming in.
+                int tcQty = System.Math.Max(0, System.Math.Min(l.ThermocoupledQty, qty));
 
                 // A real PN already owned by another family is the one thing that
                 // must block -- it means the same physical part is about to exist
@@ -928,12 +956,17 @@ namespace Visual_Inventory_System.Services
                     }
                     res.AddedToExisting.Add($"{existing.ItemId} {name} +{qty} at {fda}");
                     res.UnitsIn += qty;
-                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+                    if (preview)
+                    {
+                        res.SerialsLogged += serials.Count;
+                        res.TcUnitsLogged += tcQty;
+                        continue;
+                    }
 
                     var nv = new ItemVariant
                     {
                         VariantNumber = NextFreeVariantNumber(existing),
-                        Quantity = qty, ThermocoupledQty = 0,
+                        Quantity = qty, ThermocoupledQty = tcQty,
                         Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
                         FdaString = fda, RegisteredAt = now, IsRetired = false
                     };
@@ -948,14 +981,20 @@ namespace Visual_Inventory_System.Services
                         User = submittedBy
                     });
                     _db.SaveChanges();
-                    if (serial.Length > 0) LogIntakeSerial(existing.ItemId, nv.Id, serial, submittedBy, now, res);
+                    if (serials.Count > 0) LogIntakeSerials(existing.ItemId, nv.Id, serials, submittedBy, now, res);
+                    if (tcQty > 0) LogIntakeThermocoupled(existing.ItemId, nv.Id, tcQty, submittedBy, now, res);
                 }
                 else
                 {
                     string itemId = GenerateItemId(grp, type);
                     res.NewItems.Add($"{itemId} {name} x{qty}");
                     res.UnitsIn += qty;
-                    if (preview) { if (serial.Length > 0) res.SerialsLogged++; continue; }
+                    if (preview)
+                    {
+                        res.SerialsLogged += serials.Count;
+                        res.TcUnitsLogged += tcQty;
+                        continue;
+                    }
 
                     var item = new InventoryItem
                     {
@@ -967,7 +1006,7 @@ namespace Visual_Inventory_System.Services
                     };
                     item.Variants.Add(new ItemVariant
                     {
-                        VariantNumber = 1, Quantity = qty, ThermocoupledQty = 0,
+                        VariantNumber = 1, Quantity = qty, ThermocoupledQty = tcQty,
                         Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
                         FdaString = fda, RegisteredAt = now, IsRetired = false
                     });
@@ -981,33 +1020,65 @@ namespace Visual_Inventory_System.Services
                         User = submittedBy
                     });
                     _db.SaveChanges();
-                    if (serial.Length > 0)
-                        LogIntakeSerial(itemId, item.Variants.First().Id, serial, submittedBy, now, res);
+                    var newVariant = item.Variants.First();
+                    if (serials.Count > 0) LogIntakeSerials(itemId, newVariant.Id, serials, submittedBy, now, res);
+                    if (tcQty > 0) LogIntakeThermocoupled(itemId, newVariant.Id, tcQty, submittedBy, now, res);
                 }
             }
             return res;
         }
 
-        // A serial given at intake is stock ON THE SHELF, so the unit is recorded
-        // On Hand -- not Picked Up. Duplicate (item, serial) is skipped rather than
-        // thrown: the unique index would reject it anyway and a whole batch failing
-        // over one repeated serial helps nobody.
-        private void LogIntakeSerial(string itemId, int variantId, string serial, string by, System.DateTime now, IntakeResult res)
+        // Serials given at intake are stock ON THE SHELF, so each unit is recorded
+        // On Hand -- not Picked Up. A duplicate (item, serial) is skipped rather
+        // than thrown: the unique index would reject it anyway and a whole batch
+        // failing over one repeated serial helps nobody. Shared by both Intake
+        // branches AND New Item Registry (CreateItem) -- one entrance for "a
+        // serial was captured at intake/registration time" regardless of which
+        // form it came through.
+        private void LogIntakeSerials(string itemId, int variantId, List<string> serials, string by, System.DateTime now, IntakeResult res)
         {
             if (!IsCompressorType(_db.InventoryItems.AsNoTracking()
                     .FirstOrDefault(i => i.ItemId == itemId)?.Type)) return;
 
-            bool dupe = _db.CompressorUnits.Any(c => c.ItemId == itemId
-                && c.SerialNumber != null && c.SerialNumber.ToLower() == serial.ToLower());
-            if (dupe) { res.Skipped.Add($"{itemId}: serial '{serial}' already on record."); return; }
-
-            _db.CompressorUnits.Add(new CompressorUnit
+            foreach (var serial in serials)
             {
-                ItemId = itemId, ItemVariantId = variantId, SerialNumber = serial,
-                Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
-            });
+                bool dupe = _db.CompressorUnits.Any(c => c.ItemId == itemId
+                    && c.SerialNumber != null && c.SerialNumber.ToLower() == serial.ToLower());
+                if (dupe) { res.Skipped.Add($"{itemId}: serial '{serial}' already on record."); continue; }
+
+                _db.CompressorUnits.Add(new CompressorUnit
+                {
+                    ItemId = itemId, ItemVariantId = variantId, SerialNumber = serial,
+                    Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
+                });
+                res.SerialsLogged++;
+            }
             _db.SaveChanges();
-            res.SerialsLogged++;
+        }
+
+        // "How many of these are thermocoupled" at intake/registration time --
+        // motors have no serial to key on, so this is a COUNT, not per-unit
+        // identity (unlike compressors above). ItemVariant.ThermocoupledQty is
+        // already set by the caller before this runs; this only mints the
+        // matching blank (no lab yet) MotorUnit roster rows, same shape
+        // PickUpOrder already creates for untracked TC stock leaving the shelf --
+        // so the lab number has real rows to attach to later, via the existing
+        // Log Units entrance, rather than being asked for here.
+        private void LogIntakeThermocoupled(string itemId, int variantId, int count, string by, System.DateTime now, IntakeResult res)
+        {
+            if (!IsMotorType(_db.InventoryItems.AsNoTracking()
+                    .FirstOrDefault(i => i.ItemId == itemId)?.Type) || count <= 0) return;
+
+            for (int i = 0; i < count; i++)
+            {
+                _db.MotorUnits.Add(new MotorUnit
+                {
+                    ItemId = itemId, ItemVariantId = variantId, LabNumber = null,
+                    Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
+                });
+            }
+            _db.SaveChanges();
+            res.TcUnitsLogged += count;
         }
 
         // How many units of an order line are LOANABLE (library books, expected

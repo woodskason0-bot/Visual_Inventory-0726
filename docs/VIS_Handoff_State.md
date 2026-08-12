@@ -1,13 +1,15 @@
 # VIS (Visual Inventory System) — Handoff State
 
 **Supersedes the July 2026 handoff (stopped at Pass 4) and the Pass 9 handoff below it.**
-Current as of the 2026-08-10 Claude Code session (Passes 10–16). I went live against
+Current as of the 2026-08-11 Claude Code session (Passes 10–17). I went live against
 my real copied-in database during this window, then followed up the same stretch with
 data cleanup, an access-control pass, the Branches/Lines redesign, a round of UI/data
-polish, mandatory-Line registration + Line-scoped log visibility, and most recently an
-Unclaimed-filter fix, a bulk Line reconciliation, whole-Branch assignment at user
-creation, and User.Team's move to many-to-many — all below. The Pass 13/14 db (with
-all its data work) has now actually been copied to the host and is what I'm testing
+polish, mandatory-Line registration + Line-scoped log visibility, an Unclaimed-filter
+fix, a bulk Line reconciliation, whole-Branch assignment at user creation, User.Team's
+move to many-to-many, and most recently serial/TC capture at registration and intake
+plus a real fix to the Bulk Intake "hold for approval" path, which turned out to have
+never actually worked — all below. The Pass 13/14 db (with all its data work) has now
+actually been copied to the host and is what I'm testing
 against going forward.
 
 I'm the owner (Rheem). Built on ASP.NET Core MVC (`net10.0`), EF Core + SQLite, Razor,
@@ -36,7 +38,7 @@ only confirmed by static reading and a clean build, and the difference is spelle
 ## Deployed state
 
 ```
-Migrations       34   (latest: 20260810182116_AddUserTeams)
+Migrations       35   (latest: 20260812023317_AddIntakeRowMultiSerialAndTc)
 Items           487   (compressor ownership reconciled against real claim sheets;
                  leftover test-fixture rows removed; one exact duplicate merged;
                  63 Residential OD compressors re-minted with an RCR- prefix and
@@ -478,6 +480,53 @@ at creation, User.Team → many-to-many.**
   bulk-loaded by hand (same as the compressor registrations) or typed through Bulk
   Intake once filled in.
 
+**Pass 17 (2026-08-11) — serial/TC capture at registration and intake, Bulk Intake's
+hold-for-approval path fixed (it never actually worked).**
+
+- **Compressor serial capture and motor TC-count declaration now live on both New
+  Item Registry and Bulk Intake, not just the post-hoc Log Units entrance.** Type =
+  Compressor grows one optional serial box per unit of Quantity; Type ending in
+  "Motor" shows an optional "Are any of these thermocoupled?" checkbox that reveals a
+  capped "how many" count. Neither is required — both are opportunities the form
+  surfaces automatically, same "nudge, don't block" rule as everything else touching
+  Line/RPN this project has shipped. Backend-wise this is almost entirely reuse: the
+  serial path generalizes the `LogIntakeSerial` helper Bulk Intake already had (one
+  serial → a list, looped) into `LogIntakeSerials`, shared by `CreateItem` and both
+  `CommitIntake` branches; the TC path is new (`LogIntakeThermocoupled`) but mirrors
+  `PickUpOrder`'s existing pattern for untracked TC motor stock exactly — sets
+  `ItemVariant.ThermocoupledQty` and mints that many blank (no lab yet) `MotorUnit`
+  rows, so a later trip to the Motor modal's Log Units entrance has real rows to
+  attach a lab number to instead of nothing. **Lab # is deliberately not asked for at
+  either entrance, for either type** — that stays a "later in its life" question,
+  answered through the roster that already exists for it.
+- **`IntakeRow` (the held-batch table) widened to match** — `SerialNumber` (single
+  string) replaced with `Serials` (comma-joined, multiple) and a new
+  `ThermocoupledQty` column, so a batch that ends up held because its location isn't
+  recognized yet keeps everything typed, not just the first serial. New migration:
+  `AddIntakeRowMultiSerialAndTc` (35th). `IntakeRows` was empty at migration time, so
+  no data-preservation step was needed.
+- **Real bug found and fixed: Bulk Intake's "hold for an unrecognized location" path
+  had never actually worked.** The Parent `<select>`'s "Not listed..." option posts
+  the literal string `"__NEW__"`, not blank — but the server-side hold check only
+  tested for blank. Since the "what do you call this place?" box only becomes
+  typeable once `"__NEW__"` is selected in the first place, the real-world condition
+  (`requestedLocation` filled in, `parentCode` blank) could never actually occur
+  through the UI — every attempt fell straight through to a direct commit with the
+  literal string `"__NEW__"` stored as the item's location (`Parent`, `FdaString`,
+  visible as `"_NEW_"` in Modify Stock's Current Location and the variant's location
+  tag). Fixed by recognizing `"__NEW__"` as unresolved alongside blank, plus a new
+  guard that refuses outright (rather than falling through) if "Not listed..." was
+  picked but nothing was typed for it. Pre-existing, not introduced by this session —
+  first actually exercised, and caught, while testing the serial/TC feature above.
+  One real item (`CCR-0255`) got created with the corrupted location during testing;
+  deleted along with its log entry.
+- **Small nudge added to `ApproveIntake`:** approving a held batch by creating a
+  brand-new **Parent**-level location (not Major/Sub — those don't get their own map
+  zone, only Parents do) now appends a reminder to the success toast that the new
+  location has no map zone yet and stays unclickable on the facility map until one's
+  drawn. Not required, matches the same optional-nudge shape as everything else this
+  pass.
+
 ---
 
 ## Traps — read before editing
@@ -762,6 +811,18 @@ The actual server-side rejection of a blank-Line submission (Pass 15) end to end
 "verified live" in this doc means the real data, with test rows/log entries cleaned up
 immediately after.
 
+**Pass 17:** verified live by me (Kason) directly this time, not Claude — I tested
+against my own pre-release backup copy. Five scenarios run through the real Bulk
+Intake UI: mixed compressor/motor/plain rows in one batch, deleting a mid-batch row
+before submit, a compressor row with Qty > 1 and multiple serials, and TC-count
+capture on both Registry and Intake all passed. The fifth (an unrecognized location,
+meant to hold for approval) surfaced the `"__NEW__"` bug above — real data corruption
+(`CCR-0255`), not a UI glitch, caught because I actually pushed the held-batch path
+for the first time rather than trusting it worked. Claude traced the exact mismatch,
+fixed it, and cleaned up the corrupted test item afterward. The
+approve-a-new-Parent-location reminder was built in response but not yet exercised
+live — next real "not listed" approval through Settings should confirm it fires.
+
 ---
 
 ## Current state
@@ -775,19 +836,24 @@ Line, closed the whole-Branch-at-creation gap, rebuilt Team as many-to-many, fix
 Location Transfer cascade's location-vocabulary source, and added 5 real compressors
 (the RheemPN duplicate-check gap this surfaced — model-name collisions on a family
 that's uniformly `N/A` for PN — is worth a real fix later, not just something I caught
-by hand this time).
+by hand this time). Pass 17 added serial/TC capture at registration and intake, and
+fixed a real pre-existing bug in Bulk Intake's held-batch path that meant it had never
+actually worked through the live UI.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
-sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15 and 16
-were tested directly against that same live db through the running app (Pass 16 also
-made real data changes to it — the 242-item Line reconciliation, 5 new compressors —
-beyond the schema migration), so nothing further needs copying for either.
+sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
+were all tested directly against that same live db through the running app (Passes 16
+and 17 both made real data changes to it — the 242-item Line reconciliation, 5 new
+compressors, plus Pass 17's discovery-and-cleanup of the `"__NEW__"` corruption —
+beyond their schema migrations), so nothing further needs copying for any of them.
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
-already published and running; the Location Transfer fix and the subtext removal are
-committed and pushed but **not yet in a published release** — still need a fresh
-`dotnet publish` to reach the host.
+already published and running; everything from the Location Transfer fix through
+Pass 17 (up through the `AddIntakeRowMultiSerialAndTc` migration) is committed and
+pushed but **not yet in a published release** — still need a fresh `dotnet publish`
+to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
 loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
 sign in as a non-Admin user to confirm the branch-button graying looks right in
-practice, and actually submit a blank-Line registration to watch Pass 15's rejection
-fire for real. Everything else on the scaling list (SQL Server/Azure SQL move, SSO,
-backup story) is expansion work, not a blocker.
+practice, actually submit a blank-Line registration to watch Pass 15's rejection fire
+for real, and exercise the new map-zone-creation reminder live (built in Pass 17,
+not yet triggered through a real approval). Everything else on the scaling list
+(SQL Server/Azure SQL move, SSO, backup story) is expansion work, not a blocker.

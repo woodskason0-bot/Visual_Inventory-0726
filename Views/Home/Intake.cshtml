@@ -99,9 +99,9 @@
 
         <table class="table table-sm align-middle">
             <thead><tr>
-                <th style="width:26%;">Model</th><th style="width:14%;">Type</th><th style="width:16%;">Brand</th>
-                <th style="width:16%;">Rheem PN</th><th style="width:8%;">Qty</th>
-                <th style="width:16%;">Serial <span class="text-light-gray">(compressors)</span></th><th></th>
+                <th style="width:24%;">Model</th><th style="width:13%;">Type</th><th style="width:14%;">Brand</th>
+                <th style="width:14%;">Rheem PN</th><th style="width:7%;">Qty</th>
+                <th style="width:20%;">Serial(s) / TC <span class="text-light-gray">(by type, optional)</span></th><th></th>
             </tr></thead>
             <tbody id="intake-rows"></tbody>
         </table>
@@ -190,6 +190,68 @@
         knownItems.forEach(function (i) { byName[i.name.toLowerCase()] = i; });
 
         const body = document.getElementById('intake-rows');
+
+        // Keep in lockstep with InventoryService.IsCompressorType/IsMotorType --
+        // same exact-match / suffix rules the server enforces.
+        function isCompressorTypeLocal(t) { return !!t && String(t).trim().toLowerCase() === 'compressor'; }
+        function isMotorTypeLocal(t) { return !!t && String(t).trim().toLowerCase().endsWith('motor'); }
+
+        // Rebuild a row's Serial(s)/TC cell based on its current Type. Neither
+        // is required -- this only surfaces the opportunity. Every row keeps
+        // EXACTLY ONE name="serial" input at all times, compressor or not --
+        // the server binds serial[] positionally against itemName[], so a row
+        // that skips rendering one would desync every row after it. Non-
+        // compressor rows get it hidden and empty instead of removed. Extra
+        // slots and the TC box get a per-row index stamped on just before
+        // submit, once row order is final.
+        function syncUnitCapture(tr) {
+            const type = tr.querySelector('[name=type]').value;
+            const qty = Math.max(1, parseInt(tr.querySelector('[name=qty]').value, 10) || 1);
+            const cell = tr.querySelector('.unit-capture');
+            cell.innerHTML = '';
+
+            const first = document.createElement('input');
+            first.name = 'serial'; first.className = 'form-control form-control-sm mb-1';
+
+            if (isCompressorTypeLocal(type)) {
+                first.placeholder = 'Unit 1 serial';
+                cell.appendChild(first);
+                for (let i = 1; i < qty; i++) {
+                    const extra = document.createElement('input');
+                    extra.className = 'form-control form-control-sm mb-1 intake-extra-serial';
+                    extra.setAttribute('data-slot', String(i));
+                    extra.placeholder = 'Unit ' + (i + 1) + ' serial';
+                    cell.appendChild(extra);
+                }
+            } else if (isMotorTypeLocal(type)) {
+                const wrap = document.createElement('div');
+                wrap.className = 'form-check';
+                wrap.innerHTML = '<input class="form-check-input tc-check" type="checkbox" id="tc-' + Math.random().toString(36).slice(2) + '">' +
+                    '<label class="form-check-label small">Any TC?</label>';
+                const qtyIn = document.createElement('input');
+                qtyIn.type = 'number'; qtyIn.min = '0'; qtyIn.value = '0'; qtyIn.disabled = true;
+                qtyIn.className = 'form-control form-control-sm mt-1 intake-tc-qty';
+                qtyIn.style.display = 'none'; qtyIn.placeholder = 'How many?';
+                const check = wrap.querySelector('.tc-check');
+                check.addEventListener('change', function () {
+                    qtyIn.disabled = !check.checked;
+                    qtyIn.style.display = check.checked ? '' : 'none';
+                    if (!check.checked) qtyIn.value = '0';
+                });
+                qtyIn.addEventListener('input', function () {
+                    const cap = Math.max(0, parseInt(tr.querySelector('[name=qty]').value, 10) || 0);
+                    if (parseInt(qtyIn.value, 10) > cap) qtyIn.value = String(cap);
+                });
+                first.type = 'hidden';
+                cell.appendChild(first);
+                cell.appendChild(wrap);
+                cell.appendChild(qtyIn);
+            } else {
+                first.type = 'hidden';
+                cell.appendChild(first);
+            }
+        }
+
         function addRow() {
             const tr = document.createElement('tr');
             tr.innerHTML =
@@ -198,7 +260,7 @@
                 '<td><input name="brand" class="form-control form-control-sm" /></td>' +
                 '<td><input name="rpn" value="N/A" class="form-control form-control-sm" /></td>' +
                 '<td><input name="qty" type="number" min="1" value="1" class="form-control form-control-sm" /></td>' +
-                '<td><input name="serial" class="form-control form-control-sm" /></td>' +
+                '<td class="unit-capture"></td>' +
                 '<td><button type="button" class="btn btn-sm btn-outline-danger">&times;</button></td>';
             tr.querySelector('button').onclick = function () { tr.remove(); };
             const nameIn = tr.querySelector('[name=itemName]');
@@ -208,10 +270,29 @@
                 tr.querySelector('[name=type]').value  = hit.type  || '';
                 tr.querySelector('[name=brand]').value = hit.brand || '';
                 tr.querySelector('[name=rpn]').value   = hit.rpn   || 'N/A';
+                syncUnitCapture(tr);
             });
+            tr.querySelector('[name=type]').addEventListener('input', function () { syncUnitCapture(tr); });
+            tr.querySelector('[name=qty]').addEventListener('input', function () { syncUnitCapture(tr); });
             body.appendChild(tr);
+            syncUnitCapture(tr);
         }
         document.getElementById('add-row').addEventListener('click', addRow);
         for (let i = 0; i < 5; i++) addRow();
+
+        // Extra serial slots and TC-qty boxes have no name until now -- row
+        // order can change (rows added/removed) right up to submit, so the
+        // index has to be computed from final DOM order, not creation order,
+        // matching how itemName[]/type[]/etc. already bind by document order.
+        const form = document.querySelector('form[action*="SubmitIntake"]');
+        if (form) form.addEventListener('submit', function () {
+            Array.from(body.children).forEach(function (tr, rowIdx) {
+                tr.querySelectorAll('.intake-extra-serial').forEach(function (el) {
+                    el.name = 'extraSerial_' + rowIdx + '_' + el.getAttribute('data-slot');
+                });
+                const tcQtyEl = tr.querySelector('.intake-tc-qty');
+                if (tcQtyEl) tcQtyEl.name = 'thermocoupledQty_' + rowIdx;
+            });
+        });
     })();
 </script>
