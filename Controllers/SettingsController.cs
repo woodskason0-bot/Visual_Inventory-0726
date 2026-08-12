@@ -538,7 +538,15 @@ namespace Visual_Inventory_System.Controllers
 
             if (!result.Ok)
             {
-                TempData["Error"] = "Approved the location, but the rows didn't import: " + string.Join(" | ", result.Errors);
+                // CommitIntake saves per row, so the non-erroring rows DID import
+                // even though the batch stays Pending here. Approving again only
+                // re-imports the failed rows -- rows already in are skipped.
+                int imported = result.NewItems.Count + result.AddedToExisting.Count;
+                TempData["Error"] = (imported == 0
+                        ? $"Approved the location, but none of the rows imported ({result.Errors.Count} failed): "
+                        : $"Approved the location; {imported} row(s) imported ({result.UnitsIn} unit(s)) but {result.Errors.Count} failed: ")
+                    + string.Join(" | ", result.Errors)
+                    + " The batch stays pending — fix and approve again; already-imported rows are skipped, not duplicated.";
                 return RedirectToAction("Index");
             }
 
