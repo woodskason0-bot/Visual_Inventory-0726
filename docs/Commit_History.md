@@ -9,7 +9,80 @@ landed, when."
 
 ---
 
+## 2026-08-12
+
+### `c553384` — Pass 18: reject pickup of cancelled orders, closing the stale-queue race
+`PickUpOrder` only guarded against `Completed`, and `CancelPersistedOrder` leaves an
+order's lines `Pending` — so a runner holding a stale Pickup Queue page could still
+post the pickup after an Engineer cancelled: real stock left the shelf and the
+order's status was overwritten `Cancelled` → `Completed`. New guard rejects any
+non-Pending order with a distinct message. Cancelled orders' lines deliberately stay
+`Pending` (line-level `Cancelled` means "came up short at pickup" — it's
+`ReportShortPull`'s eligibility guard). Verified live by reproducing the exact
+two-tab race against a scratchpad copy of the real db.
+**Touched:** `Services/OrderService.cs`, both `docs/` files.
+
+---
+
+## 2026-08-11
+
+### `72d89fd` — Pass 17: serial/TC capture at registration and intake, fix Bulk Intake's broken hold-for-approval path
+Compressor serial capture and motor TC-count declaration added to both New Item
+Registry and Bulk Intake (optional, "nudge don't block"); `IntakeRow` widened to
+carry multiple serials + a TC count (new migration `AddIntakeRowMultiSerialAndTc`,
+35th). Also found and fixed a pre-existing bug: Bulk Intake's "hold for unrecognized
+location" path had never worked — the `"__NEW__"` sentinel from the Parent picker
+fell through the blank-only hold check and got stored as a real location.
+**Touched:** `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`,
+`Services/InventoryService.cs`, `Models/IntakeBatch.cs`, `Views/Home/Index.cshtml`,
+`Views/Home/Intake.cshtml`, `Views/Settings/Index.cshtml`, new migration pair +
+snapshot, both `docs/` files.
+
+### `f1be280` — docs: log Location Transfer fix, compressor registrations, and scope unit lifecycle tracking
+Docs-only follow-up to the two code commits below, plus scoping notes for the future
+unit-lifecycle feature (written up in the handoff backlog, deliberately not built).
+**Touched:** `docs/VIS_Handoff_State.md`.
+
+### `097ab24` — Fix Location Transfer cascade to source from the Locations table, not existing stock
+Modify Stock's transfer-destination picker was built by walking already-stored
+variant location codes, so a Sub added in Settings with zero stock in it could never
+be picked. New `BuildLocationHierarchyCoded()` mirrors `BuildLocationTree()`, just
+code-keyed — the ninth "independently-sourced copy of the location vocabulary" this
+project has found.
+**Touched:** `Controllers/HomeController.cs`, `Views/Home/Index.cshtml`.
+
+---
+
+## 2026-08-10
+
+### `5b07d55` — Drop the "Required as of Pass 15" subtext under New Item Registry's Line field
+Cosmetic — the red asterisk already carries the meaning.
+**Touched:** `Views/Home/Index.cshtml`.
+
+### `fb2a2a0` — Pass 16: Unclaimed filter fix, bulk Line reconciliation, whole-Branch at creation, User.Team as many-to-many
+Compressor/Motor "Unclaimed only" fixed from AND to OR (was showing 0 of 245 and
+hiding all 124 motors); Add User gained whole-Branch assignment at creation
+(mirroring `UpdateLine`'s `__WHOLE_BRANCH__` sentinel); `User.Team` rebuilt as
+many-to-many via a new `UserTeams` table with a team-centric membership picker in
+Settings, migration carrying forward existing values (new migration `AddUserTeams`,
+34th). (The 242-item bulk Line reconciliation from the same session was data-only,
+direct SQL against the live db — not in this diff.)
+**Touched:** `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`,
+`Data/AppDbContext.cs`, `Models/User.cs`, new `Models/UserTeam.cs`,
+`Services/InventoryService.cs`, `Views/Home/Index.cshtml`,
+`Views/Settings/Index.cshtml`, `.claude/launch.json`, new migration pair + snapshot,
+both `docs/` files.
+
+### `61eeb20` — add CLAUDE.md pointing future sessions at the docs/ handoff files
+**Touched:** new `CLAUDE.md`.
+
+---
+
 ## 2026-08-09
+
+### `c68a86d` — docs: add per-commit changelog (docs/Commit_History.md)
+This file's own first commit.
+**Touched:** new `docs/Commit_History.md`.
 
 ### `729c8dc` — Pass 15: mandatory Line at registration, Line-scoped log visibility
 Line is now required (not just validated-if-present) to register an item, both
