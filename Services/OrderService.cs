@@ -671,6 +671,15 @@ namespace Visual_Inventory_System.Services
                     Order = newOrder,
                     ItemId = it.ItemId,
                     Quantity = correctedQty,
+                    // Carry the original line's intent onto the reissue: the
+                    // engineer's requested pull location, and how many TC motors
+                    // they asked for -- clamped, since the corrected qty can be
+                    // lower than what was ordered and TC can never exceed the
+                    // line qty. Without these the re-pickup drew lowest-variant-
+                    // first with TC = 0, so no TC stock was drawn down, no
+                    // MotorUnit rows flipped, and no loan was created.
+                    RequestedVariantId = it.RequestedVariantId,
+                    ThermocoupledCount = System.Math.Min(it.ThermocoupledCount, correctedQty),
                     Status = "Pending"
                 };
                 _db.OrderItems.Add(newItem);
