@@ -656,9 +656,14 @@ namespace Visual_Inventory_System.Controllers
                     : (_currentUser.Branch ?? ""));
             // Existing names + types, for the model autocomplete and the type
             // datalist -- same idea as the Modify Stock picker: suggest, don't force.
+            // id/quantity feed the "already registered" split (Pass 21): a row
+            // whose typed name exactly matches one of these gets pulled out of
+            // Import into a batch Modify Stock instead. Quantity is a [NotMapped]
+            // pass-through over Variants -- Include() first so it materializes
+            // correctly, never inside the raw LINQ projection itself.
             ViewBag.KnownItemsJson = System.Text.Json.JsonSerializer.Serialize(
-                _db.InventoryItems.AsNoTracking()
-                   .Select(i => new { name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber })
+                _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToList()
+                   .Select(i => new { id = i.ItemId, name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber, quantity = i.Quantity })
                    .ToList());
             ViewBag.KnownTypes = _db.InventoryItems.AsNoTracking()
                 .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
@@ -816,6 +821,84 @@ namespace Visual_Inventory_System.Controllers
                 + $"{result.NewItems.Count} new item(s), {result.AddedToExisting.Count} added to existing"
                 + (result.SerialsLogged > 0 ? $", {result.SerialsLogged} serial(s) recorded" : "")
                 + (result.Skipped.Count > 0 ? $", {result.Skipped.Count} skipped" : "") + ".";
+            return RedirectToAction("Intake");
+        }
+
+        // Batch Modify Stock for rows Bulk Intake found already registered
+        // (Pass 21) -- the review modal's "Apply All". Rows are posted with a
+        // per-section index baked into the field name (stockItemId_N,
+        // stockAction_N, stockQty_N, stockTc_N, stockSerial_N_slot), same flat
+        // prefix-scan convention every other multi-row Intake/pickup post in
+        // this app already uses.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SubmitIntakeStockUpdates(
+            string? parentCode, string? majorCode, string? subCode, string? rack, string? row)
+        {
+            var serialsByIdx = new Dictionary<int, List<string>>();
+            foreach (var key in Request.Form.Keys.Where(k => k.StartsWith("stockSerial_")))
+            {
+                var parts = key.Substring("stockSerial_".Length).Split('_');
+                if (parts.Length != 2 || !int.TryParse(parts[0], out int idx)) continue;
+                var val = Request.Form[key].ToString();
+                if (string.IsNullOrWhiteSpace(val)) continue;
+                if (!serialsByIdx.TryGetValue(idx, out var list)) serialsByIdx[idx] = list = new List<string>();
+                list.Add(val.Trim());
+            }
+
+            var updates = new List<InventoryService.StockBatchUpdate>();
+            var indices = Request.Form.Keys.Where(k => k.StartsWith("stockItemId_"))
+                .Select(k => k.Substring("stockItemId_".Length)).Distinct();
+            foreach (var idxStr in indices)
+            {
+                if (!int.TryParse(idxStr, out int idx)) continue;
+                string itemId = Request.Form[$"stockItemId_{idx}"].ToString();
+                if (string.IsNullOrWhiteSpace(itemId)) continue;
+                string action = Request.Form[$"stockAction_{idx}"].ToString();
+                int.TryParse(Request.Form[$"stockQty_{idx}"], out int qty);
+                int.TryParse(Request.Form[$"stockTc_{idx}"], out int tc);
+                updates.Add(new InventoryService.StockBatchUpdate
+                {
+                    ItemId = itemId,
+                    ActionType = string.Equals(action, "Adjustment", StringComparison.OrdinalIgnoreCase) ? "Adjustment" : "Add",
+                    Quantity = qty,
+                    ThermocoupledQty = tc,
+                    Serials = serialsByIdx.TryGetValue(idx, out var s) ? s : new List<string>()
+                });
+            }
+
+            if (updates.Count == 0)
+            {
+                TempData["Error"] = "Nothing to apply.";
+                return RedirectToAction("Intake");
+            }
+
+            // Same sentinel guard as SubmitIntake -- these items already exist,
+            // so "Not listed..." makes no sense here at all: refuse rather than
+            // let "__NEW__" reach CommitIntakeStockBatch as if it were real.
+            bool parentUnresolved = string.IsNullOrWhiteSpace(parentCode)
+                || string.Equals(parentCode, "__NEW__", StringComparison.OrdinalIgnoreCase);
+            if (parentUnresolved)
+            {
+                TempData["Error"] = "Pick a real location before applying stock changes -- a \"Not listed\" location needs approval first.";
+                return RedirectToAction("Intake");
+            }
+
+            try
+            {
+                var results = _inventoryService.CommitIntakeStockBatch(
+                    updates, parentCode ?? "", majorCode ?? "", subCode ?? "", rack ?? "", row ?? "");
+
+                foreach (var r in results)
+                    _emailService.CheckAndSendStockAlert(r.Item, r.OldQty, r.NewQty);
+
+                TempData["Success"] = $"Updated stock for {results.Count} item(s).";
+            }
+            catch (Exception ex)
+            {
+                TempData["Error"] = $"Nothing was applied — {ex.Message}";
+            }
             return RedirectToAction("Intake");
         }
 

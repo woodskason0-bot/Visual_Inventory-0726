@@ -634,6 +634,71 @@ name-match jumps into Modify Stock with serial capture on Add.**
   live: 3 serial boxes rendered for qty 3 on a compressor Add; confirmed
   absent for Adjustment on the same item and for Add on a non-compressor item.
 
+**Pass 21 (2026-08-13) — Bulk Intake splits already-registered rows into a
+batch Modify Stock review instead of silently quick-adding them.**
+
+- **A row whose typed Model name exact-matches a known item no longer imports.**
+  Previously (since Pass 9) a name match just added a variant at the intake
+  location straight through `CommitIntake`, silent and immediate. Now that row
+  is pulled out of the grid entirely into a separate "Already registered" list
+  — excluded from Import — carrying over whatever was typed (qty, serials, TC)
+  so nothing has to be retyped. Two rows naming the same known item both land
+  there and **merge into one section** when the review modal opens (summed
+  qty, concatenated serials, summed TC), rather than racing each other as two
+  separate actions. The held-batch approval path (`SettingsController.
+  ApproveIntake`) is **unchanged** — it still runs `CommitIntake` exactly as
+  before; this split only applies to the interactive Intake page, since
+  there's a human present to review sections there and not in an approval
+  batch.
+- **"Modify stock counts / other" opens an Intake-local review modal**, one
+  section per merged ItemId: current on-hand count, an Action select
+  (**Add or Adjustment only** — this is a stock-count correction from the
+  intake flow, not an ownership move), Quantity, and — gated on the item's
+  Type exactly like Registry/Add already are — serial boxes for a compressor
+  or a TC count for a motor. Each section has its own acknowledge checkbox;
+  **Apply All stays disabled until every section is checked.** Posts to a new
+  `SubmitIntakeStockUpdates` action via a second `<form>` (a form can't nest
+  inside the Import form), field names stamped with a per-section index right
+  before submit — same flat `stockItemId_N`/`stockAction_N`/`stockQty_N`/
+  `stockTc_N`/`stockSerial_N_slot` convention every other multi-row post in
+  this app already uses, not typed ASP.NET model binding.
+- **`InventoryService.CommitIntakeStockBatch` applies the whole batch in ONE
+  transaction** — same pattern `OrderService.Submit()`/`PickUpOrder()` use for
+  their own multi-step commits: N calls to `ModifyStock` itself (reusing its
+  existing-stack-vs-NEW-location resolution, TC clamps, serial logging,
+  `TransactionLog` writes — nothing about Add/Adjustment was re-derived), with
+  `tx.Rollback()` on the first update that can't proceed so a batch never
+  applies half of itself. Two failure modes deliberately throw rather than
+  silently misapply: an item deleted between the modal opening and Apply All,
+  and — **the one genuinely new piece of logic** — an **Adjustment against a
+  location the item doesn't already have a variant at**. `ModifyStock`'s
+  Adjustment branch has no "NEW location" concept (only Add does); letting an
+  Adjustment through with `targetVariant = "NEW"` would silently fall back to
+  adjusting the item's PRIMARY variant instead of the location the human was
+  actually looking at, so `CommitIntakeStockBatch` refuses that combination
+  outright with a clear message instead. The controller fires the existing
+  edge-triggered low-stock email per item after a successful batch, same as
+  `ModifyStock`'s normal caller does.
+- **Verified live end-to-end against the real db, not just build+DOM.** Two
+  rows for the same real item (YRH104RA / CCR-0001, qty 3 + qty 2) confirmed
+  merging into one qty-5 section with 5 serial boxes; a mixed compressor+motor
+  batch confirmed Apply All requires **both** sections' checkboxes, not just
+  one, and confirmed the motor section rendered a TC input while the
+  compressor section rendered serial boxes. Then a real single-item Add (qty
+  1, real location `NWES` — New Test Cells) was applied for real: CCR-0001's
+  actual variant (id 328) went 10 → 11, logged as a normal `"Add"`
+  `TransactionLog` row identical in shape to a hand-entered one, confirming
+  the batch targets the item's real existing variant rather than minting a
+  spurious duplicate. Reversed immediately after with a real Scrap of 1
+  through Modify Stock (a separately, already-verified path) to restore
+  10 — net effect on real data is zero, audit trail of the verification
+  itself is left in place (this was a real item, not a synthetic test
+  fixture, so nothing needed scrubbing the way a fake test Location/user
+  would). Separately confirmed the Adjustment-without-existing-variant guard:
+  picked a location (`RLB` — RD Lab) CCR-0001 has no stock at, chose
+  Adjustment, submitted — refused with "no existing stock at this location to
+  adjust," CCR-0001's quantity confirmed unchanged at 10 afterward.
+
 ---
 
 ## Traps — read before editing
@@ -981,7 +1046,9 @@ cancelled order still be picked up; Pass 19, merged in the same batch, fixed
 the map's decorative red tracker dot, made zone row-counts hover-only, gave Bulk
 Intake the same Team/Branch/Line autofill Registration already had, and made New Item
 Registry's name-match dropdown jump straight into Modify Stock (with serial capture
-now on Add, for that path).
+now on Add, for that path). Pass 21 changed Bulk Intake's behavior for already-known
+models: instead of a silent quick-add, a name match now routes through a reviewed,
+acknowledged batch Modify Stock action, applied in one transaction.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
 were all tested directly against that same live db through the running app (Passes 16
@@ -990,18 +1057,23 @@ compressors, plus Pass 17's discovery-and-cleanup of the `"__NEW__"` corruption 
 beyond their schema migrations), so nothing further needs copying for any of them.
 Pass 18 was tested against a scratchpad copy, not the live file. Pass 20 was tested
 read-only against the live app/db (nothing was actually submitted, so nothing needed
-cleanup).
+cleanup). Pass 21 made one small real write against the live db (a +1/-1 round trip
+on a real compressor, CCR-0001, to verify the new batch write path) and left it net
+zero, audit trail intact.
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
 already published and running; everything from the Location Transfer fix through
-Pass 20 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
+Pass 21 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
 committed and pushed but **not yet in a published release** — still need a fresh
 `dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
 loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
 sign in as a non-Admin user to confirm the branch-button graying looks right in
 practice, actually submit a blank-Line registration to watch Pass 15's rejection fire
-for real, exercise the new map-zone-creation reminder live (built in Pass 17,
-not yet triggered through a real approval), and actually submit a compressor Add with
-real serials through the new Pass 20 entrance to confirm the write path end to end.
+for real, exercise the new map-zone-creation reminder live (built in Pass 17, not yet
+triggered through a real approval), and submit a real serial through either Pass 20's
+Modify Stock Add entrance or Pass 21's batch review (both share `LogIntakeSerials`,
+verified live in Pass 17 through Registry/Intake, but not separately through either
+of these two newer entrances — the Pass 21 live test above used a bare quantity,
+deliberately, to keep the round-trip trivial to reverse).
 Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
 expansion work, not a blocker.

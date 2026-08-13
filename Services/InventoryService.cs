@@ -1081,6 +1081,86 @@ namespace Visual_Inventory_System.Services
             res.TcUnitsLogged += count;
         }
 
+        // =====================================================================
+        // INTAKE STOCK BATCH (Pass 21) -- for models Bulk Intake found already
+        // registered. A row whose typed name exact-matches an existing item is
+        // pulled out of Import entirely and routed here instead, reviewed and
+        // acknowledged section-by-section on the Intake page before anything
+        // is applied. Add/Adjustment only -- this is a stock-count correction,
+        // not an ownership move.
+        // =====================================================================
+
+        public class StockBatchUpdate
+        {
+            public string ItemId { get; set; } = "";
+            public string ActionType { get; set; } = "Add";   // "Add" | "Adjustment"
+            public int Quantity { get; set; }
+            public int ThermocoupledQty { get; set; }
+            public List<string> Serials { get; set; } = new();
+        }
+
+        /// <summary>
+        /// Applies every update in ONE transaction -- all or nothing, same
+        /// pattern OrderService.Submit()/PickUpOrder() use for their own
+        /// multi-step commits. Each update reuses ModifyStock itself (Add's
+        /// existing-stack-vs-NEW-location resolution, TC clamps, serial
+        /// logging, TransactionLog) rather than re-deriving any of that here --
+        /// the only new logic is resolving which variant this batch's ONE
+        /// shared intake location actually is for each item, and refusing an
+        /// Adjustment against a location the item doesn't already occupy
+        /// (Adjustment has no "NEW location" concept in ModifyStock; letting
+        /// one through would silently adjust the item's PRIMARY variant
+        /// instead of the location the human was actually looking at).
+        /// Throws (and rolls back everything already applied this call) on
+        /// the first update that can't proceed -- an item deleted between the
+        /// modal opening and Apply All, a bad quantity, or that Adjustment
+        /// case -- so a batch never applies half of itself silently.
+        /// </summary>
+        public List<(InventoryItem Item, int OldQty, int NewQty)> CommitIntakeStockBatch(
+            List<StockBatchUpdate> updates, string parentCode, string majorCode, string subCode, string rack, string row)
+        {
+            string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
+            string fda = string.Join(".", new[] { Seg(parentCode), Seg(majorCode), Seg(subCode), Seg(rack), Seg(row) }
+                                          .Where(x => x.Length > 0));
+
+            var results = new List<(InventoryItem Item, int OldQty, int NewQty)>();
+
+            using var tx = _db.Database.BeginTransaction();
+            try
+            {
+                foreach (var u in updates)
+                {
+                    var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == u.ItemId);
+                    if (item == null)
+                        throw new InvalidOperationException($"{u.ItemId} no longer exists -- nothing in this batch was applied.");
+
+                    if (u.ActionType == "Add" && u.Quantity <= 0)
+                        throw new InvalidOperationException($"{item.ItemName} ({u.ItemId}): quantity must be positive to add stock.");
+
+                    var match = item.ActiveVariants.FirstOrDefault(v => v.FdaString == fda);
+
+                    if (u.ActionType == "Adjustment" && match == null)
+                        throw new InvalidOperationException(
+                            $"{item.ItemName} ({u.ItemId}): no existing stock at this location to adjust -- " +
+                            "use Add instead, or pick the location where it's already stocked.");
+
+                    string targetVariant = match != null ? match.Id.ToString() : "NEW";
+
+                    var result = ModifyStock(u.ItemId, u.ActionType, u.Quantity, null, null,
+                        newParent: parentCode, newMajor: majorCode, newSub: subCode, newRack: rack, newRow: row,
+                        targetVariant: targetVariant, thermocoupledQty: u.ThermocoupledQty, serials: u.Serials);
+                    if (result == null)
+                        throw new InvalidOperationException($"{u.ItemId} no longer exists -- nothing in this batch was applied.");
+
+                    results.Add((result.Value.item, result.Value.oldQty, result.Value.newQty));
+                }
+                tx.Commit();
+            }
+            catch { tx.Rollback(); throw; }
+
+            return results;
+        }
+
         // How many units of an order line are LOANABLE (library books, expected
         // back): a Control loans its whole quantity; a Motor loans only its TC
         // subset; everything else loans nothing. Drives LoanOutstanding at pickup.
