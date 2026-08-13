@@ -11,6 +11,28 @@ landed, when."
 
 ## 2026-08-13
 
+### `b2d87f1` — Pass 21: Bulk Intake routes known-item matches to a batch Modify Stock review
+A row whose typed Model name exact-matches a known item no longer quick-adds through
+`CommitIntake` -- it moves to a separate "Already registered" list, excluded from
+Import, merged by item id when the new review modal opens (two rows for the same
+item combine into one section instead of racing). Each section is Add/Adjustment
+only, needs its own acknowledge, and Apply All stays disabled until every section is
+checked. New `InventoryService.CommitIntakeStockBatch` applies the whole batch in one
+transaction by calling `ModifyStock` itself per item -- the only new rule is refusing
+an Adjustment against a location the item has no existing variant at (Adjustment has
+no "NEW location" concept, unlike Add). The held-batch Settings approval path is
+unchanged. Verified live: merge-by-id, the multi-section acknowledge gate, and a real
++1/-1 round trip on CCR-0001 (New Test Cells) confirming the batch lands on the
+item's actual existing variant; separately confirmed the Adjustment guard refuses
+cleanly with no state change.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/Intake.cshtml`, both `docs/` files.
+
+### `03b032c` — docs: backfill Commit_History.md through Pass 20
+Docs-only. Wrote up the four worktree bug-fix merges (Pass 18/19) and Pass 20, which
+hadn't been logged here yet.
+**Touched:** `docs/Commit_History.md`.
+
 ### `f67eb5c` — Pass 20: map cleanup, Intake Team autofill, Registry-to-Modify-Stock jump with serial capture
 Removed the facility map's decorative red tracker dot (element, CSS, waypoint path,
 animation loop) and made zone row-count labels hover-only. Bulk Intake now preseeds
