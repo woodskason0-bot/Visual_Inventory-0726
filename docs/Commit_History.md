@@ -11,6 +11,21 @@ landed, when."
 
 ## 2026-08-13
 
+### `08cd9bc` — Pass 23: Delete Stack (variant-level hard delete), Rack/Row cascading suggestions
+New `InventoryService.DeleteVariant` closes the gap Delete Item leaves -- a single
+empty variant on an item that still carries stock elsewhere (Delete Item needs the
+item's TOTAL to be 0). Same guard shape as Delete Item, gated Admin, a small
+trash-icon button next to Modify Stock's variant selector. Rack/Row fields on
+Registry/Intake/Export Wizard (new there)/Modify Stock now cascade-suggest from real
+stock data under the picked Parent/Major/Sub via new `BuildRackRowMap()`, still fully
+free text -- deliberately not a managed vocabulary table. `bindValueAutocomplete`
+gained support for a getter function, not just a fixed array, since Rack/Row's valid
+suggestions change live. Verified live: Delete Stack used for real on the actual
+stuck item (CCR-0013) that surfaced the gap; Rack/Row cascading confirmed on all
+four surfaces.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/Index.cshtml`, `Views/Home/Intake.cshtml`, both `docs/` files.
+
 ### `6318433` — Pass 22: batch review as live inline sections, dropdown styling parity
 Feedback on Pass 21's modal ("felt like a dangling process," had to know the quantity
 before typing the name): rebuilt as live inline sections directly on the Intake page
