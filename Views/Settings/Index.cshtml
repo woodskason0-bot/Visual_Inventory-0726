@@ -91,7 +91,8 @@
                 <div class="text-warning small">asked for &ldquo;@b.RequestedLocation&rdquo;</div>
             </div>
 
-            <table class="table table-sm mt-2 mb-2">
+            <div class="table-responsive">
+            <table class="table table-sm mt-2 mb-2" style="min-width:600px;">
                 <thead><tr><th>Model</th><th>Type</th><th>Brand</th><th>PN</th><th>Qty</th><th>Serial(s)</th><th>TC</th></tr></thead>
                 <tbody>
                 @foreach (var r in b.Rows)
@@ -105,6 +106,7 @@
                 }
                 </tbody>
             </table>
+            </div>
 
             <form asp-controller="Settings" asp-action="ApproveIntake" method="post" class="d-flex gap-2 flex-wrap align-items-end">
                 @Html.AntiForgeryToken()
@@ -193,7 +195,8 @@
         <button type="button" class="btn btn-sm btn-outline-secondary" id="zone-clear">Clear</button>
     </form>
 
-    <table class="table table-sm align-middle mt-3">
+    <div class="table-responsive">
+    <table class="table table-sm align-middle mt-3" style="min-width:560px;">
         <thead><tr><th>Parent</th><th>Label</th><th>Position</th><th>Size</th><th class="text-end"></th></tr></thead>
         <tbody>
         @foreach (var z in zones)
@@ -214,6 +217,7 @@
         }
         </tbody>
     </table>
+    </div>
     <div class="text-light-gray small">
         <i class="bi bi-info-circle me-1"></i>Removing a zone only takes it off the map.
         The location, its stock and every picker are untouched.
@@ -238,7 +242,8 @@
             l.ParentId.HasValue && byId.ContainsKey(l.ParentId.Value) ? byId[l.ParentId.Value].Name : "—";
     }
 
-    <table class="table table-sm align-middle">
+    <div class="table-responsive">
+    <table class="table table-sm align-middle" style="min-width:560px;">
         <thead><tr><th>Level</th><th>Name</th><th>Code</th><th>Within</th><th class="text-end">Status</th></tr></thead>
         <tbody>
         @foreach (var lvl in Visual_Inventory_System.Models.LocationLevel.All)
@@ -264,6 +269,7 @@
         }
         </tbody>
     </table>
+    </div>
 
     <h6 class="text-white fw-bold mb-2 mt-4">Add Location</h6>
     <form asp-controller="Settings" asp-action="AddLocation" method="post" class="d-flex gap-2 flex-wrap align-items-center">
@@ -296,7 +302,8 @@
         its Line, not its team. Blank / <code>N/A</code> is always allowed.
     </p>
 
-    <table class="table table-sm align-middle">
+    <div class="table-responsive">
+    <table class="table table-sm align-middle" style="min-width:600px;">
         <thead>
             <tr><th>Team</th><th>Project Code</th><th>Home Branch / Line</th><th>In Use</th><th class="text-end">Status</th></tr>
         </thead>
@@ -343,6 +350,7 @@
         }
         </tbody>
     </table>
+    </div>
 
     <h6 class="text-white fw-bold mb-2 mt-4">Add Team</h6>
     <form asp-controller="Settings" asp-action="AddTeam" method="post" class="d-flex gap-2 flex-wrap">
@@ -416,7 +424,8 @@
     </p>
 
     <h6 class="text-white fw-bold mb-2">Branches</h6>
-    <table class="table table-sm align-middle">
+    <div class="table-responsive">
+    <table class="table table-sm align-middle" style="min-width:480px;">
         <thead>
             <tr><th>Branch</th><th>Lines</th><th class="text-end">Status</th></tr>
         </thead>
@@ -441,6 +450,7 @@
         }
         </tbody>
     </table>
+    </div>
     <form asp-controller="Settings" asp-action="AddBranch" method="post" class="d-flex gap-2 flex-wrap mb-4">
         @Html.AntiForgeryToken()
         <input type="text" name="name" placeholder="Branch name" required
@@ -449,7 +459,8 @@
     </form>
 
     <h6 class="text-white fw-bold mb-2">Lines</h6>
-    <table class="table table-sm align-middle">
+    <div class="table-responsive">
+    <table class="table table-sm align-middle" style="min-width:560px;">
         <thead>
             <tr><th>Line</th><th>Branch</th><th>In Use</th><th class="text-end">Status</th></tr>
         </thead>
@@ -474,6 +485,7 @@
         }
         </tbody>
     </table>
+    </div>
     <h6 class="text-white fw-bold mb-2 mt-4">Add Line</h6>
     <form asp-controller="Settings" asp-action="AddLine" method="post" class="d-flex gap-2 flex-wrap">
         @Html.AntiForgeryToken()
@@ -500,7 +512,8 @@
 
     <div class="settings-card p-4 mb-4">
         <h5 class="text-white fw-bold mb-3">Users &amp; Access</h5>
-        <table class="table table-hover align-middle">
+        <div class="table-responsive">
+        <table class="table table-hover align-middle" style="min-width:900px;">
             <thead>
                 <tr>
                     <th>Name</th>
@@ -584,6 +597,7 @@
                 }
             </tbody>
         </table>
+        </div>
 
         <h6 class="text-white fw-bold mb-2 mt-4">Add New User</h6>
         <form id="addUserForm" asp-controller="Settings" asp-action="AddUser" method="post" class="d-flex gap-2 flex-wrap">

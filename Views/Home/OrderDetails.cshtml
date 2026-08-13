@@ -38,7 +38,8 @@
     <p>Received: @(Model.FulfilledAt.HasValue ? Model.FulfilledAt.Value.ToLocalTime().ToString() : "—") @(string.IsNullOrEmpty(Model.FulfilledBy) ? "" : $"by {Model.FulfilledBy}")</p>
 }
 
-<table class="table table-sm">
+<div class="table-responsive">
+<table class="table table-sm" style="min-width:640px;">
     <thead>
         <tr>
             <th>Item ID</th>
@@ -76,5 +77,6 @@
     }
     </tbody>
 </table>
+</div>
 
 <p><a asp-action="Orders" class="btn btn-sm btn-secondary">Back to Orders</a></p>
