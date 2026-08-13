@@ -820,6 +820,74 @@ cascading suggestions everywhere they appear.**
   preview correctly; typing an unlisted value was accepted with the list
   correctly staying closed.
 
+**Pass 24 (2026-08-13) — the app's first responsive pass. Zero `@@media`
+queries existed anywhere before this, on any page.**
+
+- **The dashboard is a fixed 6-column CSS grid** (`.overlay-grid` —
+  `grid-template-columns: 380px repeat(4, 1fr) 380px`, `position: fixed`)
+  with every widget placed via `!important` `r*`/`c*`/`row-span-*`/
+  `col-span-*` utility classes. Below roughly 1400px combined width it
+  overflowed horizontally with **no way to scroll to reach the clipped
+  columns** — a phone or a real tablet couldn't use the dashboard at all
+  before this pass, not just uncomfortably. Fixed with three breakpoints,
+  all pure CSS, **zero DOM/markup changes**: ≤1400px narrows the two
+  sidebar tracks to 300px; ≤1100px switches `.overlay-grid` to
+  `position: static; display: flex; flex-direction: column` and
+  neutralizes every placement utility (same selectors, `!important`,
+  positioned later in the cascade so they win), so every widget just
+  stacks in **document order** — Advanced Filters, Omni Search, Export
+  Wizard, Modify Stock button, Stock Alerts, Pickup box, the left button
+  column, the map, then the right Activity Feed panel; ≤900px collapses
+  `.holo-viewer` (search results/cart) from its 2-column grid to a single
+  stacked column.
+- **Two real overflow bugs found only by live-testing at actual mobile
+  width** (DOM/CSS review alone didn't catch either):
+  - `.map-stats-bar` sits inside `.map-container`, which has
+    `overflow: visible` **on purpose** (so the zone click-menus can pop out
+    past the map's edge). Its 4-across stat row (Total Items / Active
+    Locations / Low Stock / Out of Stock) couldn't shrink below its
+    natural content width without `flex-wrap`, so on a narrow map it
+    silently bled past the container — unclipped, since nothing upstream
+    of it clips overflow either — and widened the **entire page's layout
+    viewport**, not just looking cramped. Fixed with `flex-wrap: wrap` on
+    the bar (zero visual effect wherever 4 already fit on one line).
+  - The top nav's `navbar-expand-sm`/`d-sm-inline-flex` (576px+) meant a
+    real tablet (768px) rendered the full inline nav — links + notification
+    bell + user badge need ~620px alone — and overflowed. Bumped both to
+    `-lg`/`d-lg-inline-flex` (992px) so only genuinely desktop-width
+    screens get the inline layout; phones and tablets both get the
+    hamburger collapse.
+- **Every `<table>` in the app wrapped in `table-responsive`** (Bootstrap's
+  own horizontal-scroll container) where it wasn't already, with a small
+  `min-width` on the table itself so columns don't crush to unreadable
+  widths — the wrapper is what makes that safe, since overflow now scrolls
+  inside its own box instead of forcing the page wider. Covers: Intake's
+  row-entry grid, AllItems, both Logs tabs, OrderDetails, Orders, both
+  PickupQueue tables, all 7 Settings tables (map zones, locations, teams,
+  branches, lines, users, the held-intake-batch preview), and Index.cshtml's
+  6 modal tables (Stock Alerts/Out-of-Stock previews, both compressor Log
+  Units tables, motor Log Units, PN backlog).
+- **Verified live at three real viewport sizes** (375px mobile / 768px
+  tablet / 1280px desktop, not just DOM/CSS review) across the dashboard,
+  Intake, AllItems, Logs, and two dashboard modals: zero horizontal
+  overflow (`document.documentElement.scrollWidth === clientWidth`) at
+  mobile and tablet on every page checked; desktop confirmed
+  byte-for-byte unregressed (same fixed grid, same `position:fixed`, same
+  expanded nav) — this pass changes nothing for the primary desktop
+  workflow, only adds a working fallback below it. Zero console errors
+  throughout.
+- **Not done this pass, worth knowing:** `Views/Settings/Index.cshtml`'s
+  table wraps rode on the same proven mechanical pattern but were **not**
+  separately live-verified — this session had no superuser passcode to
+  unlock Settings against the real app. `MyOrders.cshtml`'s `.mo-table`
+  is already `width:100%` (no overflow-forcing risk, unlike the others
+  found), but wasn't given a content-density pass — many columns on a
+  narrow phone will be readable but tight, not broken. Individual modal
+  dialog widths weren't audited for hardcoded pixel values beyond
+  Bootstrap's own size classes (`modal-lg` etc. already scale down
+  reasonably by default, but a few modals in this app set explicit
+  `width`/`max-width` in inline styles that weren't part of this sweep).
+
 ---
 
 ## Traps — read before editing
@@ -1178,6 +1246,11 @@ added the same styled-dropdown treatment to three more text fields that were sti
 using native `<datalist>`s or nothing at all. Pass 23 added Delete Stack (a
 variant-level hard delete for the gap Delete Item doesn't cover) and cascading,
 still-free-text Rack/Row suggestions across Registry/Intake/Export/Modify Stock.
+Pass 24 was the app's first responsive pass — zero `@@media` queries existed
+anywhere before it. The dashboard's fixed 6-column grid genuinely didn't work
+below ~1400px (no scroll escape, not just cramped); it now reflows to a single
+stacked column on phones/tablets with no markup changes, and every table in
+the app scrolls inside itself instead of forcing the page wider.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
 were all tested directly against that same live db through the running app (Passes 16
@@ -1193,7 +1266,7 @@ was NOT reversed afterward — it was the actual fix requested: deleted CCR-0013
 genuinely-empty Variant 2, the real stuck stack that surfaced the whole feature.
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
 already published and running; everything from the Location Transfer fix through
-Pass 23 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
+Pass 24 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
 committed and pushed but **not yet in a published release** — still need a fresh
 `dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
@@ -1201,10 +1274,13 @@ loan, resolve the letter-family hypothesis for the still-unclaimed compressor it
 sign in as a non-Admin user to confirm the branch-button graying looks right in
 practice, actually submit a blank-Line registration to watch Pass 15's rejection fire
 for real, exercise the new map-zone-creation reminder live (built in Pass 17, not yet
-triggered through a real approval), and submit a real serial through either Pass 20's
+triggered through a real approval), submit a real serial through either Pass 20's
 Modify Stock Add entrance or the batch review (both share `LogIntakeSerials`,
 verified live in Pass 17 through Registry/Intake, but not separately through either
 of these two newer entrances — both live batch tests so far used a bare quantity,
-deliberately, to keep the round-trip trivial to reverse).
+deliberately, to keep the round-trip trivial to reverse), and give Pass 24's
+responsive work a real-device pass with an actual phone/tablet (browser-emulated
+viewport resize is a good proxy but not a substitute) plus a live check of
+Settings on mobile once the superuser passcode is available.
 Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
 expansion work, not a blocker.
