@@ -298,11 +298,24 @@
         border-radius: 8px;
         padding: 12px 20px;
         display: flex;
+        flex-wrap: wrap;
         justify-content: space-around;
         align-items: center;
+        gap: 8px 16px;
         z-index: 110;
         box-shadow: 0 10px 20px rgba(0,0,0,0.6);
     }
+
+        /* .map-container has overflow:visible on purpose (so the zone
+           click-menus can pop out past its edge) -- which means this bar's
+           4 stat-blocks, unable to shrink below their natural content width,
+           silently bled past the container and widened the WHOLE PAGE on
+           narrow screens instead of just looking cramped. flex-wrap above
+           is the real fix (has zero effect wherever 4 already fit on one
+           line); this just keeps the wrapped pairs from touching. */
+        .map-stats-bar .stat-block {
+            flex: 0 1 auto;
+        }
 
     .map-live-bar {
         position: absolute;
@@ -593,6 +606,93 @@
         border-radius: 50%;
     }
 
+    /* =========================================================
+       RESPONSIVE (Pass 24)
+       The dashboard above is a fixed 6-column CSS grid (two 380px
+       sidebars) inside a position:fixed shell with no breakpoints
+       anywhere in the app -- below ~1400px combined width it
+       overflows horizontally with no way to scroll to reach the
+       clipped columns. These queries reflow the SAME markup (no
+       DOM changes, no reordering) into a single scrollable column
+       at tablet/phone widths, by neutralizing the !important
+       r*/c*/row-span-*/col-span-* placement utilities above (the
+       override needs !important too, and has to come after them
+       in the cascade to win) and letting flexbox stack the grid
+       items in document order instead.
+       ========================================================= */
+    @@media (max-width: 1400px) {
+        .overlay-grid {
+            grid-template-columns: 300px repeat(4, 1fr) 300px;
+        }
+    }
+
+    @@media (max-width: 1100px) {
+        .overlay-grid {
+            position: static !important;
+            display: flex !important;
+            flex-direction: column;
+            height: auto;
+            margin: 12px;
+            padding-bottom: 24px;
+            gap: 12px;
+        }
+
+            .overlay-grid .r1, .overlay-grid .r2, .overlay-grid .r3, .overlay-grid .r4 {
+                grid-row-start: unset !important;
+            }
+
+            .overlay-grid .c1, .overlay-grid .c2, .overlay-grid .c3,
+            .overlay-grid .c4, .overlay-grid .c5, .overlay-grid .c6 {
+                grid-column-start: unset !important;
+            }
+
+            .overlay-grid .row-span-2, .overlay-grid .row-span-3 {
+                grid-row-end: unset !important;
+            }
+
+            .overlay-grid .col-span-2, .overlay-grid .col-span-4 {
+                grid-column-end: unset !important;
+            }
+
+        .map-container {
+            min-height: 380px;
+        }
+    }
+
+    @@media (max-width: 900px) {
+        .holo-viewer {
+            width: 95vw !important;
+            height: 90vh !important;
+            grid-template-columns: 1fr !important;
+            grid-template-rows: auto 1fr auto !important;
+        }
+
+            .holo-viewer .holo-header {
+                grid-column: 1 !important;
+            }
+
+            .holo-viewer .holo-body {
+                grid-column: 1 !important;
+                grid-row: 2 !important;
+            }
+
+            .holo-viewer .holo-actions {
+                grid-column: 1 !important;
+                grid-row: 3 !important;
+                border-left: none;
+                border-top: 1px solid var(--vis-card-border);
+            }
+    }
+
+    @@media (max-width: 576px) {
+        .overlay-grid {
+            margin: 8px;
+        }
+
+        .map-container {
+            min-height: 300px;
+        }
+    }
 </style>
 
 

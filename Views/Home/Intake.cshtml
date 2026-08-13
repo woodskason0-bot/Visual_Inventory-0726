@@ -100,14 +100,20 @@
             </div>
         </div>
 
-        <table class="table table-sm align-middle">
-            <thead><tr>
-                <th style="width:24%;">Model</th><th style="width:13%;">Type</th><th style="width:14%;">Brand</th>
-                <th style="width:14%;">Rheem PN</th><th style="width:7%;">Qty</th>
-                <th style="width:20%;">Serial(s) / TC <span class="text-light-gray">(by type, optional)</span></th><th></th>
-            </tr></thead>
-            <tbody id="intake-rows"></tbody>
-        </table>
+        @* Pass 24: wrapped for overflow-x -- the row of inputs needs more than a
+           phone's width no matter how the columns are proportioned; without this
+           wrapper the table forced the whole page wider instead of just itself
+           scrolling. *@
+        <div class="table-responsive">
+            <table class="table table-sm align-middle" style="min-width:640px;">
+                <thead><tr>
+                    <th style="width:24%;">Model</th><th style="width:13%;">Type</th><th style="width:14%;">Brand</th>
+                    <th style="width:14%;">Rheem PN</th><th style="width:7%;">Qty</th>
+                    <th style="width:20%;">Serial(s) / TC <span class="text-light-gray">(by type, optional)</span></th><th></th>
+                </tr></thead>
+                <tbody id="intake-rows"></tbody>
+            </table>
+        </div>
 
         <datalist id="known-items"></datalist>
 

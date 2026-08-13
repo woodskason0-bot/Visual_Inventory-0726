@@ -188,7 +188,7 @@
 </head>
 <body>
     <header>
-        <nav class="navbar navbar-expand-sm rheem-navbar mb-3 @(orderMode ? "order-mode" : "")">
+        <nav class="navbar navbar-expand-lg rheem-navbar mb-3 @(orderMode ? "order-mode" : "")">
             <div class="container-fluid px-4">
 
                 <a class="navbar-brand d-flex align-items-center" asp-area="" asp-controller="Home" asp-action="Index">
@@ -206,7 +206,13 @@
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse">
                     <span class="navbar-toggler-icon"></span>
                 </button>
-                <div class="navbar-collapse collapse d-sm-inline-flex justify-content-end align-items-center">
+                @* Pass 24: was d-sm-inline-flex/navbar-expand-sm (576px+) -- the nav
+                   links + right-side controls (notifications/theme/user badge) need
+                   ~620px alone, which overflowed on real tablets (768px) once the
+                   brand logo was added in. Bumped to lg (992px) so it only expands
+                   to the inline layout once there's genuinely desktop-width room;
+                   phones and tablets both get the hamburger collapse instead. *@
+                <div class="navbar-collapse collapse d-lg-inline-flex justify-content-end align-items-center">
                     @if (orderMode)
                     {
                         <span class="order-mode-badge me-4"><i class="bi bi-cart-fill"></i> Order Mode</span>
