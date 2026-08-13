@@ -9,7 +9,57 @@ landed, when."
 
 ---
 
+## 2026-08-13
+
+### `f67eb5c` — Pass 20: map cleanup, Intake Team autofill, Registry-to-Modify-Stock jump with serial capture
+Removed the facility map's decorative red tracker dot (element, CSS, waypoint path,
+animation loop) and made zone row-count labels hover-only. Bulk Intake now preseeds
+Branch/Line from the signed-in user on page load and overwrites it when a Team with
+a home Line is picked (same Team-Line map Registration already used). New Item
+Registry's name-match dropdown now jumps into Modify Stock instead of doing nothing
+when clicked; Modify Stock's Add action gained optional compressor serial capture to
+match (Pass 17 parity for this new entrance). Verified live, read-only, against the
+real app/db.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/Index.cshtml`, `Views/Home/Intake.cshtml`, both `docs/` files.
+
+---
+
 ## 2026-08-12
+
+### `04de9e9` (merge) / `ae888d8` — Fix three misleading user-facing messages: Scrap log overstatement, Ownership silent no-op, intake "nothing imported"
+Scrap now logs the actual clamped quantity instead of the requested one (the log,
+and `ExportToCsv`'s `ScrappedQty` sum, used to overstate a scrap past what was on the
+shelf). An unrecognized Line on an Ownership move now throws instead of returning a
+success-shaped no-op that toasted "applied." A partial Bulk Intake failure (rows
+without errors DO land — `CommitIntake` saves per row) now says how many rows/units
+actually imported instead of claiming nothing did, at both `SubmitIntake` and
+`ApproveIntake`.
+**Touched:** `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`,
+`Services/InventoryService.cs`. Built in an isolated worktree, merged into master
+same batch as Pass 18/19.
+
+### `ce87625` (merge) / `908673d` — Fix ReturnLoan storing ItemVariantId=0 on units returned to a newly-minted variant
+`ReturnLoan`'s "mint a new variant" path added `dest` to `inv.Variants` but referenced
+`dest.Id` on the returned unit rows before saving — since neither `CompressorUnit`
+nor `MotorUnit`'s `ItemVariantId` carries an FK, EF did no fixup and silently wrote a
+dangling 0. Fixed with a `SaveChanges()` right after `dest` is added.
+**Touched:** `Services/OrderService.cs`. Built in an isolated worktree, merged into
+master same batch as Pass 18/19.
+
+### `6452429` (merge) / `ec667ae` — Fix ReportShortPull dropping TC count and pull location on reissue
+The fresh `OrderItem` `ReportShortPull` reissues for the corrected quantity copied
+only `ItemId`/`Quantity` — not `ThermocoupledCount` or `RequestedVariantId`. For a
+short-pulled TC motor line this meant the immediate re-pickup ran with TC = 0: no
+loan created, no `MotorUnit` rows flipped. Fixed by carrying both forward (TC
+clamped to the corrected quantity).
+**Touched:** `Services/OrderService.cs`. Built in an isolated worktree, merged into
+master same batch as Pass 18/19.
+
+### `ce3d7f7` — docs: backfill Commit_History.md (Passes 16-18 -- it had stopped at Pass 15)
+Docs-only. Wrote up the gap between this file's first commit (which stopped at Pass
+15) and Pass 18 -- Passes 16 and 17 hadn't been backfilled here yet.
+**Touched:** `docs/Commit_History.md`.
 
 ### `c553384` — Pass 18: reject pickup of cancelled orders, closing the stale-queue race
 `PickUpOrder` only guarded against `Completed`, and `CancelPersistedOrder` leaves an
