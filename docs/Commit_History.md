@@ -11,6 +11,20 @@ landed, when."
 
 ## 2026-08-13
 
+### `6318433` — Pass 22: batch review as live inline sections, dropdown styling parity
+Feedback on Pass 21's modal ("felt like a dangling process," had to know the quantity
+before typing the name): rebuilt as live inline sections directly on the Intake page
+-- a match creates a section immediately, a second match for the same item grows it
+in place (reading current DOM values first so hand-edits survive), acknowledge
+checkboxes dropped since nothing's hidden behind a modal anymore. Server side
+unchanged. Also added the same styled list-group dropdown to Intake's Type field,
+Registry's Type field (had none before), and the sign-in name field, via a new
+generic `bindValueAutocomplete()` helper; fixed a real pre-existing broken regex on
+the sign-in field's `pattern` attribute found while touching that file (was throwing
+a console error on every load, client-side validation silently inert).
+**Touched:** `Views/Home/Identify.cshtml`, `Views/Home/Index.cshtml`,
+`Views/Home/Intake.cshtml`, both `docs/` files.
+
 ### `b2d87f1` — Pass 21: Bulk Intake routes known-item matches to a batch Modify Stock review
 A row whose typed Model name exact-matches a known item no longer quick-adds through
 `CommitIntake` -- it moves to a separate "Already registered" list, excluded from
