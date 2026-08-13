@@ -551,6 +551,89 @@ hold-for-approval path fixed (it never actually worked).**
   outstanding-order gate both key off `Order.Status`, so a cancelled order already
   releases its allocation regardless of line status.
 
+**Pass 19 (2026-08-12) — three more worktree-session fixes, merged same batch as
+Pass 18.** All four Pass 18/19 branches were spawned from the same round of chip
+suggestions and merged into master together (`04de9e9`); this is the writeup for
+the three that weren't Pass 18 itself.
+
+- **`ReportShortPull`'s reissue was dropping TC count and requested location.**
+  The fresh `OrderItem` it creates for the corrected quantity copied only `ItemId`
+  and `Quantity` from the original line — not `ThermocoupledCount` or
+  `RequestedVariantId`. For a short-pulled TC motor line this meant the immediate
+  re-pickup ran with TC = 0: no TC stock deliberately drawn down, no `MotorUnit`
+  rows flipped to Picked Up, and — since `LoanableQuantity(motor, qty, 0)` is 0 —
+  **no loan created at all**, so the TC motors left the shelf with nothing
+  expecting them back. Fixed by copying both fields onto the reissue, TC clamped
+  to the corrected quantity (which can be lower than what was originally ordered).
+- **`ReturnLoan` was storing `ItemVariantId = 0`** on units returned to a
+  freshly-minted variant (the "no target location picked, mint a new one" path).
+  `dest` was added to `inv.Variants` but never saved before `cu.ItemVariantId =
+  dest.Id` / `mu.ItemVariantId = dest.Id` ran, so `dest.Id` was still 0 at that
+  point — and since neither `CompressorUnit.ItemVariantId` nor
+  `MotorUnit.ItemVariantId` carries an FK/navigation (see Architecture above), EF
+  did no fixup and silently wrote the dangling 0. Any unit returned to a
+  brand-new location lost its "which shelf is this exact unit on" link. Fixed
+  with one `_db.SaveChanges()` right after `dest` is added, same pattern
+  `CreateItem` already uses for the identical need.
+- **Three misleading user-facing messages, all in `Services/InventoryService.cs`
+  / the two controllers, none touching real correctness — just what got said
+  about it:**
+  - `ModifyStock`'s Scrap branch logged (and toasted) the *requested* scrap
+    quantity even when clamped down to what was actually on the shelf —
+    `ExportToCsv`'s `ScrappedQty` column sums these logs, so exports overstated
+    too. Now logs the clamped amount, with a note when a clamp happened.
+  - An unrecognized Line on an Ownership move used to return the success-shaped
+    tuple with nothing changed/logged/saved — the controller toasted "applied"
+    over a silent no-op. Now throws, which the controller's existing `catch`
+    turns into a real error toast.
+  - A partial Bulk Intake failure (`CommitIntake` saves per row, so
+    non-erroring rows land even when others fail) said "Nothing was imported"
+    at both call sites (`SubmitIntake`, `ApproveIntake`). Now distinguishes
+    total failure from partial success and says how many rows/units actually
+    landed.
+
+**Pass 20 (2026-08-12/13) — map cleanup, Intake Team autofill, Registry
+name-match jumps into Modify Stock with serial capture on Add.**
+
+- **Facility map: removed the glowing red tracker dot** (element, CSS, the
+  9-waypoint path, the 2.5s `setInterval` loop) **and made zone row-counts
+  hover-only.** The dot was decorative and unrelated to real data; the "N Rows"
+  label under each pin now shows only on `:hover` (`.map-zone:hover
+  .marker-count`) so the map reads cleaner at rest — the pin alone still marks
+  every zone.
+- **Bulk Intake preseeds Branch/Line from the signed-in user, and Team overwrites
+  it on pick.** `HomeController.Intake()` now passes `TeamLinesJson` (same
+  Team→home-Line map Registration already used) plus the session user's
+  effective Branch/Line. On page load a user with a specific Line lands with
+  Branch derived and Line preselected; a whole-Branch user lands with Branch
+  preset and Line left for them to pick; an unassigned/Admin session presets
+  nothing. Picking a Team with a home Line overwrites Branch/Line to match
+  (still editable after) — a team with no home Line, or clearing back to N/A,
+  touches nothing. Verified live: Cedric Martis (Residential Coils/AH) landed
+  preset correctly on page load; picking Samurai flipped Branch/Line to
+  Commercial Air / Commercial Packaged/Splits.
+- **New Item Registry's name-match dropdown now jumps into Modify Stock instead
+  of doing nothing.** Previously `selectable = false` on that binding meant a
+  click only hid the list. `bindAutocomplete()` gained a `jumpToStock` mode:
+  closes the New Item modal (chained off `hidden.bs.modal`, same pattern
+  `jumpToHandleStock` already used elsewhere) and opens Modify Stock preloaded
+  with the matched ItemId — whatever was typed into the registry form is
+  discarded, since clicking a match means "this already exists." Verified
+  live: clicking a match for CCR-0118 closed New Item Registry and opened
+  Modify Stock with that ItemId loaded.
+- **Modify Stock's Add action gained compressor serial capture — Pass 17
+  parity for this new jump-in path.** Optional per-unit serial boxes
+  (`serial_N`, same convention `CreateItem` reads), shown only for Add +
+  Type = Compressor, sized to the typed quantity and rebuilt live as it
+  changes. Server: `HomeController.ModifyStock` reads `serial_N` the same way
+  `CreateItem` does; `InventoryService.ModifyStock` gained a `serials`
+  parameter, captures whichever variant actually received the stock (existing
+  stack or a freshly-minted NEW-location one) as `addedVariant`, and — after
+  the existing `SaveChanges()` so a NEW variant's `Id` is real — calls the same
+  `LogIntakeSerials` helper Bulk Intake/`CreateItem` already share. Verified
+  live: 3 serial boxes rendered for qty 3 on a compressor Add; confirmed
+  absent for Adjustment on the same item and for Add on a non-compressor item.
+
 ---
 
 ## Traps — read before editing
@@ -858,6 +941,24 @@ order stayed `Cancelled` with no `FulfilledBy`, both CCR-0003 variants untouched
 (6 + 2), zero pickup log rows, and zero `CompressorUnit` rows. Before the fix this
 same sequence would have pulled 2 real units and flipped the order to `Completed`.
 
+**Pass 19:** the `ReportShortPull`/`ReturnLoan` fixes were verified by code review and
+a clean build within their own worktree sessions, not by reproducing either scenario
+live (a short-pulled TC motor line, and a loan return to a brand-new location, are
+both narrow enough paths that neither has been separately exercised end-to-end since
+they were built). The three message-accuracy fixes are lower-risk (wording/logging
+only, no state-machine change) and were build-verified only.
+
+**Pass 20:** verified live against the real running app and real db (read-only —
+nothing was actually submitted through any of these paths, so no test rows/log
+entries needed cleanup). Confirmed via signed-in sessions as Cedric Martis
+(Residential Coils/AH) and Kason (Admin): Intake's Branch/Line autofill on page load
+and on Team change, the Registry-to-Modify-Stock jump end to end, and the serial-box
+count/visibility rules (shown for Add+Compressor, hidden for every other
+action/type combination tried). The actual server-side serial write (submitting an
+Add with real serials filled in) was not separately exercised — that path reuses
+`LogIntakeSerials`, already verified live in Pass 17, but not through this specific
+new entrance.
+
 ---
 
 ## Current state
@@ -873,22 +974,34 @@ Location Transfer cascade's location-vocabulary source, and added 5 real compres
 that's uniformly `N/A` for PN — is worth a real fix later, not just something I caught
 by hand this time). Pass 17 added serial/TC capture at registration and intake, and
 fixed a real pre-existing bug in Bulk Intake's held-batch path that meant it had never
-actually worked through the live UI.
+actually worked through the live UI. Pass 18 closed a stale-queue race that let a
+cancelled order still be picked up; Pass 19, merged in the same batch, fixed
+`ReportShortPull` dropping TC/location on reissue and `ReturnLoan` writing a dangling
+`ItemVariantId = 0`, plus three user-facing message-accuracy fixes. Pass 20 removed
+the map's decorative red tracker dot, made zone row-counts hover-only, gave Bulk
+Intake the same Team/Branch/Line autofill Registration already had, and made New Item
+Registry's name-match dropdown jump straight into Modify Stock (with serial capture
+now on Add, for that path).
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
 were all tested directly against that same live db through the running app (Passes 16
 and 17 both made real data changes to it — the 242-item Line reconciliation, 5 new
 compressors, plus Pass 17's discovery-and-cleanup of the `"__NEW__"` corruption —
 beyond their schema migrations), so nothing further needs copying for any of them.
+Pass 18 was tested against a scratchpad copy, not the live file. Pass 20 was tested
+read-only against the live app/db (nothing was actually submitted, so nothing needed
+cleanup).
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
 already published and running; everything from the Location Transfer fix through
-Pass 17 (up through the `AddIntakeRowMultiSerialAndTc` migration) is committed and
-pushed but **not yet in a published release** — still need a fresh `dotnet publish`
-to reach the host.
+Pass 20 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
+committed and pushed but **not yet in a published release** — still need a fresh
+`dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
 loan, resolve the letter-family hypothesis for the still-unclaimed compressor items,
 sign in as a non-Admin user to confirm the branch-button graying looks right in
 practice, actually submit a blank-Line registration to watch Pass 15's rejection fire
-for real, and exercise the new map-zone-creation reminder live (built in Pass 17,
-not yet triggered through a real approval). Everything else on the scaling list
-(SQL Server/Azure SQL move, SSO, backup story) is expansion work, not a blocker.
+for real, exercise the new map-zone-creation reminder live (built in Pass 17,
+not yet triggered through a real approval), and actually submit a compressor Add with
+real serials through the new Pass 20 entrance to confirm the write path end to end.
+Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
+expansion work, not a blocker.

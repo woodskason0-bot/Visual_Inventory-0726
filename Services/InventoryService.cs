@@ -1102,10 +1102,16 @@ namespace Visual_Inventory_System.Services
             return 0;
         }
 
+        // serials: compressors only, Add action only -- mirrors CreateItem/
+        // CommitIntake's own optional per-unit serial capture (Pass 17), just
+        // reached from the Modify Stock jump-in (registry name-match click)
+        // instead of a fresh registration. One CompressorUnit per non-blank
+        // entry, logged On Hand against whichever variant actually received
+        // the stock (existing stack or a freshly minted NEW-location one).
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
-            string? newLine = null)
+            string? newLine = null, List<string>? serials = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -1142,6 +1148,10 @@ namespace Visual_Inventory_System.Services
             int oldQty = item.Quantity;
             int qtyChange = 0;
             string details = "";
+            // Which variant received an Add's stock -- captured here so the
+            // serial-logging step after SaveChanges knows where to point,
+            // whichever of the two Add branches ran (existing stack vs NEW).
+            ItemVariant? addedVariant = null;
 
             if (actionType == "Add")
             {
@@ -1169,6 +1179,7 @@ namespace Visual_Inventory_System.Services
                     nv.FdaString = FiveSeg(nv.Parent, nv.Major, nv.Sub, nv.Rack, nv.Row);
                     item.Variants.Add(nv);
                     details = $"Added {quantity} unit(s){tcNote} at NEW location {nv.FdaString} (Variant {nv.VariantNumber}).";
+                    addedVariant = nv;
                 }
                 else
                 {
@@ -1177,6 +1188,7 @@ namespace Visual_Inventory_System.Services
                     // never past the stack's new total.
                     pv.ThermocoupledQty = System.Math.Min(pv.ThermocoupledQty + tcAdd, pv.Quantity);
                     details = $"Added {quantity} unit(s){tcNote} to stock (Variant {pv.VariantNumber}, {pv.FdaString}).";
+                    addedVariant = pv;
                 }
             }
             else if (actionType == "Scrap")
@@ -1364,7 +1376,17 @@ namespace Visual_Inventory_System.Services
                 User = _currentUser.Name
             });
 
-            _db.SaveChanges();
+            _db.SaveChanges();   // need addedVariant.Id (NEW-location case) before serials can reference it
+
+            if (addedVariant != null && IsCompressorType(item.Type))
+            {
+                var cleanSerials = (serials ?? new List<string>())
+                    .Select(s => (s ?? "").Trim()).Where(s => s.Length > 0)
+                    .Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
+                if (cleanSerials.Count > 0)
+                    LogIntakeSerials(itemId, addedVariant.Id, cleanSerials, _currentUser.Name,
+                        System.DateTime.UtcNow, new IntakeResult());
+            }
 
             return (item, oldQty, item.Quantity);
         }

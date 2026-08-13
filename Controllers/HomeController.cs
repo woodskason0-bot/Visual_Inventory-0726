@@ -306,11 +306,21 @@ namespace Visual_Inventory_System.Controllers
                 return RedirectToAction("Index");
             }
 
+            // Compressor serials on an Add, same flat serial_N convention
+            // CreateItem already reads (Pass 17). No-op for any other action --
+            // InventoryService.ModifyStock only consults this on Add, and the
+            // client only ever renders these boxes for Add + Type=Compressor.
+            var serials = Request.Form.Keys
+                .Where(k => k.StartsWith("serial_"))
+                .Select(k => Request.Form[k].ToString())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .ToList();
+
             try
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
                     newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
-                    newLine);
+                    newLine, serials);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -628,6 +638,22 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.LocationParents = BuildLocationParents();
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
+            // Team -> home Line, same map Registration/Ownership already use, so
+            // picking a Team here can suggest a Branch/Line the same way.
+            ViewBag.TeamLinesJson = System.Text.Json.JsonSerializer.Serialize(
+                _db.Teams.AsNoTracking().Where(t => t.IsActive && t.Line != null)
+                    .ToDictionary(t => t.Name, t => t.Line));
+            // Seed the Branch/Line selects from the signed-in user's own
+            // assignment on page load -- a specific Line wins, else a
+            // whole-Branch assignment (Branch preset, Line left for them to
+            // pick), else neither. Same effective-Branch derivation Index()
+            // uses for ViewBag.MyBranch. JSON-serialized (not a plain ViewBag
+            // string) since these two feed the page's <script> block directly.
+            ViewBag.MyLineJson = System.Text.Json.JsonSerializer.Serialize(_currentUser.Line ?? "");
+            ViewBag.MyBranchJson = System.Text.Json.JsonSerializer.Serialize(
+                !string.IsNullOrWhiteSpace(_currentUser.Line)
+                    ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
+                    : (_currentUser.Branch ?? ""));
             // Existing names + types, for the model autocomplete and the type
             // datalist -- same idea as the Modify Stock picker: suggest, don't force.
             ViewBag.KnownItemsJson = System.Text.Json.JsonSerializer.Serialize(

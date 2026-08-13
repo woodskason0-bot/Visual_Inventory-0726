@@ -1,8 +1,8 @@
 ---
 title: VIS — Consolidated Context Addendum
 description: Merged from four sources. Companion to VIS_Handoff_State.md, which stays authoritative for code and architecture.
-sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–18 working method
-merged: 2026-08-04, updated 2026-08-12
+sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–20 working method
+merged: 2026-08-04, updated 2026-08-13
 status: consolidated
 ---
 
@@ -35,6 +35,8 @@ sequence at all. Resolved:
 | Aug 10 | **Pass 16** | Unclaimed compressor/motor filter fixed (AND → OR); 242 non-compressor items bulk-reconciled onto Commercial Packaged/Splits; Add User gained whole-Branch assignment at creation; `User.Team` rebuilt as many-to-many with a team-centric membership picker. See handoff. |
 | Aug 11 | **Pass 17** | Serial (compressors) / TC-count (motors) capture added to New Item Registry and Bulk Intake; a real pre-existing bug in Bulk Intake's "hold for unrecognized location" path (never actually worked -- `"__NEW__"` leaked into real data) found and fixed. See handoff. |
 | Aug 12 | **Pass 18** | Cancelled-order pickup race closed: `PickUpOrder` now rejects any non-Pending order, so a stale Pickup Queue page can no longer pull real stock against an order an Engineer already cancelled (which also silently flipped it back to Completed). One guard line; cancelled orders' lines deliberately stay `Pending`. See handoff. |
+| Aug 12 | **Pass 19** | Merged same batch as Pass 18, three more worktree-session fixes: `ReportShortPull` reissue now carries TC count/requested location forward (was silently dropping both); `ReturnLoan` no longer stores a dangling `ItemVariantId = 0` on units returned to a brand-new location; three misleading user-facing messages (Scrap log overstatement, Ownership silent no-op, intake "nothing imported" on a partial failure) corrected. See handoff. |
+| Aug 12–13 | **Pass 20** | Facility map: removed the red tracker dot, made zone row-counts hover-only. Bulk Intake gained the same Team→Branch/Line autofill Registration already had, seeded from the signed-in user. New Item Registry's name-match dropdown now jumps into Modify Stock instead of doing nothing, and Modify Stock's Add action gained compressor serial capture to match. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge

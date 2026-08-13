@@ -62,7 +62,7 @@
             </div>
             <div class="col-md-3">
                 <label class="form-label small fw-bold text-light-gray">Team / Project</label>
-                <select name="team" class="form-select">
+                <select name="team" id="in-team" class="form-select">
                     <option value="">N/A &mdash; no team</option>
                     @foreach (var t in teams) { <option value="@t.Name">@t.Name</option> }
                 </select>
@@ -121,6 +121,12 @@
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
     const locTree      = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
     const knownItems   = @Html.Raw(ViewBag.KnownItemsJson ?? "[]");
+    // Team -> home Line (metadata, suggestion only -- same map Registration
+    // already uses) and the signed-in user's own assignment, for autofilling
+    // Branch/Line on page load and on Team change.
+    const teamLines    = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    const myLine       = @Html.Raw(ViewBag.MyLineJson ?? "\"\"");
+    const myBranch     = @Html.Raw(ViewBag.MyBranchJson ?? "\"\"");
 
     // Same 1/3/5/last rule as Services/LocationCodec.Encode(). Duplicated from
     // Index.cshtml -- see the note there for why it isn't in site.js.
@@ -133,17 +139,59 @@
         return pos.map(p => clean[p - 1]).join("");
     }
 
+    // Branch -> Line cascade, plus autofill: seeded from the signed-in user on
+    // page load, and overwritten whenever a Team with a home Line is picked
+    // (a deliberate act, so it wins over whatever was there -- still editable
+    // after). Neither ever touches server-side validation; Line stays
+    // required and checked exactly as before on submit.
     (function () {
         const bSel = document.getElementById('in-branch'), lSel = document.getElementById('in-line');
+        const tSel = document.getElementById('in-team');
+
         Object.keys(orgStructure).forEach(function (b) {
             bSel.appendChild(Object.assign(document.createElement('option'), { value: b, textContent: b }));
         });
-        bSel.addEventListener('change', function () {
+
+        function fillLines(branch, selected) {
             lSel.innerHTML = '<option value="">-- Select a Line --</option>';
-            (orgStructure[bSel.value] || []).forEach(function (l) {
-                lSel.appendChild(Object.assign(document.createElement('option'), { value: l, textContent: l }));
+            (orgStructure[branch] || []).forEach(function (l) {
+                const opt = Object.assign(document.createElement('option'), { value: l, textContent: l });
+                if (selected && l === selected) opt.selected = true;
+                lSel.appendChild(opt);
             });
+        }
+
+        function branchForLine(line) {
+            for (const b in orgStructure) {
+                if ((orgStructure[b] || []).includes(line)) return b;
+            }
+            return null;
+        }
+
+        bSel.addEventListener('change', function () { fillLines(bSel.value, null); });
+
+        // Team change: a team with a recognized home Line overwrites Branch/Line
+        // to match. A team with no home Line (or clearing back to N/A) touches
+        // nothing -- there's no suggestion to make.
+        tSel.addEventListener('change', function () {
+            const line = teamLines[tSel.value];
+            if (!line) return;
+            const branch = branchForLine(line);
+            if (!branch) return;
+            bSel.value = branch;
+            fillLines(branch, line);
         });
+
+        // Page-load seed from the signed-in user's own assignment: a specific
+        // Line wins (Branch derived from it); else a whole-Branch assignment
+        // (Branch preset, Line left for them to pick); else neither.
+        if (myLine) {
+            const branch = branchForLine(myLine);
+            if (branch) { bSel.value = branch; fillLines(branch, myLine); }
+        } else if (myBranch) {
+            bSel.value = myBranch;
+            fillLines(myBranch, null);
+        }
     })();
 
     // Parent -> Major -> Sub, driven by the same table the rest of the app uses.

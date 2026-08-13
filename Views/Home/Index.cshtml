@@ -418,6 +418,13 @@
         font-weight: 700;
         white-space: nowrap;
         margin-top: 2px;
+        /* Hidden at rest -- the pin alone marks the zone; the row count only
+           appears while the zone is hovered, keeping the map uncluttered. */
+        display: none;
+    }
+
+    .map-zone:hover .marker-count {
+        display: block;
     }
 
     /* Pulsing animation for zones with active alerts */
@@ -586,18 +593,6 @@
         border-radius: 50%;
     }
 
-    /* Glowing Red Dot Tracking along its glide path */
-    .glowing-tracker-dot {
-        position: absolute;
-        width: 10px;
-        height: 10px;
-        background-color: var(--vis-red);
-        border-radius: 50%;
-        box-shadow: 0 0 10px var(--vis-red), 0 0 20px var(--vis-red);
-        z-index: 115;
-        pointer-events: none;
-        transition: left 2s ease-in-out, top 2s ease-in-out; /* Smooth transition */
-    }
 </style>
 
 
@@ -763,8 +758,6 @@
     <div class="grid-item r2 c2 col-span-4 row-span-3 map-container">
         <div class="map-image-frame">
             <img src="~/images/facility.png" id="facility-map-img" alt="Facility Map" usemap="#labmap" />
-            <!-- Reinstated Glowing Red Dot Tracker Element -->
-            <div id="map-tracking-dot" class="glowing-tracker-dot"></div>
 
             @* Pass 8: rectangles come from LocationZones. Coordinates are FRACTIONS
                of the image (0-1), not pixels -- resizeMap() turns them into pixels
@@ -1675,6 +1668,14 @@
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-tc-help">How many of these are thermocoupled?</small>
                     </div>
 
+                    @* Compressor serial capture on Add -- Pass 17 parity for the
+                       jump-in-from-Registry path. Optional, one box per unit being
+                       added; same serial_N convention CreateItem already reads. *@
+                    <div id="stock-serial-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Serial # <span class="text-light-gray">(optional, one per unit)</span></label>
+                        <div id="stock-serial-rows"></div>
+                    </div>
+
                     <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
                         @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
                            (Commercial, Residential) with one LINE (International, which
@@ -1975,10 +1976,11 @@
                         <div class="col-md-7 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Item Name</label>
                             <input type="text" name="ItemName" id="reg-name" class="form-control" required autocomplete="off" />
-                            @* Live matches only -- registering something new is the whole point of
-                               this form, so unlike Modify Stock's search this never forces a pick
-                               from the list. It's a heads-up ("something similar may already
-                               exist"), not a gate; free text always submits. *@
+                            @* Live matches -- registering something new is the whole point of this
+                               form, so typing never gets gated the way Modify Stock's search does;
+                               free text always submits. But clicking a match means "this already
+                               exists" -- it jumps straight into Modify Stock for that item instead
+                               of continuing the registration (bindAutocomplete's jumpToStock). *@
                             <div id="reg-name-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
                         </div>
                         <div class="col-md-2">
@@ -2653,6 +2655,7 @@
         }
 
         refreshTcFields(action);
+        refreshSerialFields(action);
     }
 
     // ---- Edit Details (identity fields) -----------------------------------
@@ -2836,6 +2839,41 @@
         return !!t && String(t).trim().toLowerCase().endsWith('motor');
     }
 
+    // Keep in lockstep with InventoryService.IsCompressorType: exact match
+    // only, same rule the server enforces.
+    function isCompressorType(t) {
+        return !!t && String(t).trim().toLowerCase() === 'compressor';
+    }
+
+    // ---- Compressor serial capture (Add only) ------------------------------
+    // Pass 17 parity for the jump-in-from-Registry path: same optional,
+    // one-box-per-unit shape New Item Registry already has (reg-serial-rows),
+    // gated to Add + compressor Type. Rebuilt whenever qty or action changes.
+    function refreshSerialFields(action) {
+        const item = getStockItem();
+        const div = document.getElementById('stock-serial-div');
+        const rows = document.getElementById('stock-serial-rows');
+        if (!div || !rows) return;
+
+        if (action !== 'Add' || !item || !isCompressorType(item.type)) {
+            div.style.display = 'none';
+            rows.innerHTML = '';
+            return;
+        }
+
+        div.style.display = 'block';
+        const n = Math.max(0, parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0);
+        rows.innerHTML = '';
+        for (let i = 0; i < n; i++) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.name = 'serial_' + i;
+            input.className = 'form-control form-control-sm mb-1';
+            input.placeholder = 'Unit ' + (i + 1) + ' serial (optional)';
+            rows.appendChild(input);
+        }
+    }
+
     // Show/enable exactly the right TC input for the action, and cap it so the
     // human can never enter an impossible number. Disabled inputs don't post,
     // so the hidden twin stays out of the way. Add/Scrap use #stock-tc-input;
@@ -2915,12 +2953,14 @@
         }
     }
 
-    // Recompute TC caps live as the driving quantities change.
+    // Recompute TC caps (and, on Add, the serial-box count) live as the
+    // driving quantities change.
     (function bindTcRecompute() {
         const q = document.getElementById('stock-qty-input');
         if (q) q.addEventListener('input', function () {
             const a = document.getElementById('stock-action-type').value;
             if (a === 'Add' || a === 'Scrap') refreshTcFields(a);
+            if (a === 'Add') refreshSerialFields(a);
         });
         const mq = document.getElementById('loc-moveqty');
         if (mq) mq.addEventListener('input', function () {
@@ -3187,44 +3227,6 @@
 
     const zoneDataMap = @Html.Raw(mapDataJson);
 
-    // Pre-determined coordinate path (as percentages of image width/height) for the tracking dot
-    const trackingPath = [
-        { x: 0.15, y: 0.45 }, // External Yard road
-        { x: 0.35, y: 0.45 }, // Heading east toward building
-        { x: 0.38, y: 0.75 }, // Driveway/parking lot access road
-        { x: 0.55, y: 0.75 }, // Loading dock access
-        { x: 0.70, y: 0.75 }, // Approaching RD Lab
-        { x: 0.70, y: 0.90 }, // South loop
-        { x: 0.90, y: 0.90 }, // East perimeter
-        { x: 0.90, y: 0.40 }, // North perimeter
-        { x: 0.65, y: 0.40 }  // Approaching New Test Cells
-    ];
-    let currentPathIndex = 0;
-
-    function moveTrackingDot() {
-        const img = document.getElementById('facility-map-img');
-        const container = document.querySelector('.map-image-frame');
-        const dot = document.getElementById('map-tracking-dot');
-        if (!img || !container || !dot) return;
-
-        // Dynamic coordinate math that recalculates with letterbox/pillarbox offsets
-        const imgRect = img.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        const offsetX = imgRect.left - containerRect.left;
-        const offsetY = imgRect.top - containerRect.top;
-
-        const point = trackingPath[currentPathIndex];
-
-        // Translates responsive percentages back into actual on-screen viewport pixels
-        const posX = (point.x * img.clientWidth) + offsetX;
-        const posY = (point.y * img.clientHeight) + offsetY;
-
-        dot.style.left = posX + 'px';
-        dot.style.top = posY + 'px';
-
-        currentPathIndex = (currentPathIndex + 1) % trackingPath.length;
-    }
-
     function resizeMap() {
         const img = document.getElementById('facility-map-img');
         const map = document.getElementById('labmap');
@@ -3386,8 +3388,6 @@
             }
         }
 
-        // Refresh tracker dot position instantly during map container resizing
-        moveTrackingDot();
     }
 
     document.addEventListener('click', () => {
@@ -3397,8 +3397,6 @@
 
     window.addEventListener('load', () => {
         resizeMap();
-        // Cycle the tracking dot coordinates smoothly on a 2.5-second loop
-        setInterval(moveTrackingDot, 2500);
     });
 
     window.addEventListener('resize', resizeMap);
@@ -3425,7 +3423,14 @@
     // brand new name -- registering something NEW is the whole point of that
     // form, unlike Modify Stock/Alerts where picking an existing item is
     // required for the rest of the pane to function.
-    function bindAutocomplete(inputId, listId, idOutputId, isAlertModal, selectable = true) {
+    //
+    // jumpToStock = true is the same New Item Registry case taken one step
+    // further: clicking a match means "this already exists, take me there" --
+    // closes the New Item modal and opens Modify Stock preloaded with it,
+    // discarding whatever was typed. Only meaningful alongside
+    // selectable = false (there's nothing for the registry form itself to do
+    // with the pick).
+    function bindAutocomplete(inputId, listId, idOutputId, isAlertModal, selectable = true, jumpToStock = false) {
         const searchInput = document.getElementById(inputId);
         const autoList = document.getElementById(listId);
         const idInput = idOutputId ? document.getElementById(idOutputId) : null;
@@ -3452,6 +3457,20 @@
 
                         btn.onclick = function() {
                             autoList.style.display = 'none';
+                            if (jumpToStock) {
+                                const modalEl = document.getElementById('newItemModal');
+                                const inst = modalEl ? bootstrap.Modal.getInstance(modalEl) : null;
+                                if (inst) {
+                                    modalEl.addEventListener('hidden.bs.modal', function h() {
+                                        modalEl.removeEventListener('hidden.bs.modal', h);
+                                        handleStock(m.id);
+                                    });
+                                    inst.hide();
+                                } else {
+                                    handleStock(m.id);
+                                }
+                                return;
+                            }
                             if (!selectable) return; // informational only -- don't touch the typed name
 
                             searchInput.value = m.name;
@@ -3484,7 +3503,7 @@
 
     bindAutocomplete('alert-search', 'alert-autocomplete-list', 'alert-item-id', true);
     bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
-    bindAutocomplete('reg-name', 'reg-name-autocomplete-list', null, false, false);
+    bindAutocomplete('reg-name', 'reg-name-autocomplete-list', null, false, false, true);
 
     // Registration dup-check: warn live if the typed Rheem PN already belongs
     // to an existing item ("add stock to that item instead of a twin").
