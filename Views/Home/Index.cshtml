@@ -1602,6 +1602,27 @@
     </div>
 </div>
 
+<div class="modal fade" id="deleteVariantModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="DeleteVariant" method="post" id="delete-variant-frm">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="itemId" id="delete-variant-item-id" />
+                <input type="hidden" name="variantId" id="delete-variant-variant-id" />
+                <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Delete Stack</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">
+                    <p class="mb-2"><strong id="delete-variant-label"></strong></p>
+                    <p>This stack is empty. It'll be removed; the rest of the item's stock is untouched.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="executeSubmit('delete-variant-frm', this)">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="modifyStockModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1645,7 +1666,22 @@
                          "New location..." option. -->
                     <div id="stock-variant-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Location / Variant</label>
-                        <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
+                        <div class="d-flex gap-2 align-items-start">
+                            <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
+                            @if (CurrentUser.Level >= AccessLevels.Admin)
+                            {
+                                @* A zero-qty stack on a multi-variant item has no other way to
+                                   go away -- Delete Item needs the item's TOTAL to be 0, which
+                                   this variant alone drained to while siblings still carry
+                                   stock. Shown/hidden by refreshDeleteVariantBtn() based on the
+                                   currently-selected variant's quantity. *@
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="stock-delete-variant-btn"
+                                        style="display:none; white-space:nowrap;" title="Delete this empty stack"
+                                        onclick="openDeleteVariant()">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </div>
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
                     </div>
 
@@ -1781,13 +1817,15 @@
                             </div>
                         </div>
                         <div class="row g-2 mb-2">
-                            <div class="col-md-6">
+                            <div class="col-md-6 position-relative">
                                 <label class="form-label small fw-bold text-light-gray">Rack</label>
-                                <input type="text" name="newRack" id="loc-rack" class="form-control" placeholder="0" disabled />
+                                <input type="text" name="newRack" id="loc-rack" class="form-control" placeholder="0" disabled autocomplete="off" />
+                                <div id="loc-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6 position-relative">
                                 <label class="form-label small fw-bold text-light-gray">Row</label>
-                                <input type="text" name="newRow" id="loc-row" class="form-control" placeholder="0" disabled />
+                                <input type="text" name="newRow" id="loc-row" class="form-control" placeholder="0" disabled autocomplete="off" />
+                                <div id="loc-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                             </div>
                         </div>
                         <div class="row g-2 mb-2" id="loc-moveqty-div" style="display:none;">
@@ -2116,13 +2154,18 @@
                     </div>
 
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
+                        @* Suggests from Rack/Row values already stored under whatever
+                           Parent/Major/Sub is picked above -- never a gate, typing a
+                           brand new value always works (Rack/Row stay free-form). *@
+                        <div class="col-md-6 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Rack</label>
-                            <input type="text" name="Rack" id="reg-rack" class="form-control" placeholder="e.g. FLOOR, A" />
+                            <input type="text" name="Rack" id="reg-rack" class="form-control" placeholder="e.g. FLOOR, A" autocomplete="off" />
+                            <div id="reg-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-6 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Row</label>
-                            <input type="text" name="Row" id="reg-row" class="form-control" placeholder="e.g. 1, 2" />
+                            <input type="text" name="Row" id="reg-row" class="form-control" placeholder="e.g. 1, 2" autocomplete="off" />
+                            <div id="reg-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                         </div>
                     </div>
 
@@ -2211,6 +2254,16 @@
                             </select>
                         </div>
                     </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6 position-relative">
+                            <input type="text" id="exp-rack" class="form-control form-control-sm" placeholder="Any Rack..." autocomplete="off" />
+                            <div id="exp-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                        </div>
+                        <div class="col-md-6 position-relative">
+                            <input type="text" id="exp-row" class="form-control form-control-sm" placeholder="Any Row..." autocomplete="off" />
+                            <div id="exp-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                        </div>
+                    </div>
                     <input type="hidden" name="exportFda" id="exp-fda" />
 
                     <hr class="border-secondary" />
@@ -2272,6 +2325,15 @@
     // Team -> home Line, e.g. { "Samurai": "Commercial Packaged/Splits" }. A
     // team with no assigned Line simply has no key here.
     const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    // Rack/Row suggestions (Pass 23), keyed "ParentCode|MajorCode|SubCode" --
+    // see BuildRackRowMap(). Deliberately data-derived, not a managed
+    // vocabulary: Rack/Row stay free-form, so a key with nothing typed under
+    // it yet just yields no suggestions, never a block.
+    const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+    function racksRowsFor(pCode, mCode, sCode) {
+        const key = (pCode || '') + '|' + (mCode || '') + '|' + (sCode || '');
+        return rackRowMap[key] || { racks: [], rows: [] };
+    }
 
     function executeSubmit(id, btnElement) {
         const f = document.getElementById(id);
@@ -2495,7 +2557,7 @@
             && action !== 'Ownership' && action !== 'Edit Details';
 
         sel.innerHTML = '';
-        if (!show) { div.style.display = 'none'; return; }
+        if (!show) { div.style.display = 'none'; refreshDeleteVariantBtn(); return; }
 
         vars.forEach(function (v) {
             const o = document.createElement('option');
@@ -2516,6 +2578,36 @@
                                     : 'Which physical stack this action applies to.');
         }
         div.style.display = 'block';
+        refreshDeleteVariantBtn();
+    }
+
+    // Admin-only: a zero-qty stack on a multi-variant item has no other way
+    // to go away (Delete Item needs the item's TOTAL to be 0). Shown only
+    // when the variant selector itself is showing a real (non-"NEW")
+    // multi-variant choice and that choice is currently empty.
+    function refreshDeleteVariantBtn() {
+        const btn = document.getElementById('stock-delete-variant-btn');
+        if (!btn) return;   // not rendered at all for non-Admin
+        const div = document.getElementById('stock-variant-div');
+        const sel = document.getElementById('stock-variant-sel');
+        const item = getStockItem();
+        const activeVarCount = (item && item.variants) ? item.variants.length : 0;
+        const isRealVariant = sel && sel.value && sel.value !== 'NEW';
+        const v = isRealVariant ? getSelectedVariant(item) : null;
+        const show = div && div.style.display !== 'none' && isRealVariant && activeVarCount > 1 && v && v.qty === 0;
+        btn.style.display = show ? '' : 'none';
+    }
+
+    function openDeleteVariant() {
+        const item = getStockItem();
+        const v = getSelectedVariant(item);
+        if (!item || !v) return;
+        document.getElementById('delete-variant-item-id').value = item.id;
+        document.getElementById('delete-variant-variant-id').value = v.vid;
+        document.getElementById('delete-variant-label').textContent =
+            item.name + ' — Variant ' + v.num + ' (' + (v.fda || '--') + ')';
+        const el = document.getElementById('deleteVariantModal');
+        if (el) { new bootstrap.Modal(el).show(); }
     }
 
     // Transfer only: warn when the destination matches a sibling stack, since
@@ -2977,6 +3069,7 @@
         if (!sel) return;
         sel.addEventListener('change', function () {
             const action = document.getElementById('stock-action-type').value;
+            refreshDeleteVariantBtn();
             if (typeof refreshTcFields === 'function') refreshTcFields(action);
             if (action === 'Location Transfer') {
                 if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
@@ -3147,6 +3240,20 @@
         if (subEl) subEl.addEventListener('change', fdaAndMerge);
         if (rackEl) rackEl.addEventListener('input', fdaAndMerge);
         if (rowEl) rowEl.addEventListener('input', fdaAndMerge);
+
+        // Rack/Row suggestions -- loc-parent/major/sub are CODE-valued
+        // selects already (unlike reg-/exp-'s name-valued ones), so no
+        // encodeLoc() needed here.
+        if (rackEl) {
+            bindValueAutocomplete(rackEl, document.getElementById('loc-rack-list'), function () {
+                return racksRowsFor(parentEl ? parentEl.value : '', majorEl ? majorEl.value : '', subEl ? subEl.value : '').racks;
+            });
+        }
+        if (rowEl) {
+            bindValueAutocomplete(rowEl, document.getElementById('loc-row-list'), function () {
+                return racksRowsFor(parentEl ? parentEl.value : '', majorEl ? majorEl.value : '', subEl ? subEl.value : '').rows;
+            });
+        }
     })();
 
     function syncHeaderOffset() {
@@ -3513,7 +3620,11 @@
     // and fires a real 'input' event so whatever's already listening (the ID
     // preview, unit-capture toggle) still runs -- suppressed once so that
     // synthetic event doesn't reopen this same list.
-    function bindValueAutocomplete(inputEl, listEl, values) {
+    // valuesOrGetter: a plain array (static, e.g. known Types) OR a function
+    // returning the current array (dynamic, e.g. Rack/Row suggestions that
+    // depend on whatever Parent/Major/Sub is picked right now) -- evaluated
+    // fresh on every keystroke either way, so a dynamic source never goes stale.
+    function bindValueAutocomplete(inputEl, listEl, valuesOrGetter) {
         if (!inputEl || !listEl) return;
         let suppress = false;
         inputEl.addEventListener('input', function () {
@@ -3521,6 +3632,7 @@
             const val = inputEl.value.trim().toLowerCase();
             listEl.innerHTML = '';
             if (!val) { listEl.style.display = 'none'; return; }
+            const values = (typeof valuesOrGetter === 'function') ? (valuesOrGetter() || []) : valuesOrGetter;
             const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
             if (matches.length === 0) { listEl.style.display = 'none'; return; }
             listEl.style.display = 'block';
@@ -3827,13 +3939,27 @@
         return pos.map(p => clean[p - 1]).join("");
     }
 
-        function bindCascadingLocation(pId, mId, sId, rkId, rwId, fdaId) {
+        function bindCascadingLocation(pId, mId, sId, rkId, rwId, fdaId, rkListId, rwListId) {
             const pSel = document.getElementById(pId);
             const mSel = document.getElementById(mId);
             const sSel = document.getElementById(sId);
             const rkIn = document.getElementById(rkId);
             const rwIn = document.getElementById(rwId);
             const fdaOut = document.getElementById(fdaId);
+
+            // Rack/Row suggestions, re-evaluated on every keystroke against
+            // whatever Parent/Major/Sub is picked right now (bindValueAutocomplete
+            // takes a getter, not a fixed list, for exactly this).
+            if (rkIn && rkListId) {
+                bindValueAutocomplete(rkIn, document.getElementById(rkListId), function () {
+                    return racksRowsFor(encodeLoc(pSel ? pSel.value : ''), encodeLoc(mSel ? mSel.value : ''), encodeLoc(sSel ? sSel.value : '')).racks;
+                });
+            }
+            if (rwIn && rwListId) {
+                bindValueAutocomplete(rwIn, document.getElementById(rwListId), function () {
+                    return racksRowsFor(encodeLoc(pSel ? pSel.value : ''), encodeLoc(mSel ? mSel.value : ''), encodeLoc(sSel ? sSel.value : '')).rows;
+                });
+            }
 
             function updateFda() {
                 if(!pSel || !fdaOut) return;
@@ -3887,8 +4013,8 @@
             }
         }
 
-        bindCascadingLocation('reg-parent', 'reg-major', 'reg-sub', 'reg-rack', 'reg-row', 'reg-fda');
-        bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', null, null, 'exp-fda');
+        bindCascadingLocation('reg-parent', 'reg-major', 'reg-sub', 'reg-rack', 'reg-row', 'reg-fda', 'reg-rack-list', 'reg-row-list');
+        bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', 'exp-rack', 'exp-row', 'exp-fda', 'exp-rack-list', 'exp-row-list');
     })();
 
     // New Item Registry: serial capture for compressors, TC-count declaration

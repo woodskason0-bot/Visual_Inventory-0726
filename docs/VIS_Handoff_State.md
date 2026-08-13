@@ -183,8 +183,9 @@ on a `CompressorUnit`/`MotorUnit`, no line on a `Pending` order. Removes the
 or already-`Returned`/`Scrapped` unit history rows — those keep reading under the
 now-defunct `ItemId`, same soft-hide philosophy as Team/User, just applied to a real
 delete for the first time. Re-registering the same model later mints a fresh `ItemId`;
-numbers are never reused. Gated Admin (5) — the only action in the app that removes a
-catalog row outright, not just its stock.
+numbers are never reused. Gated Admin (5). Pass 23 added a second, narrower hard-delete
+alongside this one — see `DeleteVariant` below — for the case Delete Item doesn't cover:
+one empty stack on an item that still carries stock elsewhere.
 
 **`TransactionLog.ItemName` is a point-in-time snapshot (Pass 13).** The Activity Feed's
 primary lookup is still a live join against `InventoryItems` (so a rename shows up
@@ -760,6 +761,65 @@ same dropdown styling everywhere a text-datalist field still looked different.**
   after the fix, versus the error firing before it on every prior pass that
   touched this page.
 
+**Pass 23 (2026-08-13) — Delete Stack (variant-level hard delete), Rack/Row
+cascading suggestions everywhere they appear.**
+
+- **`InventoryService.DeleteVariant(itemId, variantId)` fills the real gap Delete
+  Item leaves.** Delete Item requires the item's TOTAL quantity to be 0; a single
+  variant that drains to 0 while OTHER variants still carry stock (the exact real
+  scenario that surfaced this: a compressor got 2 units added to a brand-new pile,
+  both scrapped, leaving an empty second stack with no way to remove it) had no
+  path to go away at all before this. Same guard shape as Delete Item: refuses if
+  the variant's own quantity isn't 0, refuses if it's the item's ONLY active
+  variant (points at Delete Item instead — deleting a lone empty stack is really
+  "delete the item"), refuses if an On-Hand `CompressorUnit`/`MotorUnit` still
+  references it, refuses if a Pending order's `RequestedVariantId` points at it.
+  On success removes the `ItemVariant` row and logs `"Stack Deleted"` — same
+  "TransactionLogs keep reading under the old FdaString, nothing here touches
+  them" philosophy as Delete Item. **Gated Admin (5)**, same tier as Delete Item
+  — this removes a row outright, not just a quantity.
+- **Surfaced on Modify Stock, not the search-result card.** Delete Item lives on
+  the card because it acts on the whole item, independent of any in-progress
+  action; Delete Stack needs to know WHICH variant, which only exists once the
+  Location/Variant selector is showing. A small trash-icon button
+  (`stock-delete-variant-btn`, Admin-only, server-rendered) sits next to that
+  selector, shown/hidden by `refreshDeleteVariantBtn()` whenever the currently
+  chosen variant's quantity is 0 AND the item has more than one active variant
+  (a single-variant zero-qty item still correctly funnels to Delete Item, not
+  this). Clicking it opens a small confirm modal (`deleteVariantModal`, mirrors
+  `deleteItemModal`'s shape exactly) posting to a new `DeleteVariant` action.
+  **Verified live against the real db**, on the actual item that surfaced the
+  gap (CCR-0013): the button appeared only once its empty Variant 2 was
+  selected, the confirm modal populated the right label, and the real delete
+  removed exactly that variant — Variant 1's 3 units and the item's identity
+  untouched, `TransactionLog` shows `"Stack Deleted ... Variant 2 (ETRD.TALA.
+  TAL1.FLOOR.0) deleted"`. This was a real fix to the user's actual stuck
+  item, not a synthetic test case.
+- **Rack/Row now cascade-suggest from real stock data, on all four surfaces
+  that have them** (New Item Registry, Bulk Intake, Export Wizard's filter —
+  new fields there, didn't exist before — and Modify Stock's Location
+  Transfer/Add-to-new-location pane). Deliberately **not** a managed
+  vocabulary table like Parent/Major/Sub — `ItemVariant.cs` already documents
+  Rack/Row as "free-form, team-assigned," and the backlog's older "Rack/Row as
+  managed levels" idea is a bigger, separate thing this doesn't attempt.
+  Instead: `HomeController.BuildRackRowMap()` groups active `ItemVariant`s by
+  `(Parent, Major, Sub)` **code** tuple and returns the distinct Rack/Row
+  values already typed in under each — a suggestion, never a gate, so a
+  brand new value always types in fine. New generic `bindValueAutocomplete`
+  capability (already built in Pass 22 for Type fields) now also accepts a
+  **getter function**, not just a fixed array, since Rack/Row's valid
+  suggestion set changes live as Parent/Major/Sub changes — re-evaluated on
+  every keystroke rather than rebound on every cascade change. Two of the
+  four surfaces (Registry, Export) have NAME-valued Parent/Major/Sub selects
+  and need `encodeLoc()` before the lookup; the other two (Modify Stock,
+  Intake) already carry CODE-valued selects directly. **Verified live on all
+  four**: picking External Yard → Connex Area → Connex Box 6 correctly
+  narrowed Rack suggestions to `[FLOOR, RACK 1, RACK 2]` on Registry, Modify
+  Stock, and Export Wizard, and to `[FLOOR]` on Intake (a different real Sub
+  with less data); clicking a suggestion set the field and fed the FDA
+  preview correctly; typing an unlisted value was accepted with the list
+  correctly staying closed.
+
 ---
 
 ## Traps — read before editing
@@ -846,7 +906,10 @@ test copy back off.
 - **9D — CSV import** for volume intake. In-app entry covers small lists; I handle large
   ones by SQL.
 - **Rack/Row as managed levels.** The `Locations` table already supports arbitrary depth
-  via `ParentId`.
+  via `ParentId`. Pass 23 covered the narrower, more likely want — cascading
+  suggestions sourced from real stock data, still free text — deliberately without
+  building this. Revisit only if free-form Rack/Row actually turns out to need
+  Settings-level governance (rename/hide/audit) the way Parent/Major/Sub do.
 - **Locations tree view** with add-in-place, replacing the flat table + level picker.
 - **6C — pickup selects a serial** from a dropdown instead of typing. Optional now that
   match-or-create puts correctness in the service.
@@ -1112,7 +1175,9 @@ models: instead of a silent quick-add, a name match now routes through a batch M
 Stock action, applied in one transaction. Pass 22 rebuilt that batch review as live
 inline sections instead of a modal (feedback that the modal felt disconnected), and
 added the same styled-dropdown treatment to three more text fields that were still
-using native `<datalist>`s or nothing at all.
+using native `<datalist>`s or nothing at all. Pass 23 added Delete Stack (a
+variant-level hard delete for the gap Delete Item doesn't cover) and cascading,
+still-free-text Rack/Row suggestions across Registry/Intake/Export/Modify Stock.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
 were all tested directly against that same live db through the running app (Passes 16
@@ -1123,10 +1188,12 @@ Pass 18 was tested against a scratchpad copy, not the live file. Pass 20 was tes
 read-only against the live app/db (nothing was actually submitted, so nothing needed
 cleanup). Passes 21 and 22 each made one small real write against the live db (the
 same +1/-1 round trip on CCR-0001, once against each version of the batch write path)
-and left it net zero both times, audit trail intact.
+and left it net zero both times, audit trail intact. Pass 23 made one real write that
+was NOT reversed afterward — it was the actual fix requested: deleted CCR-0013's
+genuinely-empty Variant 2, the real stuck stack that surfaced the whole feature.
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
 already published and running; everything from the Location Transfer fix through
-Pass 22 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
+Pass 23 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
 committed and pushed but **not yet in a published release** — still need a fresh
 `dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor

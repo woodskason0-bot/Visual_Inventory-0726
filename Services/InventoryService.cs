@@ -432,6 +432,61 @@ namespace Visual_Inventory_System.Services
             return (true, $"{itemId} deleted. Its transaction history remains in the audit log.");
         }
 
+        /// <summary>
+        /// Hard-deletes ONE empty stack (ItemVariant) without touching the rest
+        /// of the item -- the gap Delete Item doesn't cover, since Delete Item
+        /// requires the item's TOTAL quantity to be 0, not just one variant's.
+        /// Surfaces after a variant drains to 0 (a Scrap, a Location Transfer
+        /// that fully merges elsewhere, etc.) but the item still carries stock
+        /// at other locations. Same hard-delete philosophy as Delete Item --
+        /// TransactionLogs referencing this variant's old FdaString keep
+        /// reading sensibly, nothing here touches them.
+        /// </summary>
+        public (bool ok, string message) DeleteVariant(string itemId, int variantId)
+        {
+            var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
+            if (item == null) return (false, "Item not found.");
+
+            var variant = item.Variants.FirstOrDefault(v => v.Id == variantId && !v.IsRetired);
+            if (variant == null) return (false, "That stack no longer exists.");
+
+            if (variant.Quantity != 0)
+                return (false, $"Can't delete -- Variant {variant.VariantNumber} still has {variant.Quantity} unit(s) on hand.");
+
+            int activeCount = item.Variants.Count(v => !v.IsRetired);
+            if (activeCount <= 1)
+                return (false, $"Variant {variant.VariantNumber} is {itemId}'s only stack -- use Delete Item instead.");
+
+            bool onHandUnits = _db.CompressorUnits.Any(c => c.ItemVariantId == variant.Id && c.Status == UnitStatus.OnHand)
+                || _db.MotorUnits.Any(m => m.ItemVariantId == variant.Id && m.Status == UnitStatus.OnHand);
+            if (onHandUnits)
+                return (false, $"Can't delete -- Variant {variant.VariantNumber} still has a recorded unit on it. Log/move it first.");
+
+            bool onPendingOrder = _db.OrderItems.Any(oi => oi.RequestedVariantId == variant.Id && oi.Order.Status == "Pending");
+            if (onPendingOrder)
+                return (false, $"Can't delete -- Variant {variant.VariantNumber} is requested on a pending order.");
+
+            string fda = variant.FdaString;
+            int number = variant.VariantNumber;
+
+            _db.ItemVariants.Remove(variant);
+
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = System.DateTime.UtcNow,
+                ActionType = "Stack Deleted",
+                ItemId = itemId,
+                ItemName = item.ItemName,
+                QuantityChange = 0,
+                Details = $"Variant {number} ({fda}) deleted -- quantity was 0, nothing outstanding there.",
+                User = _currentUser.Name
+            });
+
+            _db.SaveChanges();
+
+            return (true, $"Variant {number} deleted from {itemId}.");
+        }
+
         public IEnumerable<InventoryItem> GetAll() =>
             ApplyLineVisibility(_db.InventoryItems.AsNoTracking().Include(i => i.Variants)).ToList();
 

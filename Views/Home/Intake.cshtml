@@ -83,10 +83,12 @@
                 <select name="majorCode" id="in-major" class="form-select"><option value="">&mdash;</option></select></div>
             <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Sub</label>
                 <select name="subCode" id="in-sub" class="form-select"><option value="">&mdash;</option></select></div>
-            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Rack</label>
-                <input type="text" name="rack" class="form-control" /></div>
-            <div class="col-md-2"><label class="form-label small fw-bold text-light-gray">Row</label>
-                <input type="text" name="row" class="form-control" /></div>
+            <div class="col-md-2 position-relative"><label class="form-label small fw-bold text-light-gray">Rack</label>
+                <input type="text" name="rack" id="in-rack" class="form-control" autocomplete="off" />
+                <div id="in-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div></div>
+            <div class="col-md-2 position-relative"><label class="form-label small fw-bold text-light-gray">Row</label>
+                <input type="text" name="row" id="in-row" class="form-control" autocomplete="off" />
+                <div id="in-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div></div>
         </div>
 
         <div class="mb-3" id="req-loc-row" style="display:none;">
@@ -153,6 +155,14 @@
     const teamLines    = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
     const myLine       = @Html.Raw(ViewBag.MyLineJson ?? "\"\"");
     const myBranch     = @Html.Raw(ViewBag.MyBranchJson ?? "\"\"");
+    // Rack/Row suggestions (Pass 23), keyed "ParentCode|MajorCode|SubCode" --
+    // data-derived from real stock, not a managed vocabulary. Never a gate;
+    // typing a brand new value always works.
+    const rackRowMap   = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+    function racksRowsFor(pCode, mCode, sCode) {
+        const key = (pCode || '') + '|' + (mCode || '') + '|' + (sCode || '');
+        return rackRowMap[key] || { racks: [], rows: [] };
+    }
 
     // Same 1/3/5/last rule as Services/LocationCodec.Encode(). Duplicated from
     // Index.cshtml -- see the note there for why it isn't in site.js.
@@ -251,6 +261,18 @@
             const mName = Object.keys(majors).find(function (k) { return encodeLoc(k) === m.value; });
             fill(s, mName ? (majors[mName] || []) : []);
         });
+
+        // Rack/Row suggestions -- p/m/s values are already codes here (unlike
+        // Registry/Export's name-valued selects), so no encodeLoc() needed.
+        const rackIn = document.getElementById('in-rack'), rowIn = document.getElementById('in-row');
+        if (typeof bindValueAutocomplete === 'function') {
+            bindValueAutocomplete(rackIn, document.getElementById('in-rack-list'), function () {
+                return racksRowsFor(p.value, m.value, s.value).racks;
+            });
+            bindValueAutocomplete(rowIn, document.getElementById('in-row-list'), function () {
+                return racksRowsFor(p.value, m.value, s.value).rows;
+            });
+        }
     })();
 
     // Generic single-value autocomplete (Type fields): a plain list of
@@ -260,13 +282,18 @@
     // suggestion sets the input's value and fires a real 'input' event so
     // whatever's already listening (unit-capture rebuild, etc.) still runs --
     // suppressed once so that synthetic event doesn't reopen this same list.
-    function bindValueAutocomplete(inputEl, listEl, values) {
+    // valuesOrGetter: a plain array (static, e.g. known Types) OR a function
+    // returning the current array (dynamic, e.g. Rack/Row suggestions that
+    // depend on whatever Parent/Major/Sub is picked right now) -- evaluated
+    // fresh on every keystroke either way, so a dynamic source never goes stale.
+    function bindValueAutocomplete(inputEl, listEl, valuesOrGetter) {
         let suppress = false;
         inputEl.addEventListener('input', function () {
             if (suppress) { suppress = false; return; }
             const val = inputEl.value.trim().toLowerCase();
             listEl.innerHTML = '';
             if (!val) { listEl.style.display = 'none'; return; }
+            const values = (typeof valuesOrGetter === 'function') ? (valuesOrGetter() || []) : valuesOrGetter;
             const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
             if (matches.length === 0) { listEl.style.display = 'none'; return; }
             listEl.style.display = 'block';

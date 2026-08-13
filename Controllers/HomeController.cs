@@ -112,6 +112,7 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.LocationParents = BuildLocationParents();
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
             ViewBag.LocationHierarchyCodedJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationHierarchyCoded());
+            ViewBag.RackRowJson = System.Text.Json.JsonSerializer.Serialize(BuildRackRowMap());
             // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
             // -- the one copy of the location vocabulary 7C missed, because it was
             // an image map rather than a dropdown.
@@ -472,6 +473,22 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index");
         }
 
+        // Deletes ONE empty stack without touching the rest of the item --
+        // Delete Item requires the item's TOTAL quantity to be 0, which never
+        // fires for a variant that drained while the item still has stock
+        // elsewhere. Same gate as Delete Item: Admin, since this removes a
+        // row outright rather than mutating a quantity.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Admin)]
+        public IActionResult DeleteVariant(string itemId, int variantId)
+        {
+            var (ok, message) = _inventoryService.DeleteVariant(itemId, variantId);
+            if (ok) TempData["Success"] = message;
+            else TempData["Error"] = message;
+            return RedirectToAction("Index");
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -623,6 +640,28 @@ namespace Visual_Inventory_System.Controllers
             return tree;
         }
 
+        // Rack/Row suggestions (Pass 23) -- deliberately NOT a managed
+        // vocabulary table like Parent/Major/Sub. Rack/Row stay free-form,
+        // team-assigned values (see ItemVariant.cs); this just surfaces what's
+        // already been typed into real stock at a given Parent/Major/Sub, so
+        // picking one is a shortcut, never a gate -- a brand new value always
+        // types in fine. Keyed "Parent|Major|Sub" (codes, blanks kept as
+        // empty segments so the key always has exactly 3 parts).
+        private Dictionary<string, object> BuildRackRowMap()
+        {
+            return _db.ItemVariants.AsNoTracking().Where(v => !v.IsRetired).ToList()
+                .GroupBy(v => $"{v.Parent}|{v.Major}|{v.Sub}")
+                .ToDictionary(
+                    g => g.Key,
+                    g => (object)new
+                    {
+                        racks = g.Select(v => v.Rack).Where(r => !string.IsNullOrWhiteSpace(r))
+                                  .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(r => r).ToList(),
+                        rows = g.Select(v => v.Row).Where(r => !string.IsNullOrWhiteSpace(r))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(r => r).ToList()
+                    });
+        }
+
 
         // =====================================================================
         // BULK INTAKE (Pass 9) -- Standard+ can submit.
@@ -636,6 +675,7 @@ namespace Visual_Inventory_System.Controllers
         {
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
             ViewBag.LocationParents = BuildLocationParents();
+            ViewBag.RackRowJson = System.Text.Json.JsonSerializer.Serialize(BuildRackRowMap());
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
             // Team -> home Line, same map Registration/Ownership already use, so
