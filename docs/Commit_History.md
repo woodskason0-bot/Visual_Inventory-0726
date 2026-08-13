@@ -11,6 +11,37 @@ landed, when."
 
 ## 2026-08-13
 
+### `01bfae6` — docs: log Pass 24 (responsive pass) in handoff/addendum
+**Touched:** both `docs/` files.
+
+### `d21d799` — Pass 24 (checkpoint 3): table-responsive wrapping for Index.cshtml's modal tables
+Last 6 unwrapped tables: Stock Alerts/Out-of-Stock previews, both compressor Log
+Units tables, motor Log Units, PN backlog. Closes out the table-overflow half of the
+responsive pass -- every `<table>` in the app is now either already-narrow or wrapped.
+**Touched:** `Views/Home/Index.cshtml`.
+
+### `da4a558` — Pass 24 (checkpoint 2): table-responsive wrapping across remaining views
+Same fix applied to AllItems, both Logs tabs, OrderDetails, Orders, both PickupQueue
+tables, and all 7 Settings tables.
+**Touched:** `Views/Home/AllItems.cshtml`, `Views/Home/Logs.cshtml`,
+`Views/Home/OrderDetails.cshtml`, `Views/Home/Orders.cshtml`,
+`Views/Home/PickupQueue.cshtml`, `Views/Settings/Index.cshtml`.
+
+### `f644898` — Pass 24 (checkpoint 1): dashboard grid, nav, and Intake table now responsive
+The app's first responsive pass -- zero media queries existed anywhere. The
+dashboard's fixed 6-column grid (two 380px sidebars, `position:fixed`) didn't work
+below ~1400px with no scroll escape. Added breakpoints reflowing the same markup
+into a stacked flex column below 1100px (neutralizing the `!important`
+r*/c*/row-span-*/col-span-* placement utilities), narrower sidebars below 1400px,
+holo-viewer single-column below 900px. Found and fixed two real overflow bugs via
+live-testing: `.map-stats-bar`'s 4-across row bled past `.map-container`'s
+deliberate `overflow:visible`, fixed with `flex-wrap`; the top nav's
+`navbar-expand-sm` (576px) tried to render the full inline nav on a real 768px
+tablet and overflowed, bumped to `-lg` (992px). Intake's row-entry table wrapped in
+`table-responsive`. Verified live at 375px/768px, desktop confirmed unregressed.
+**Touched:** `Views/Home/Index.cshtml`, `Views/Home/Intake.cshtml`,
+`Views/Shared/_Layout.cshtml`.
+
 ### `08cd9bc` — Pass 23: Delete Stack (variant-level hard delete), Rack/Row cascading suggestions
 New `InventoryService.DeleteVariant` closes the gap Delete Item leaves -- a single
 empty variant on an item that still carries stock elsewhere (Delete Item needs the
