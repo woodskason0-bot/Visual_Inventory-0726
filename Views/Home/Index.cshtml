@@ -2048,9 +2048,10 @@
                             <input type="text" name="RheemPartNumber" id="reg-rpn" class="form-control fw-bold" required placeholder="From the label" />
                             <small class="text-warning" style="font-size:10px; display:none;" id="reg-rpn-warn"></small>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-4 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Type</label>
-                            <input type="text" name="Type" id="reg-type" class="form-control" placeholder="e.g. Motor, Unit..." />
+                            <input type="text" name="Type" id="reg-type" class="form-control" placeholder="e.g. Motor, Unit..." autocomplete="off" />
+                            <div id="reg-type-autocomplete-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 180px; overflow-y: auto; width: calc(100% - 24px);"></div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Brand</label>
@@ -3504,6 +3505,55 @@
     bindAutocomplete('alert-search', 'alert-autocomplete-list', 'alert-item-id', true);
     bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
     bindAutocomplete('reg-name', 'reg-name-autocomplete-list', null, false, false, true);
+
+    // Generic single-value autocomplete (Type fields): a plain list of
+    // strings, no id/qty metadata like bindAutocomplete's item matches carry.
+    // Same list-group visual pattern as bindAutocomplete, so every dropdown
+    // in the app looks the same. Picking a suggestion sets the input's value
+    // and fires a real 'input' event so whatever's already listening (the ID
+    // preview, unit-capture toggle) still runs -- suppressed once so that
+    // synthetic event doesn't reopen this same list.
+    function bindValueAutocomplete(inputEl, listEl, values) {
+        if (!inputEl || !listEl) return;
+        let suppress = false;
+        inputEl.addEventListener('input', function () {
+            if (suppress) { suppress = false; return; }
+            const val = inputEl.value.trim().toLowerCase();
+            listEl.innerHTML = '';
+            if (!val) { listEl.style.display = 'none'; return; }
+            const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
+            if (matches.length === 0) { listEl.style.display = 'none'; return; }
+            listEl.style.display = 'block';
+            matches.forEach(function (v) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
+                btn.style.backgroundColor = '#1C1E24';
+                btn.textContent = v;
+                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
+                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
+                btn.onclick = function () {
+                    listEl.style.display = 'none';
+                    suppress = true;
+                    inputEl.value = v;
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                };
+                listEl.appendChild(btn);
+            });
+        });
+        document.addEventListener('click', function (e) {
+            if (e.target !== inputEl) listEl.style.display = 'none';
+        });
+    }
+
+    // Registry's Type field: same distinct-Types source as everywhere else
+    // that suggests one (derived from itemsList -- no server round trip
+    // needed, this page already has the full item list loaded).
+    bindValueAutocomplete(
+        document.getElementById('reg-type'),
+        document.getElementById('reg-type-autocomplete-list'),
+        [...new Set(itemsList.map(function (i) { return i.type; }).filter(Boolean))].sort()
+    );
 
     // Registration dup-check: warn live if the typed Rheem PN already belongs
     // to an existing item ("add stock to that item instead of a twin").

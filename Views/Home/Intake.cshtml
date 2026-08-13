@@ -108,7 +108,6 @@
         </table>
 
         <datalist id="known-items"></datalist>
-        <datalist id="known-types">@foreach (var t in knownTypes) { <option value="@t"></option> }</datalist>
 
         <div class="d-flex gap-2 flex-wrap">
             <button type="button" class="btn btn-outline-secondary" id="add-row">+ Add row</button>
@@ -117,60 +116,31 @@
         </div>
     </form>
 
-    @* Pass 21: rows whose typed name exact-matched an existing item land here
-       instead of the grid above -- excluded from Import, applied through the
-       batch review modal below instead. *@
+    @* Pass 21/22: a row whose typed name exact-matches an existing item is
+       pulled out of the grid above and lands here instead, as its own live
+       Modify Stock section -- not a separate summary list behind a button.
+       A second row for the SAME item grows that section (bumps quantity,
+       extends serial/TC inputs) rather than opening a second one, so
+       whatever's already been typed into it survives. Excluded from Import;
+       applied through Apply All below via a separate form/endpoint (a form
+       can't nest inside the Import form above). *@
     <div id="already-registered-wrap" class="intake-card p-3 mt-3" style="display:none;">
-        <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-            <h6 class="text-white fw-bold mb-0">
-                Already registered <span id="ar-count" class="badge bg-secondary">0</span>
-            </h6>
-            <button type="button" class="btn btn-sm btn-outline-warning fw-bold" id="open-stock-review">Modify stock counts / other</button>
-        </div>
-        <table class="table table-sm align-middle mb-2">
-            <thead><tr><th>Model</th><th>ID</th><th>Qty typed</th><th></th></tr></thead>
-            <tbody id="already-registered-rows"></tbody>
-        </table>
-        <p class="text-light-gray small mb-0">
-            These match existing items by name, so they&rsquo;re excluded from Import above &mdash;
-            use &ldquo;Modify stock counts / other&rdquo; to apply them instead.
+        <h6 class="text-white fw-bold mb-1">Already registered</h6>
+        <p class="text-light-gray small mb-2">
+            These match existing items by name, so they&rsquo;re excluded from Import above.
+            Review/adjust each one below, then Apply All.
         </p>
+        <form asp-controller="Home" asp-action="SubmitIntakeStockUpdates" method="post" id="stock-review-form">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="parentCode" id="sr-parentCode" />
+            <input type="hidden" name="majorCode" id="sr-majorCode" />
+            <input type="hidden" name="subCode" id="sr-subCode" />
+            <input type="hidden" name="rack" id="sr-rack" />
+            <input type="hidden" name="row" id="sr-row" />
+            <div id="stock-review-sections" style="max-height: 480px; overflow-y: auto;"></div>
+            <button type="submit" class="btn btn-success fw-bold mt-2" id="stock-review-apply" disabled>Apply All</button>
+        </form>
     </div>
-
-    @* Batch Modify Stock review -- separate form/modal (a form can't nest
-       inside the Import form above). Sections are built client-side from the
-       Already-registered list when opened; field names are stamped with a
-       per-section index right before submit, same convention the Import
-       form's extra-serial/TC slots already use. *@
-    <form asp-controller="Home" asp-action="SubmitIntakeStockUpdates" method="post" id="stock-review-form">
-        @Html.AntiForgeryToken()
-        <input type="hidden" name="parentCode" id="sr-parentCode" />
-        <input type="hidden" name="majorCode" id="sr-majorCode" />
-        <input type="hidden" name="subCode" id="sr-subCode" />
-        <input type="hidden" name="rack" id="sr-rack" />
-        <input type="hidden" name="row" id="sr-row" />
-        <div class="modal fade" id="stockReviewModal" tabindex="-1">
-            <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-                <div class="modal-content" style="background: var(--vis-card); border: 1px solid var(--vis-card-border);">
-                    <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
-                        <h5 class="modal-title text-white fw-bold">Modify stock counts / other</h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body text-white">
-                        <p class="text-light-gray small">
-                            Review each item, then check it off. Apply All stays disabled until every
-                            section below is acknowledged.
-                        </p>
-                        <div id="stock-review-sections"></div>
-                    </div>
-                    <div class="modal-footer" style="border-top: 1px solid var(--vis-card-border);">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-success fw-bold" id="stock-review-apply" disabled>Apply All</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </form>
 </div>
 
 <script>
@@ -283,6 +253,45 @@
         });
     })();
 
+    // Generic single-value autocomplete (Type fields): a plain list of
+    // strings, no id/qty metadata like the model matches below carry. Same
+    // visual pattern as bindAutocomplete's list-group panel (Registry/Modify
+    // Stock search), so every dropdown in the app looks the same. Picking a
+    // suggestion sets the input's value and fires a real 'input' event so
+    // whatever's already listening (unit-capture rebuild, etc.) still runs --
+    // suppressed once so that synthetic event doesn't reopen this same list.
+    function bindValueAutocomplete(inputEl, listEl, values) {
+        let suppress = false;
+        inputEl.addEventListener('input', function () {
+            if (suppress) { suppress = false; return; }
+            const val = inputEl.value.trim().toLowerCase();
+            listEl.innerHTML = '';
+            if (!val) { listEl.style.display = 'none'; return; }
+            const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
+            if (matches.length === 0) { listEl.style.display = 'none'; return; }
+            listEl.style.display = 'block';
+            matches.forEach(function (v) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
+                btn.style.backgroundColor = '#1C1E24';
+                btn.textContent = v;
+                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
+                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
+                btn.onclick = function () {
+                    listEl.style.display = 'none';
+                    suppress = true;
+                    inputEl.value = v;
+                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                };
+                listEl.appendChild(btn);
+            });
+        });
+        document.addEventListener('click', function (e) {
+            if (e.target !== inputEl) listEl.style.display = 'none';
+        });
+    }
+
     // Model autocomplete: suggest what already exists, and prefill the rest of the
     // row from it so adding stock to a known item doesn't mean retyping its brand.
     (function () {
@@ -292,6 +301,7 @@
         });
         const byName = {};
         knownItems.forEach(function (i) { byName[i.name.toLowerCase()] = i; });
+        const knownTypesArr = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(knownTypes));
 
         const body = document.getElementById('intake-rows');
 
@@ -356,12 +366,108 @@
             }
         }
 
-        // ---- Already registered (Pass 21) --------------------------------
-        // Raw entries, one per row that got pulled out -- NOT merged yet.
-        // Merging by item id happens when the review modal opens, so two rows
-        // naming the same known item combine into one section instead of
-        // racing each other as two separate Add actions.
-        const alreadyRegistered = [];
+        // ---- Already registered (Pass 21/22) -----------------------------
+        // A name match creates a LIVE inline Modify Stock section immediately
+        // -- no separate list, no button to open a modal. A second row for
+        // the SAME item grows that section in place (bumps quantity, extends
+        // serial/TC inputs) instead of opening a duplicate, so anything
+        // already typed into it survives. sections: itemId -> live state.
+        const sections = {};
+
+        function refreshApplyEnabled() {
+            document.getElementById('stock-review-apply').disabled = Object.keys(sections).length === 0;
+        }
+
+        // Compressor serial boxes track quantity 1:1 -- grow/shrink the box
+        // count to match, preserving whatever's already typed. New boxes
+        // opened up by a merge (not just a manual qty edit) drain from
+        // entry.pendingSerials so the newly-typed serials land in them.
+        function resizeSerialBoxes(entry) {
+            const qty = Math.max(0, parseInt(entry.qtyIn.value, 10) || 0);
+            const extra = entry.el.querySelector('.sr-extra');
+            const existing = Array.from(extra.querySelectorAll('.sr-serial'));
+            for (let i = existing.length; i < qty; i++) {
+                const inp = document.createElement('input');
+                inp.className = 'form-control form-control-sm mb-1 sr-serial';
+                inp.placeholder = 'Unit ' + (i + 1) + ' serial (optional)';
+                inp.value = entry.pendingSerials.shift() || '';
+                extra.appendChild(inp);
+            }
+            for (let i = existing.length - 1; i >= qty; i--) existing[i].remove();
+        }
+
+        function reclampTc(entry) {
+            const tcIn = entry.el.querySelector('.sr-tc');
+            if (!tcIn) return;
+            const qty = Math.max(0, parseInt(entry.qtyIn.value, 10) || 0);
+            tcIn.max = String(qty);
+            if ((parseInt(tcIn.value, 10) || 0) > qty) tcIn.value = String(qty);
+        }
+
+        function createSection(hit, qty, serials, tcQty) {
+            const known = byName[hit.name.toLowerCase()] || {};
+            const current = (known.quantity != null) ? known.quantity : '?';
+            const isComp = isCompressorTypeLocal(hit.type);
+            const isMotor = isMotorTypeLocal(hit.type);
+
+            const sec = document.createElement('div');
+            sec.className = 'stock-review-section mb-3 p-3';
+            sec.style.cssText = 'border:1px solid var(--vis-card-border); border-radius:8px;';
+            sec.dataset.itemId = hit.id;
+            sec.innerHTML =
+                '<div class="d-flex justify-content-between align-items-start mb-2">' +
+                  '<div><strong class="text-white">' + hit.name + '</strong> ' +
+                  '<span class="text-light-gray small">(' + hit.id + ' &middot; currently ' + current + ' on hand)</span></div>' +
+                  '<button type="button" class="btn btn-sm btn-outline-secondary sr-remove">&times;</button>' +
+                '</div>' +
+                '<div class="row g-2 mb-2">' +
+                  '<div class="col-md-4"><label class="form-label small text-light-gray">Action</label>' +
+                    '<select class="form-select form-select-sm sr-action"><option value="Add" selected>Add</option><option value="Adjustment">Adjustment</option></select></div>' +
+                  '<div class="col-md-4"><label class="form-label small text-light-gray">Quantity</label>' +
+                    '<input type="number" class="form-control form-control-sm sr-qty" min="0" value="' + qty + '" /></div>' +
+                '</div>' +
+                '<div class="sr-extra"></div>';
+            document.getElementById('stock-review-sections').appendChild(sec);
+
+            const entry = {
+                id: hit.id, type: hit.type, isComp: isComp, isMotor: isMotor,
+                el: sec, qtyIn: sec.querySelector('.sr-qty'), pendingSerials: serials.slice()
+            };
+
+            if (isComp) {
+                resizeSerialBoxes(entry);
+                entry.qtyIn.addEventListener('input', function () { resizeSerialBoxes(entry); });
+            } else if (isMotor) {
+                const wrap = document.createElement('div');
+                wrap.className = 'mt-1';
+                wrap.innerHTML = '<label class="form-label small text-light-gray">How many thermocoupled?</label>' +
+                    '<input type="number" class="form-control form-control-sm sr-tc" min="0" max="' + qty + '" value="' + Math.min(tcQty, qty) + '" />';
+                sec.querySelector('.sr-extra').appendChild(wrap);
+                entry.qtyIn.addEventListener('input', function () { reclampTc(entry); });
+            }
+
+            sec.querySelector('.sr-remove').addEventListener('click', function () {
+                delete sections[hit.id];
+                sec.remove();
+                refreshApplyEnabled();
+                if (Object.keys(sections).length === 0) document.getElementById('already-registered-wrap').style.display = 'none';
+            });
+
+            return entry;
+        }
+
+        function growSection(entry, addQty, addSerials, addTc) {
+            const newQty = Math.max(0, parseInt(entry.qtyIn.value, 10) || 0) + addQty;
+            entry.qtyIn.value = String(newQty);
+            if (entry.isComp) {
+                entry.pendingSerials.push.apply(entry.pendingSerials, addSerials);
+                resizeSerialBoxes(entry);
+            } else if (entry.isMotor) {
+                const tcIn = entry.el.querySelector('.sr-tc');
+                tcIn.max = String(newQty);
+                tcIn.value = String(Math.min((parseInt(tcIn.value, 10) || 0) + addTc, newQty));
+            }
+        }
 
         function moveToAlreadyRegistered(tr, hit) {
             const qty = Math.max(1, parseInt(tr.querySelector('[name=qty]').value, 10) || 1);
@@ -372,107 +478,15 @@
             const tcQtyEl = tr.querySelector('.intake-tc-qty');
             const tcQty = tcQtyEl ? (parseInt(tcQtyEl.value, 10) || 0) : 0;
 
-            alreadyRegistered.push({ id: hit.id, name: hit.name, type: hit.type, qty: qty, serials: serials, tcQty: tcQty });
             tr.remove();
-            renderAlreadyRegistered();
-        }
-
-        function renderAlreadyRegistered() {
-            const wrap = document.getElementById('already-registered-wrap');
-            const tbody = document.getElementById('already-registered-rows');
-            tbody.innerHTML = '';
-            alreadyRegistered.forEach(function (entry, idx) {
-                const tr2 = document.createElement('tr');
-                tr2.innerHTML = '<td>' + entry.name + '</td>' +
-                    '<td class="text-light-gray">' + entry.id + '</td>' +
-                    '<td>' + entry.qty + '</td>' +
-                    '<td><button type="button" class="btn btn-sm btn-outline-secondary">&times;</button></td>';
-                tr2.querySelector('button').onclick = function () {
-                    alreadyRegistered.splice(idx, 1);
-                    renderAlreadyRegistered();
-                };
-                tbody.appendChild(tr2);
-            });
-            wrap.style.display = alreadyRegistered.length > 0 ? '' : 'none';
-            document.getElementById('ar-count').textContent = String(alreadyRegistered.length);
-        }
-
-        function refreshApplyEnabled() {
-            const boxes = document.querySelectorAll('#stock-review-sections .sr-ack');
-            const allChecked = boxes.length > 0 && Array.from(boxes).every(function (b) { return b.checked; });
-            document.getElementById('stock-review-apply').disabled = !allChecked;
-        }
-
-        document.getElementById('open-stock-review').addEventListener('click', function () {
-            // Merge by item id.
-            const groups = {};
-            const order = [];
-            alreadyRegistered.forEach(function (e) {
-                if (!groups[e.id]) { groups[e.id] = { id: e.id, name: e.name, type: e.type, qty: 0, serials: [], tcQty: 0 }; order.push(e.id); }
-                const g = groups[e.id];
-                g.qty += e.qty;
-                g.serials = g.serials.concat(e.serials);
-                g.tcQty += e.tcQty;
-            });
-
-            const container = document.getElementById('stock-review-sections');
-            container.innerHTML = '';
-            order.forEach(function (id) {
-                const g = groups[id];
-                const known = byName[g.name.toLowerCase()] || {};
-                const current = (known.quantity != null) ? known.quantity : '?';
-                const isComp = isCompressorTypeLocal(g.type);
-                const isMotor = isMotorTypeLocal(g.type);
-
-                const sec = document.createElement('div');
-                sec.className = 'stock-review-section mb-3 p-3';
-                sec.style.cssText = 'border:1px solid var(--vis-card-border); border-radius:8px;';
-                sec.dataset.itemId = g.id;
-                sec.innerHTML =
-                    '<div class="mb-2"><strong class="text-white">' + g.name + '</strong> ' +
-                    '<span class="text-light-gray small">(' + g.id + ' &middot; currently ' + current + ' on hand)</span></div>' +
-                    '<div class="row g-2 mb-2">' +
-                      '<div class="col-md-4"><label class="form-label small text-light-gray">Action</label>' +
-                        '<select class="form-select form-select-sm sr-action"><option value="Add" selected>Add</option><option value="Adjustment">Adjustment</option></select></div>' +
-                      '<div class="col-md-4"><label class="form-label small text-light-gray">Quantity</label>' +
-                        '<input type="number" class="form-control form-control-sm sr-qty" min="0" value="' + g.qty + '" /></div>' +
-                    '</div>' +
-                    '<div class="sr-extra"></div>' +
-                    '<div class="form-check mt-2"><input type="checkbox" class="form-check-input sr-ack">' +
-                      '<label class="form-check-label small text-light-gray">I&rsquo;ve reviewed this section</label></div>';
-                container.appendChild(sec);
-
-                const extra = sec.querySelector('.sr-extra');
-                const qtyIn = sec.querySelector('.sr-qty');
-
-                function rebuildExtra() {
-                    const qty = Math.max(0, parseInt(qtyIn.value, 10) || 0);
-                    extra.innerHTML = '';
-                    if (isComp) {
-                        for (let i = 0; i < qty; i++) {
-                            const inp = document.createElement('input');
-                            inp.className = 'form-control form-control-sm mb-1 sr-serial';
-                            inp.placeholder = 'Unit ' + (i + 1) + ' serial (optional)';
-                            inp.value = g.serials[i] || '';
-                            extra.appendChild(inp);
-                        }
-                    } else if (isMotor) {
-                        const wrap = document.createElement('div');
-                        wrap.className = 'mt-1';
-                        wrap.innerHTML = '<label class="form-label small text-light-gray">How many thermocoupled?</label>' +
-                            '<input type="number" class="form-control form-control-sm sr-tc" min="0" max="' + qty + '" value="' + Math.min(g.tcQty, qty) + '" />';
-                        extra.appendChild(wrap);
-                    }
-                }
-                qtyIn.addEventListener('input', rebuildExtra);
-                rebuildExtra();
-
-                sec.querySelector('.sr-ack').addEventListener('change', refreshApplyEnabled);
-            });
-
+            if (sections[hit.id]) {
+                growSection(sections[hit.id], qty, serials, tcQty);
+            } else {
+                sections[hit.id] = createSection(hit, qty, serials, tcQty);
+            }
+            document.getElementById('already-registered-wrap').style.display = '';
             refreshApplyEnabled();
-            new bootstrap.Modal(document.getElementById('stockReviewModal')).show();
-        });
+        }
 
         document.getElementById('stock-review-form').addEventListener('submit', function () {
             // Fresh copy of the CURRENT main-form location, in case it changed
@@ -504,7 +518,8 @@
             const tr = document.createElement('tr');
             tr.innerHTML =
                 '<td><input name="itemName" list="known-items" class="form-control form-control-sm" autocomplete="off" /></td>' +
-                '<td><input name="type" list="known-types" class="form-control form-control-sm" /></td>' +
+                '<td class="position-relative"><input name="type" class="form-control form-control-sm intake-type-input" autocomplete="off" />' +
+                  '<div class="list-group position-absolute shadow intake-type-list" style="z-index:2000; display:none; max-height:180px; overflow-y:auto; width:220px;"></div></td>' +
                 '<td><input name="brand" class="form-control form-control-sm" /></td>' +
                 '<td><input name="rpn" value="N/A" class="form-control form-control-sm" /></td>' +
                 '<td><input name="qty" type="number" min="1" value="1" class="form-control form-control-sm" /></td>' +
@@ -513,14 +528,15 @@
             tr.querySelector('button').onclick = function () { tr.remove(); };
             const nameIn = tr.querySelector('[name=itemName]');
             // An EXACT name match means this already exists -- pull the whole
-            // row out of Import and into "Already registered" instead of just
-            // prefilling it, carrying over whatever was typed (qty/serials/TC)
-            // so none of it has to be retyped in the review modal.
+            // row out of Import and into its own live "Already registered"
+            // section instead of just prefilling it, carrying over whatever
+            // was typed (qty/serials/TC) so none of it has to be retyped.
             nameIn.addEventListener('change', function () {
                 const hit = byName[nameIn.value.trim().toLowerCase()];
                 if (!hit) return;
                 moveToAlreadyRegistered(tr, hit);
             });
+            bindValueAutocomplete(tr.querySelector('.intake-type-input'), tr.querySelector('.intake-type-list'), knownTypesArr);
             tr.querySelector('[name=type]').addEventListener('input', function () { syncUnitCapture(tr); });
             tr.querySelector('[name=qty]').addEventListener('input', function () { syncUnitCapture(tr); });
             body.appendChild(tr);

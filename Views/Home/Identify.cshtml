@@ -30,18 +30,15 @@
             <input type="hidden" name="returnUrl" value="@returnUrl" />
 
             <label class="form-label small fw-bold text-light-gray">Name (First.Last)</label>
-            <input type="text" name="name" value="@entered" list="userList"
-                   class="form-control form-control-lg text-white fw-bold mb-1"
-                   style="background-color: #14151A; border-color: #3D4351;"
-                   placeholder="Start typing or pick your name" autocomplete="off" autofocus required
-                   pattern="^[A-Za-z'-]+\.[A-Za-z'-]+$"
-                   title="Enter your name as First.Last, e.g. Jane.Doe" />
-            <datalist id="userList">
-                @foreach (var u in users)
-                {
-                    <option value="@u.UserName">@u.DisplayName</option>
-                }
-            </datalist>
+            <div class="position-relative mb-1">
+                <input type="text" name="name" id="identify-name" value="@entered"
+                       class="form-control form-control-lg text-white fw-bold"
+                       style="background-color: #14151A; border-color: #3D4351;"
+                       placeholder="Start typing or pick your name" autocomplete="off" autofocus required
+                       pattern="^[A-Za-z'\-]+\.[A-Za-z'\-]+$"
+                       title="Enter your name as First.Last, e.g. Jane.Doe" />
+                <div id="identify-name-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 220px; overflow-y: auto;"></div>
+            </div>
             <div class="form-text text-light-gray mb-3" style="font-size: 11px;">
                 Pick your name, or type <strong>First.Last</strong>. Not on the list? Use the closest
                 engineer's name or ask Kason to add you.
@@ -53,3 +50,45 @@
         </form>
     </div>
 </div>
+
+<script>
+    // Same list-group dropdown look as Registry/Modify Stock's search fields,
+    // matched against DISPLAY name (people know their own name, not
+    // necessarily the First.Last login format) but SETS the input to the
+    // login username on pick, since that's what the server parses.
+    (function () {
+        const users = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
+            users.Select(u => new { userName = u.UserName, displayName = u.DisplayName })));
+        const input = document.getElementById('identify-name');
+        const list = document.getElementById('identify-name-list');
+        if (!input || !list) return;
+
+        input.addEventListener('input', function () {
+            const val = input.value.trim().toLowerCase();
+            list.innerHTML = '';
+            if (!val) { list.style.display = 'none'; return; }
+            const matches = users.filter(function (u) {
+                return u.displayName.toLowerCase().includes(val) || u.userName.toLowerCase().includes(val);
+            }).slice(0, 10);
+            if (matches.length === 0) { list.style.display = 'none'; return; }
+            list.style.display = 'block';
+            matches.forEach(function (u) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
+                btn.style.backgroundColor = '#1C1E24';
+                btn.textContent = u.displayName;
+                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
+                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
+                btn.onclick = function () {
+                    input.value = u.userName;
+                    list.style.display = 'none';
+                };
+                list.appendChild(btn);
+            });
+        });
+        document.addEventListener('click', function (e) {
+            if (e.target !== input) list.style.display = 'none';
+        });
+    })();
+</script>

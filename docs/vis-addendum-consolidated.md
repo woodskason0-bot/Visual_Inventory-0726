@@ -1,7 +1,7 @@
 ---
 title: VIS — Consolidated Context Addendum
 description: Merged from four sources. Companion to VIS_Handoff_State.md, which stays authoritative for code and architecture.
-sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–21 working method
+sources: Pass 9 handoff reconciliation · Passes 1–4 thread · Cowork go-live & intake thread · Passes 5–22 working method
 merged: 2026-08-04, updated 2026-08-13
 status: consolidated
 ---
@@ -38,6 +38,7 @@ sequence at all. Resolved:
 | Aug 12 | **Pass 19** | Merged same batch as Pass 18, three more worktree-session fixes: `ReportShortPull` reissue now carries TC count/requested location forward (was silently dropping both); `ReturnLoan` no longer stores a dangling `ItemVariantId = 0` on units returned to a brand-new location; three misleading user-facing messages (Scrap log overstatement, Ownership silent no-op, intake "nothing imported" on a partial failure) corrected. See handoff. |
 | Aug 12–13 | **Pass 20** | Facility map: removed the red tracker dot, made zone row-counts hover-only. Bulk Intake gained the same Team→Branch/Line autofill Registration already had, seeded from the signed-in user. New Item Registry's name-match dropdown now jumps into Modify Stock instead of doing nothing, and Modify Stock's Add action gained compressor serial capture to match. See handoff. |
 | Aug 13 | **Pass 21** | Bulk Intake no longer silently quick-adds a name match to existing stock -- the row moves to an "Already registered" list instead, merged by item and applied through a new batch Modify Stock review modal (Add/Adjustment only, one acknowledge checkbox per section, Apply All gated on all of them, applied in one transaction). Verified live with a real +1/-1 round trip on CCR-0001. See handoff. |
+| Aug 13 | **Pass 22** | Feedback that the batch review modal "felt like a dangling process" -- rebuilt as live inline sections on the Intake page itself (a match creates one immediately; a second match for the same item grows it in place, preserving hand-edits), acknowledge checkboxes dropped since nothing's hidden behind a modal anymore. Also gave Intake's Type field, Registry's Type field, and the sign-in name field the same styled dropdown look used elsewhere, and fixed a real pre-existing broken regex on the sign-in field found in the process. See handoff. |
 
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge

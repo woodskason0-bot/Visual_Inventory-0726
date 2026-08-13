@@ -699,6 +699,67 @@ batch Modify Stock review instead of silently quick-adding them.**
   Adjustment, submitted — refused with "no existing stock at this location to
   adjust," CCR-0001's quantity confirmed unchanged at 10 afterward.
 
+**Pass 22 (2026-08-13) — Pass 21's batch review rebuilt as live inline
+sections (feedback: the modal "felt like a dangling process"), plus the
+same dropdown styling everywhere a text-datalist field still looked different.**
+
+- **The batch review modal is gone.** A name match on Intake no longer
+  requires a button click to "open" anything — it creates a live Modify
+  Stock-style section directly on the page, in a scrollable
+  `#stock-review-sections` container, the instant the match happens. A
+  second row for the SAME item **grows that section in place** (bumps
+  Quantity, extends serial boxes / bumps the TC count) instead of opening a
+  duplicate — and grow reads the section's CURRENT DOM values first, so a
+  hand-edit already made to a serial box (or anything else in the section)
+  survives a later merge instead of being silently overwritten by a full
+  re-derive. Verified live: typed two serials by hand into a 3-serial
+  section, merged a second row (qty 3→5) for the same item, confirmed both
+  hand-typed values were untouched and the new row's serial landed in a
+  fresh slot.
+- **No more acknowledge checkboxes.** Sections are fully visible and
+  editable on the page now, not hidden behind a modal-open gesture, so the
+  checkbox gate was compensating for something that no longer exists.
+  **Apply All is just enabled whenever at least one section exists** —
+  confirmed live (disabled at zero sections, enabled the instant one
+  appears, correctly re-disabled after removing the only section via its
+  own `×` button). The server endpoint (`SubmitIntakeStockUpdates` /
+  `CommitIntakeStockBatch`) is **unchanged** — same transaction, same
+  Adjustment-without-existing-variant guard, same field-stamping convention
+  on submit. Re-verified live end to end through the new markup: a real
+  qty-1 Add on CCR-0001 at New Test Cells (10 → 11), reversed with a real
+  Scrap of 1 back to 10.
+- **Styled dropdown parity, three more fields.** The list-group
+  suggestion-panel look (dark rows, `list-group-item-action`, positioned
+  under the input) used by Registry's model-name field and Modify Stock's
+  search box now also covers: Intake's per-row **Type** field (was a native
+  `<datalist>`, one dropdown built per row via a new generic
+  `bindValueAutocomplete(inputEl, listEl, values)` helper — plain-string
+  suggestions, no id/qty payload, dispatches a real `input` event on pick so
+  `syncUnitCapture` and everything else already listening keeps working, with
+  a one-shot suppress flag so that synthetic event can't reopen the same
+  list); **New Item Registry's Type field** (`reg-type` had no dropdown at
+  all before — plain text with a placeholder — now sourced from distinct
+  Types already in `itemsList`, no server round trip); and the **sign-in
+  name field** (was a native `<datalist>` showing `UserName`/`DisplayName`
+  inconsistently across browsers — now matches against `DisplayName`, since
+  people know their own name, and sets the input to `UserName` on pick,
+  since that's what the server parses). Each is its own small duplicated
+  copy per file (`bindValueAutocomplete` in Intake.cshtml/Index.cshtml, a
+  bespoke display-name version in Identify.cshtml) — same accepted-debt
+  pattern as `encodeLoc()` already being triplicated across this project
+  rather than centralized in `site.js`.
+- **Fixed a real pre-existing bug while touching Identify.cshtml**: the
+  name field's `pattern="^[A-Za-z'-]+\.[A-Za-z'-]+$"` threw "Invalid
+  regular expression... Invalid character in character class" in the
+  browser console on every page load (Chrome's newer v-mode character-class
+  parsing doesn't like an unescaped trailing `-` there) — client-side
+  validation was silently not runnable this whole time, though the server's
+  own regex check in `HomeController.Identify()` was unaffected and kept
+  enforcing the format regardless. Fixed by escaping the hyphen
+  (`[A-Za-z'\-]`). Confirmed live: zero console errors on the sign-in page
+  after the fix, versus the error firing before it on every prior pass that
+  touched this page.
+
 ---
 
 ## Traps — read before editing
@@ -1047,8 +1108,11 @@ the map's decorative red tracker dot, made zone row-counts hover-only, gave Bulk
 Intake the same Team/Branch/Line autofill Registration already had, and made New Item
 Registry's name-match dropdown jump straight into Modify Stock (with serial capture
 now on Add, for that path). Pass 21 changed Bulk Intake's behavior for already-known
-models: instead of a silent quick-add, a name match now routes through a reviewed,
-acknowledged batch Modify Stock action, applied in one transaction.
+models: instead of a silent quick-add, a name match now routes through a batch Modify
+Stock action, applied in one transaction. Pass 22 rebuilt that batch review as live
+inline sections instead of a modal (feedback that the modal felt disconnected), and
+added the same styled-dropdown treatment to three more text fields that were still
+using native `<datalist>`s or nothing at all.
 **The Pass 13/14 database has now been copied to the host** — this is no longer just
 sitting in a scratchpad copy, it's what I'm actually testing against. Passes 15–17
 were all tested directly against that same live db through the running app (Passes 16
@@ -1057,12 +1121,12 @@ compressors, plus Pass 17's discovery-and-cleanup of the `"__NEW__"` corruption 
 beyond their schema migrations), so nothing further needs copying for any of them.
 Pass 18 was tested against a scratchpad copy, not the live file. Pass 20 was tested
 read-only against the live app/db (nothing was actually submitted, so nothing needed
-cleanup). Pass 21 made one small real write against the live db (a +1/-1 round trip
-on a real compressor, CCR-0001, to verify the new batch write path) and left it net
-zero, audit trail intact.
+cleanup). Passes 21 and 22 each made one small real write against the live db (the
+same +1/-1 round trip on CCR-0001, once against each version of the batch write path)
+and left it net zero both times, audit trail intact.
 The morning's Pass 16 release (everything through the `AddUserTeams` migration) is
 already published and running; everything from the Location Transfer fix through
-Pass 21 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
+Pass 22 (no new migrations since `AddIntakeRowMultiSerialAndTc`, Pass 17's) is
 committed and pushed but **not yet in a published release** — still need a fresh
 `dotnet publish` to reach the host.
 Remaining before I'd call it fully settled: do one real Return or Scrap on a TC motor
@@ -1071,9 +1135,9 @@ sign in as a non-Admin user to confirm the branch-button graying looks right in
 practice, actually submit a blank-Line registration to watch Pass 15's rejection fire
 for real, exercise the new map-zone-creation reminder live (built in Pass 17, not yet
 triggered through a real approval), and submit a real serial through either Pass 20's
-Modify Stock Add entrance or Pass 21's batch review (both share `LogIntakeSerials`,
+Modify Stock Add entrance or the batch review (both share `LogIntakeSerials`,
 verified live in Pass 17 through Registry/Intake, but not separately through either
-of these two newer entrances — the Pass 21 live test above used a bare quantity,
+of these two newer entrances — both live batch tests so far used a bare quantity,
 deliberately, to keep the round-trip trivial to reverse).
 Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
 expansion work, not a blocker.
