@@ -793,8 +793,8 @@ cascading suggestions everywhere they appear.**
   selected, the confirm modal populated the right label, and the real delete
   removed exactly that variant — Variant 1's 3 units and the item's identity
   untouched, `TransactionLog` shows `"Stack Deleted ... Variant 2 (ETRD.TALA.
-  TAL1.FLOOR.0) deleted"`. This was a real fix to the user's actual stuck
-  item, not a synthetic test case.
+  TAL1.FLOOR.0) deleted"`. This was the real fix, implementing post
+  verification.
 - **Rack/Row now cascade-suggest from real stock data, on all four surfaces
   that have them** (New Item Registry, Bulk Intake, Export Wizard's filter —
   new fields there, didn't exist before — and Modify Stock's Location
@@ -1030,6 +1030,44 @@ test copy back off.
      every event type, how it covers both Compressor and Motor units, how a future
      "full AC unit" asset type would plug into the same shape) needed before opening
      a file, not decided here.
+
+- **Delivery intake/claim workflow — scoped 2026-08-13, not started.** Trigger: Shelly
+  (Manager) and Chris (Engineer) joining a new "Lab Processes" team, plus a need to log
+  incoming deliveries with a photo and route them to the right managers/supervisors.
+  Team/user-role part needs no code (create "Lab Processes" in Settings' existing Team
+  CRUD, assign AccessLevel via Settings, Team Membership picker for assignment — all
+  Pass 7A/16 machinery already there). The new mechanic is the delivery record itself:
+
+  - New `Delivery` model: `TrackingNumber?`, `Brand?`, `OrderNumber?` (all optional —
+    a delivery with none of the three is still a valid log), `Team?` (picked from the
+    managed Team list when the logger can tell whose delivery it is), `PhotoPath`
+    (required, at least one), `LoggedBy`/`LoggedAt`. Claim lifecycle copied from
+    `VisTask` (Models/VisTask.cs) as-is: `Status` Open/Claimed/Done,
+    `ClaimedBy?`/`ClaimedAt?`, `CompletedAt?`.
+  - Photo storage: `C:\VIS_Inventory\DeliveryPhotos\` — external, deliberately moved
+    out of publish same as `inventory.db` (see "Deployment lineage" in the addendum —
+    this project already has one bug history of things living inside publish getting
+    wiped), but served over a normal URL via a second `UseStaticFiles` mapping
+    (`PhysicalFileProvider` + `/delivery-photos` request path) in `Program.cs`, so it's
+    fully visible in the app despite not living in `wwwroot`. Resize/re-encode on
+    upload (cap ~1600px longest edge, JPEG) to keep footprint down.
+  - Who can log one: `AccessLevel >= Standard` (2), matching every other create-style
+    action (`CreateItem`/`StartOrder`/Intake, Pass 9).
+  - Notify: reuses `NotificationService.CreateForLevel` as-is. Team picked → notify
+    `AccessLevel >= Management` (4) on that team via `UserTeams`. Team blank/unknown →
+    same tier org-wide. Management(4)+Admin(5) collapses "managers, supervisors, and
+    admins" into one existing band — no new tier needed.
+  - Who can claim: same `AccessLevel >= Management` band it was sent to.
+  - Visible claim state: new "Deliveries" board (parallel to Tasks Available/Pickup
+    Queue) — Open items visible to the notified band, "Claimed by X" once taken, same
+    lock-in UX `VisTask`'s board already has.
+  - Explicitly out of scope for this pass: scanning units and moving them between
+    locations — parked, not forgotten.
+  - Optional small add-on if wanted alongside this: an "unassigned users" filter on
+    the Team Membership picker (Settings), so a Team-cleanup pass doesn't require
+    eyeballing all 51 rows by hand.
+
+  Not yet built — waiting on go-ahead before opening a file.
 
 ---
 

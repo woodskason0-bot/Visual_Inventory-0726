@@ -266,9 +266,6 @@ Two tracks, and the second one is above the first.
 - I verify in both light and dark theme — the app remembers each user's last choice
   across logins, so a light-mode contrast bug ships invisible to whoever's in dark.
 - Structured multiple-choice beats open prose for clarifying-question rounds.
-- **I test every pass before asking for the next one.** A request for the next pass is
-  the confirmation the last one landed — I won't necessarily say "that worked," I'll
-  just move on to "okay now pass 7." Silence isn't a signal that something's untested.
 - **When I say something works, believe it and re-diagnose from there** rather than
   restating the original theory louder.
 - **I'll supply real artifacts, not just descriptions** — actual `.db` files, CSVs,
@@ -279,24 +276,6 @@ Two tracks, and the second one is above the first.
 - **I'll reshape a proposal rather than just accepting it**, and the redirect is usually
   the actual insight — worth taking seriously, not working around.
 - I own my own scope creep when I catch it, and I mean it when I do.
-
-### What's worked well from the other side
-
-- **Verify against my real data, don't assert.** Load the actual database and run it.
-  Simulating the old broken behavior to prove a diagnosis, not just the fix, is what
-  turns "I think this is why" into "here it is failing on your data."
-- **Own mistakes flatly and immediately** — named in one sentence and fixed, no hedging,
-  no apology spiral. I'd rather have it identified and gone than smoothed over.
-- **Refuse to guess when it matters** — ask rather than assume on anything where a wrong
-  guess would need to be found and unwound later (a brand name, a naming convention, a
-  format). I'll answer.
-- **Flag what I didn't ask about, with evidence** — I act on most of what gets surfaced
-  this way.
-- **Push back when my own instinct contradicts my own stated reasoning** — I'd rather be
-  argued with using my own logic than agreed with by default.
-- **Register:** direct, low ceremony, no preamble, findings before conclusions. Length
-  should track stakes — a schema change earns full reasoning, a one-line fix earns one
-  line.
 
 ---
 
