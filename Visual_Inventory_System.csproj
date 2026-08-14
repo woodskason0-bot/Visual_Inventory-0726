@@ -4,6 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Already true in practice: self-contained win-x64 publish, absolute C:\
+         paths throughout. Declaring it lets System.Drawing.Common (used for
+         delivery-photo resizing) build without CA1416 noise. -->
+    <SupportedOSPlatform>windows</SupportedOSPlatform>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +21,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="System.Drawing.Common" Version="9.0.9" />
   </ItemGroup>
 
   <ItemGroup>

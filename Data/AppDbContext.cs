@@ -31,6 +31,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<Branch> Branches { get; set; } = null!;
         public DbSet<OrgLine> OrgLines { get; set; } = null!;
         public DbSet<UserTeam> UserTeams { get; set; } = null!;
+        public DbSet<Delivery> Deliveries { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -199,6 +200,14 @@ namespace Visual_Inventory_System.Data
                  .WithMany()
                  .HasForeignKey(x => x.UserId)
                  .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<Delivery>(b =>
+            {
+                // The Deliveries board queries "everything not Done, for this
+                // recipient (or the Unknown bucket)" -- both carry an index.
+                b.HasIndex(x => x.Status);
+                b.HasIndex(x => x.RecipientUserName);
             });
         }
     }

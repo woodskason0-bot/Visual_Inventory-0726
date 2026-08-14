@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Visual_Inventory_System.Data;
 using Visual_Inventory_System.Services;
 
@@ -186,6 +187,17 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Delivery photos live outside the publish folder (C:\VIS_Image-Uploads), same
+// "moved deliberately" reasoning as inventory.db, but still served over a
+// normal URL so they're viewable in the app without sitting in wwwroot.
+Directory.CreateDirectory(DeliveryPhotoStorage.RootPath);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(DeliveryPhotoStorage.RootPath),
+    RequestPath = DeliveryPhotoStorage.RequestPathPrefix
+});
+
 app.UseRouting();
 
 // Session MUST be between Routing and Authorization

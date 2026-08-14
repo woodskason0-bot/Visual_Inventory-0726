@@ -1198,6 +1198,168 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("PickupQueue");
         }
 
+        // Delivery intake board: the shared "Unknown Delivery" bucket (visible to
+        // every Management+ user) plus anything routed straight to this person.
+        // Done deliveries drop off, same as the VisTask board above.
+        [RequireLevel(AccessLevels.Management)]
+        public IActionResult Deliveries()
+        {
+            string mine = _currentUser.Name;
+
+            var rows = _db.Deliveries.AsNoTracking()
+                .Where(d => d.Status != "Done"
+                    && (d.RecipientUserName == Delivery.UnknownRecipient || d.RecipientUserName == mine))
+                .OrderBy(d => d.LoggedAt)
+                .ToList();
+
+            var displayNames = _db.Users.AsNoTracking()
+                .ToDictionary(u => u.UserName, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+            var vms = rows.Select(d => new Visual_Inventory_System.Models.ViewModels.DeliveryViewModel
+            {
+                Id = d.Id,
+                PhotoUrl = DeliveryPhotoStorage.UrlFor(d.PhotoPath),
+                TrackingNumber = d.TrackingNumber,
+                OrderNumber = d.OrderNumber,
+                BrandOfShipping = d.BrandOfShipping,
+                BrandOfItem = d.BrandOfItem,
+                IsUnknownBucket = d.RecipientUserName == Delivery.UnknownRecipient,
+                RecipientLabel = d.RecipientUserName == Delivery.UnknownRecipient
+                    ? "Unknown Delivery"
+                    : (displayNames.TryGetValue(d.RecipientUserName, out var dn) ? dn : d.RecipientUserName),
+                LoggedBy = d.LoggedBy,
+                LoggedAt = d.LoggedAt,
+                Status = d.Status,
+                ClaimedBy = d.ClaimedBy,
+                ClaimedAt = d.ClaimedAt
+            }).ToList();
+
+            return View(vms);
+        }
+
+        // Delivery intake form. Standard+, matching CreateItem/StartOrder/Intake.
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult LogDelivery()
+        {
+            ViewBag.Recipients = _db.Users.AsNoTracking()
+                .Where(u => u.IsActive && u.AccessLevel >= AccessLevels.Management)
+                .OrderBy(u => u.DisplayName)
+                .Select(u => new { u.UserName, u.DisplayName })
+                .ToList();
+            return View();
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SubmitDelivery(IFormFile photo, string? trackingNumber, string? orderNumber,
+            string? brandOfShipping, string? brandOfItem, string recipientUserName)
+        {
+            bool IsNa(string? s) => string.IsNullOrWhiteSpace(s) || s.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
+
+            if (photo == null || photo.Length == 0)
+            {
+                TempData["Error"] = "A photo is required.";
+                return RedirectToAction("LogDelivery");
+            }
+
+            if (IsNa(brandOfShipping) && IsNa(brandOfItem))
+            {
+                TempData["Error"] = "At least one brand (shipping or item) is required.";
+                return RedirectToAction("LogDelivery");
+            }
+
+            if (string.IsNullOrWhiteSpace(recipientUserName))
+            {
+                TempData["Error"] = "Pick who this goes to, or Unknown Delivery.";
+                return RedirectToAction("LogDelivery");
+            }
+
+            bool isUnknown = recipientUserName == Delivery.UnknownRecipient;
+            if (!isUnknown && !_db.Users.Any(u => u.UserName == recipientUserName && u.IsActive && u.AccessLevel >= AccessLevels.Management))
+            {
+                TempData["Error"] = "That recipient isn't valid.";
+                return RedirectToAction("LogDelivery");
+            }
+
+            string fileName = DeliveryPhotoStorage.Save(photo);
+
+            var delivery = new Delivery
+            {
+                PhotoPath = fileName,
+                TrackingNumber = trackingNumber?.Trim(),
+                OrderNumber = orderNumber?.Trim(),
+                BrandOfShipping = brandOfShipping?.Trim(),
+                BrandOfItem = brandOfItem?.Trim(),
+                RecipientUserName = recipientUserName,
+                LoggedBy = _currentUser.Name,
+                LoggedAt = DateTime.UtcNow,
+                Status = "Open"
+            };
+            _db.Deliveries.Add(delivery);
+            _db.SaveChanges();
+
+            string message = $"Delivery logged by {_currentUser.Name}"
+                + (IsNa(brandOfItem) ? "" : $" — {brandOfItem}")
+                + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})");
+
+            if (isUnknown)
+                _notifications.CreateForLevel(AccessLevels.Management, null, "DeliveryReceived", message, "/Home/Deliveries", _currentUser.Name);
+            else
+                _notifications.Create(recipientUserName, "DeliveryReceived", message, "/Home/Deliveries");
+
+            TempData["Success"] = "Delivery logged.";
+            return RedirectToAction("LogDelivery");
+        }
+
+        // Claim an open delivery. Management+ -- the same band it was routed to.
+        // First claim wins, same as ClaimTask.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Management)]
+        public IActionResult ClaimDelivery(int id)
+        {
+            var d = _db.Deliveries.FirstOrDefault(x => x.Id == id);
+            if (d == null) { TempData["Error"] = "Delivery not found."; return RedirectToAction("Deliveries"); }
+
+            if (d.Status == "Open")
+            {
+                d.ClaimedBy = _currentUser.Name;
+                d.ClaimedAt = DateTime.UtcNow;
+                d.Status = "Claimed";
+                _db.SaveChanges();
+                TempData["Success"] = "Delivery claimed.";
+            }
+            else
+            {
+                TempData["Error"] = $"Already claimed by {d.ClaimedBy}.";
+            }
+            return RedirectToAction("Deliveries");
+        }
+
+        // Mark a claimed delivery done -- only the person who claimed it, same as CompleteTask.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Management)]
+        public IActionResult CompleteDelivery(int id)
+        {
+            var d = _db.Deliveries.FirstOrDefault(x => x.Id == id);
+            if (d == null) { TempData["Error"] = "Delivery not found."; return RedirectToAction("Deliveries"); }
+
+            if (d.Status == "Claimed" && string.Equals(d.ClaimedBy, _currentUser.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                d.Status = "Done";
+                d.CompletedAt = DateTime.UtcNow;
+                _db.SaveChanges();
+                TempData["Success"] = "Delivery marked done.";
+            }
+            else
+            {
+                TempData["Error"] = "Only the person who claimed it can finish it.";
+            }
+            return RedirectToAction("Deliveries");
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]

@@ -38,7 +38,7 @@ only confirmed by static reading and a clean build, and the difference is spelle
 ## Deployed state
 
 ```
-Migrations       35   (latest: 20260812023317_AddIntakeRowMultiSerialAndTc)
+Migrations       36   (latest: 20260814153905_AddDeliveries)
 Items           487   (compressor ownership reconciled against real claim sheets;
                  leftover test-fixture rows removed; one exact duplicate merged;
                  63 Residential OD compressors re-minted with an RCR- prefix and
@@ -888,6 +888,74 @@ queries existed anywhere before this, on any page.**
   reasonably by default, but a few modals in this app set explicit
   `width`/`max-width` in inline styles that weren't part of this sweep).
 
+**Pass 25 (2026-08-14) — Delivery intake/claim workflow, built and verified live
+against the real db.** Scoped over four rounds the same day (photo storage/
+latency tradeoffs, field reconciliation, recipient routing, N/A convention —
+see the Backlog entry above for the scoping trail), then built same session.
+
+- **New `Delivery` model/table** (migration `AddDeliveries`, 36th): `PhotoPath`
+  (required), `TrackingNumber`/`OrderNumber`/`BrandOfShipping`/`BrandOfItem`
+  (all optional, N/A-toggle convention — see below), `RecipientUserName`
+  (required — a specific user's `UserName`, or the `Delivery.UnknownRecipient`
+  sentinel `"__UNKNOWN__"`), and the exact `VisTask` claim lifecycle
+  (`Status` Open/Claimed/Done, `ClaimedBy`/`ClaimedAt`, `CompletedAt`).
+  Applied cleanly against the real copied-in db, no `PendingModelChangesWarning`.
+- **Photos saved to `C:\VIS_Image-Uploads\`**, external to the publish folder —
+  same "moved deliberately" reasoning as `inventory.db` — but served over a
+  normal URL via a second `app.UseStaticFiles()` mapping in `Program.cs`
+  (`PhysicalFileProvider` + `/delivery-photos` request path), so files are
+  fully visible in the app without living in `wwwroot`. `Services/
+  DeliveryPhotoStorage.cs` resizes to a 1600px longest edge and re-encodes
+  JPEG (quality 80) on save, keeping footprint down.
+- **System.Drawing.Common, not ImageSharp, for the resize.** ImageSharp 3.1.7
+  carries a known moderate CVE; the patched 4.x line requires a paid Six
+  Labors commercial license for closed-source use, which isn't something to
+  introduce into an internal Rheem tool without a real conversation about it.
+  System.Drawing.Common has no such cost and fits VIS's existing
+  Windows-only architecture exactly (self-contained `win-x64` publish,
+  absolute `C:\` paths throughout) — added `<SupportedOSPlatform>windows`
+  to the `.csproj` to match reality and silence the resulting CA1416 noise.
+- **Routing: a specific Management+ person, or the shared "Unknown Delivery"
+  bucket, never a Team.** Reuses `NotificationService.Create` (single
+  recipient) and `CreateForLevel` (Management+, org-wide, excluding the
+  actor) exactly as they already existed — no service changes needed.
+  Claim/complete on the new `/Home/Deliveries` board is gated
+  `AccessLevel >= Management`, mirroring `ClaimTask`/`CompleteTask`'s
+  existing pattern (first claim wins, only the claimant can mark Done).
+- **N/A toggle on all four optional text fields**, same `reg-rpn-mode-real`/
+  `reg-rpn-mode-na` btn-check convention Rheem PN already uses on New Item
+  Registry — picking N/A sets the field `readOnly` with the literal value
+  `"N/A"`; picking back clears it. At least one of Brand of Shipping/Brand
+  of Item(s) must be a real (non-N/A, non-blank) value — enforced
+  server-side with the same blank-and-N/A-fold-together check the PN
+  backlog query already uses.
+- **Who can do what:** logging a delivery is `AccessLevel >= Standard`
+  (matches `CreateItem`/`StartOrder`/Intake); the `/Home/Deliveries` board
+  and claim/complete are `AccessLevel >= Management`. Nav shows "Log
+  Delivery" to everyone signed in (server-gated, same pattern `Intake`'s
+  nav link already uses) and "Deliveries" only to Management+.
+- **Verified live end-to-end against the real db**, not just build+DOM: a
+  synthetic photo (canvas-drawn, not a real file — the automated browser
+  can't drive a native OS file-picker dialog) submitted via an in-page
+  `fetch` carrying the real session cookie and antiforgery token, same as
+  a real multipart form post. Confirmed: photo resized/re-encoded and
+  saved to `C:\VIS_Image-Uploads\` (12KB canvas source → 4.9KB JPEG on
+  disk); `/delivery-photos/{guid}.jpg` served 200 over HTTP; row landed in
+  `Deliveries` with the right fields; 13 `DeliveryReceived` notifications
+  fanned out to every Management+ user except the actor (14 Management+
+  users total, self excluded — confirmed by both the dropdown list and the
+  `Notifications` insert count matching); claim flipped the board to
+  "Claimed by Kason Woods" and revealed a Done button only for the
+  claimant; Done dropped it off the board. Also confirmed server-side
+  rejection (not just the HTML5 `required` attribute) for both a missing
+  photo and both brand fields left N/A, by stripping the client-side
+  `required` attribute via JS before submitting. Test delivery (row +
+  photo file + its 13 notification rows) removed after verification —
+  synthetic test data, not real, same as the TESTCOMP-A/B/C cleanup
+  precedent in Pass 13.
+- **Not built, explicitly parked (per the original scope):** scanning units
+  and moving them between locations.
+
 ---
 
 ## Traps — read before editing
@@ -1031,7 +1099,9 @@ test copy back off.
      "full AC unit" asset type would plug into the same shape) needed before opening
      a file, not decided here.
 
-- **Delivery intake/claim workflow — scoped 2026-08-13, not started.** Trigger: Shelly
+- **Delivery intake/claim workflow — scoped 2026-08-13, BUILT AND VERIFIED LIVE
+  2026-08-14 (Pass 25). See Pass log below for the shipped shape; this entry is
+  kept as the original scoping record.** Trigger: Shelly
   (Manager) and Chris (Engineer) joining a new "Lab Processes" team, plus a need to log
   incoming deliveries with a photo and route them to the right managers/supervisors.
   Team/user-role part needs no code (create "Lab Processes" in Settings' existing Team

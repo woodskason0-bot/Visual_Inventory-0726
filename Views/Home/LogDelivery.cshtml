@@ -1,0 +1,131 @@
+@{
+    ViewData["Title"] = "Log Delivery";
+    var recipients = (IEnumerable<dynamic>)(ViewBag.Recipients ?? new List<dynamic>());
+}
+
+<style>
+    .delivery-wrap { max-width: 620px; margin: 1.5rem auto; }
+    .delivery-card {
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+        padding: 1.5rem;
+    }
+    .text-dim { color: #94A3B8 !important; }
+</style>
+
+<div class="delivery-wrap px-3">
+    <h2 class="fw-bold mb-1"><i class="bi bi-camera-fill me-2" style="color: var(--vis-red);"></i>Log Delivery</h2>
+    <div class="text-dim mb-3">Snap a photo, fill in whatever's on the label, send it to the right person.</div>
+
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success py-2">@TempData["Success"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger py-2">@TempData["Error"]</div>
+    }
+
+    <div class="delivery-card">
+        <form asp-controller="Home" asp-action="SubmitDelivery" method="post" enctype="multipart/form-data">
+            @Html.AntiForgeryToken()
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Photo <span class="text-danger">*</span></label>
+                <input type="file" name="photo" accept="image/*" capture="environment" class="form-control" required />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Tracking Number</label>
+                <div class="btn-group btn-group-sm mb-2 d-flex" role="group">
+                    <input type="radio" class="btn-check" name="trackingMode" id="tracking-mode-real" autocomplete="off" checked>
+                    <label class="btn btn-outline-light" for="tracking-mode-real">Have it</label>
+                    <input type="radio" class="btn-check" name="trackingMode" id="tracking-mode-na" autocomplete="off">
+                    <label class="btn btn-outline-secondary" for="tracking-mode-na">N/A</label>
+                </div>
+                <input type="text" name="trackingNumber" id="tracking-input" class="form-control" placeholder="Off the label" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Order Number</label>
+                <div class="btn-group btn-group-sm mb-2 d-flex" role="group">
+                    <input type="radio" class="btn-check" name="orderMode" id="order-mode-real" autocomplete="off" checked>
+                    <label class="btn btn-outline-light" for="order-mode-real">Have it</label>
+                    <input type="radio" class="btn-check" name="orderMode" id="order-mode-na" autocomplete="off">
+                    <label class="btn btn-outline-secondary" for="order-mode-na">N/A</label>
+                </div>
+                <input type="text" name="orderNumber" id="order-input" class="form-control" placeholder="Off the label" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Brand of Shipping <span class="text-dim">(carrier)</span></label>
+                <div class="btn-group btn-group-sm mb-2 d-flex" role="group">
+                    <input type="radio" class="btn-check" name="shipMode" id="ship-mode-real" autocomplete="off" checked>
+                    <label class="btn btn-outline-light" for="ship-mode-real">Have it</label>
+                    <input type="radio" class="btn-check" name="shipMode" id="ship-mode-na" autocomplete="off">
+                    <label class="btn btn-outline-secondary" for="ship-mode-na">N/A</label>
+                </div>
+                <input type="text" name="brandOfShipping" id="ship-input" class="form-control" placeholder="e.g. UPS, FedEx" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Brand of Item(s) <span class="text-dim">(manufacturer)</span></label>
+                <div class="btn-group btn-group-sm mb-2 d-flex" role="group">
+                    <input type="radio" class="btn-check" name="itemBrandMode" id="itembrand-mode-real" autocomplete="off" checked>
+                    <label class="btn btn-outline-light" for="itembrand-mode-real">Have it</label>
+                    <input type="radio" class="btn-check" name="itemBrandMode" id="itembrand-mode-na" autocomplete="off">
+                    <label class="btn btn-outline-secondary" for="itembrand-mode-na">N/A</label>
+                </div>
+                <input type="text" name="brandOfItem" id="itembrand-input" class="form-control" placeholder="e.g. Rheem, Copeland" />
+                <small class="text-dim">At least one of Brand of Shipping / Brand of Item(s) is required.</small>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-light-gray">Send To <span class="text-danger">*</span></label>
+                <select name="recipientUserName" class="form-select" required>
+                    <option value="" selected disabled>Choose a person, or Unknown Delivery...</option>
+                    <option value="__UNKNOWN__">Unknown Delivery — notify all managers/supervisors</option>
+                    @foreach (var r in recipients)
+                    {
+                        <option value="@r.UserName">@r.DisplayName</option>
+                    }
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-danger fw-bold w-100"><i class="bi bi-send-fill me-1"></i>Submit Delivery</button>
+        </form>
+    </div>
+
+    <p class="mt-3"><a asp-controller="Home" asp-action="Index" class="btn btn-sm btn-secondary">&larr; Back to Dashboard</a></p>
+</div>
+
+<script>
+    // Same "Has it / N/A" toggle used by Rheem PN on New Item Registry -- N/A
+    // sets the box readOnly with the literal value "N/A" (still posts something
+    // real); switching back clears it for typing.
+    function bindNaToggle(realId, naId, inputId) {
+        const real = document.getElementById(realId);
+        const na = document.getElementById(naId);
+        const input = document.getElementById(inputId);
+        if (!real || !na || !input) return;
+
+        function apply() {
+            if (na.checked) {
+                input.value = 'N/A';
+                input.readOnly = true;
+            } else {
+                if (input.value.trim().toUpperCase() === 'N/A') input.value = '';
+                input.readOnly = false;
+                input.focus();
+            }
+        }
+        real.addEventListener('change', apply);
+        na.addEventListener('change', apply);
+    }
+    bindNaToggle('tracking-mode-real', 'tracking-mode-na', 'tracking-input');
+    bindNaToggle('order-mode-real', 'order-mode-na', 'order-input');
+    bindNaToggle('ship-mode-real', 'ship-mode-na', 'ship-input');
+    bindNaToggle('itembrand-mode-real', 'itembrand-mode-na', 'itembrand-input');
+</script>

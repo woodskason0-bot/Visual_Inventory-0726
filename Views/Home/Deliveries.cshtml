@@ -1,0 +1,117 @@
+@model List<Visual_Inventory_System.Models.ViewModels.DeliveryViewModel>
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@{
+    ViewData["Title"] = "Deliveries";
+    var deliveries = Model ?? new List<Visual_Inventory_System.Models.ViewModels.DeliveryViewModel>();
+    string me = CurrentUser.Name;
+
+    string Person(string? p) => string.IsNullOrEmpty(p) ? "—" : p.Replace('.', ' ');
+    string Ago(DateTime utc)
+    {
+        var a = DateTime.UtcNow - utc;
+        return a.TotalMinutes < 1 ? "just now"
+            : a.TotalHours < 1 ? $"{(int)a.TotalMinutes}m ago"
+            : a.TotalDays < 1 ? $"{(int)a.TotalHours}h ago"
+            : $"{(int)a.TotalDays}d ago";
+    }
+}
+
+<style>
+    .delivery-board-wrap { max-width: 1200px; margin: 1.5rem auto; }
+    .text-dim { color: #94A3B8 !important; }
+    .board { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .delivery-card {
+        flex: 0 1 280px;
+        background-color: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-left: 4px solid #F59E0B;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+    }
+    .delivery-card.claimed { border-left-color: #64748B; opacity: 0.92; }
+    .delivery-card .thumb { width: 100%; height: 160px; object-fit: cover; display: block; background: #14151A; }
+    .delivery-card .body { padding: 0.9rem 1rem; }
+    .delivery-card h6 { color: var(--vis-text); font-weight: 700; margin-bottom: 0.35rem; }
+    .delivery-card .field { color: var(--vis-text-muted); font-size: 12px; }
+    .delivery-card .meta { color: var(--vis-text-muted); font-size: 10px; margin-top: 0.5rem; }
+</style>
+
+<div class="delivery-board-wrap px-3">
+    <h2 class="fw-bold mb-1"><i class="bi bi-box-seam-fill me-2" style="color: var(--vis-red);"></i>Deliveries</h2>
+    <div class="text-dim mb-3">Unknown Delivery (everyone sees these) plus anything sent straight to you.</div>
+
+    @if (TempData["Success"] != null)
+    {
+        <div class="alert alert-success py-2">@TempData["Success"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger py-2">@TempData["Error"]</div>
+    }
+
+    @if (!deliveries.Any())
+    {
+        <div class="delivery-card p-4 text-center text-dim" style="flex-basis: 100%; border-left: none;">Nothing waiting.</div>
+    }
+    else
+    {
+        <div class="board">
+            @foreach (var d in deliveries)
+            {
+                var claimed = d.Status == "Claimed";
+                var mine = claimed && string.Equals(d.ClaimedBy, me, StringComparison.OrdinalIgnoreCase);
+                <div class="delivery-card @(claimed ? "claimed" : "")">
+                    <img src="@d.PhotoUrl" class="thumb" alt="Delivery photo" />
+                    <div class="body">
+                        <h6>@d.RecipientLabel</h6>
+                        @if (!string.IsNullOrWhiteSpace(d.BrandOfItem) && d.BrandOfItem != "N/A")
+                        {
+                            <div class="field"><i class="bi bi-tag me-1"></i>Item: @d.BrandOfItem</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(d.BrandOfShipping) && d.BrandOfShipping != "N/A")
+                        {
+                            <div class="field"><i class="bi bi-truck me-1"></i>Ship: @d.BrandOfShipping</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(d.TrackingNumber) && d.TrackingNumber != "N/A")
+                        {
+                            <div class="field"><i class="bi bi-upc-scan me-1"></i>Tracking: @d.TrackingNumber</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(d.OrderNumber) && d.OrderNumber != "N/A")
+                        {
+                            <div class="field"><i class="bi bi-receipt me-1"></i>Order #: @d.OrderNumber</div>
+                        }
+                        <div class="meta"><i class="bi bi-person me-1"></i>Logged by @Person(d.LoggedBy) &middot; @Ago(d.LoggedAt)</div>
+
+                        <div class="mt-2">
+                            @if (!claimed)
+                            {
+                                <form asp-controller="Home" asp-action="ClaimDelivery" method="post" class="m-0">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="id" value="@d.Id" />
+                                    <button type="submit" class="btn btn-sm btn-success fw-bold w-100"><i class="bi bi-hand-index me-1"></i>Claim</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="badge" style="background:#64748B;"><i class="bi bi-person-check me-1"></i>Claimed by @Person(d.ClaimedBy)</span>
+                                    @if (mine)
+                                    {
+                                        <form asp-controller="Home" asp-action="CompleteDelivery" method="post" class="m-0">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="id" value="@d.Id" />
+                                            <button type="submit" class="btn btn-sm btn-outline-success fw-bold"><i class="bi bi-check2 me-1"></i>Done</button>
+                                        </form>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <p class="mt-4"><a asp-controller="Home" asp-action="Index" class="btn btn-sm btn-secondary">&larr; Back to Dashboard</a></p>
+</div>
