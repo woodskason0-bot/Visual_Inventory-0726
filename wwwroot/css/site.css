@@ -459,6 +459,19 @@ body {
     min-height: 100vh;
 }
 
+/* background-attachment: fixed is unreliable on mobile Safari/Chrome --
+   well-documented to desync foreground scroll from the fixed background
+   layer (reported: dashboard wouldn't scroll on phone, dot grid moved on
+   its own). Desktop's parallax dot grid is cosmetic only; dropping to the
+   default `scroll` below the same 1100px cutover Index.cshtml's own
+   responsive pass (Pass 24) already uses for its grid reflow removes the
+   fixed-attachment compositing path entirely on the affected devices. */
+@media (max-width: 1100px) {
+    body {
+        background-attachment: scroll;
+    }
+}
+
 /* Inactive top-nav links: visible on the dark bar, brighten on hover */
 .nav-link-dim {
     color: #9aa4b2;

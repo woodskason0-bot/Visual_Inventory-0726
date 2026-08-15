@@ -956,6 +956,63 @@ see the Backlog entry above for the scoping trail), then built same session.
 - **Not built, explicitly parked (per the original scope):** scanning units
   and moving them between locations.
 
+**Pass 26 (2026-08-14) — the real-device pass Pass 24 flagged as remaining,
+actually done. Two real mobile bugs found and fixed, neither catchable by the
+browser-emulated viewport resize this project's "verified live" checks had
+been relying on up to this point.**
+
+- **`background-attachment: fixed` on `body`'s dot-matrix background
+  (site.css, "Tactical Dot Matrix Background") is unreliable on mobile
+  Safari/Chrome** — a well-documented compositing bug where the fixed
+  background layer desyncs from foreground scroll. Live symptom on a real
+  phone: the dashboard wouldn't scroll at all; only the dot pattern visibly
+  moved. Emulated viewport resize (this Browser-pane tool) never reproduces
+  this — it isn't a layout/CSS-value bug the DOM inspector can see, it's a
+  real-renderer compositing behavior specific to actual mobile engines.
+  Fixed by dropping to the default `background-attachment: scroll` at
+  `max-width: 1100px`, the same cutover Pass 24's own grid-reflow media
+  queries already use. Desktop's parallax effect is untouched above that
+  width.
+- **The navbar hamburger toggler was invisible on mobile.** `<nav
+  class="navbar navbar-expand-lg rheem-navbar ...">` never carried
+  `navbar-dark`, so Bootstrap defaulted the toggler to its light-navbar
+  styling — a `rgba(0,0,0,.15)` border and a dark-stroke SVG icon — against
+  this app's permanently-dark navbar background (`#15161B`). The button was
+  present and fully functional (Bootstrap's collapse JS worked correctly
+  once clicked), just impossible to see, so on a phone the entire nav
+  appeared to have vanished — no Dashboard/Settings/Intake/etc., nothing
+  visibly there to tap. Fixed by adding `navbar-dark` to the `<nav>` class
+  list (unconditional, not breakpoint-gated — the navbar is dark at every
+  width, the toggler itself is just hidden above the `lg` breakpoint by
+  Bootstrap's own `navbar-expand-lg`, so this has zero visual effect on
+  desktop).
+- **Both confirmed via computed-style inspection and a JS-driven collapse
+  toggle** (`.navbar-toggler-icon`'s `background-image` stroke color went
+  from `rgba(33,37,41,.75)` — dark, invisible — to `rgba(255,255,255,.55)`
+  — light, visible; clicking the toggler produced `.navbar-collapse.show`
+  with all five signed-out nav links present in the DOM), through this same
+  Browser-pane tool — but the ROOT CAUSE of both bugs was found by reasoning
+  from Kason's real-phone report, not by this tool independently discovering
+  either issue. **This is the actual lesson worth carrying forward:** this
+  project's automation browser is not a visually-composited, real-rendering
+  surface (`computer{action:"screenshot"}` fails outright here — "the
+  Browser pane is not displayed, so the page is not compositing frames" —
+  and programmatic `scrollTop`/`scrollTo` calls silently no-op on it), so
+  its "verified at mobile width" checks are DOM/CSS-value correctness
+  checks only. They catch layout bugs (wrong grid columns, missing
+  breakpoints) but cannot catch real-renderer-specific behavior like
+  `background-attachment: fixed` compositing or genuine touch-scroll
+  physics. Pass 24's "verified live at three real viewport sizes" claim was
+  exactly this kind of check, not a real-device test — its own "Remaining"
+  list already knew this and flagged "give Pass 24's responsive work a
+  real-device pass with an actual phone/tablet (browser-emulated viewport
+  resize is a good proxy but not a substitute)" as unfinished. That's the
+  item this pass closes.
+- **Confirmed fixed live on Kason's actual phone** (not just this tool) for
+  the scroll bug specifically; the navbar fix was verified through this
+  tool only (computed styles + functional collapse toggle) and is still
+  awaiting Kason's real-device confirmation.
+
 ---
 
 ## Traps — read before editing
@@ -995,6 +1052,22 @@ stale sidecars if the source is known to be a standalone file). Also: force-kill
 running app instance leaves the same kind of stray `-wal`/`-shm` behind — checkpoint
 (`PRAGMA wal_checkpoint(TRUNCATE)`) and switch to `DELETE` journal mode before handing a
 test copy back off.
+
+**Claude Code's Browser-pane automation tool is not a visually-composited real
+renderer (Pass 26).** `computer{action:"screenshot"}` fails outright on it ("the
+Browser pane is not displayed, so the page is not compositing frames"), and
+programmatic `scrollTop`/`scrollTo` silently no-op. Its `resize_window` mobile
+preset correctly reports `window.innerWidth`/media-query matches, so it's reliable
+for layout/CSS-value correctness at a given width — but it CANNOT catch
+real-renderer-specific mobile bugs like `background-attachment: fixed` compositing
+desync or genuine touch-scroll behavior, because those aren't DOM/CSS-value bugs at
+all. Two real mobile bugs (background-attachment breaking scroll entirely, an
+invisible navbar toggler) shipped in Pass 24 despite that pass's own "verified live
+at three real viewport sizes" claim, precisely because that verification ran
+through this tool, not a real phone. Treat any "verified at mobile width" claim
+that used this tool as DOM/CSS-correctness only, not proof of real-device
+behavior — say so explicitly rather than letting it read as a stronger claim than
+it is.
 
 ---
 
@@ -1099,45 +1172,19 @@ test copy back off.
      "full AC unit" asset type would plug into the same shape) needed before opening
      a file, not decided here.
 
-- **Delivery intake/claim workflow — scoped 2026-08-13, BUILT AND VERIFIED LIVE
-  2026-08-14 (Pass 25). See Pass log below for the shipped shape; this entry is
-  kept as the original scoping record.** Trigger: Shelly
-  (Manager) and Chris (Engineer) joining a new "Lab Processes" team, plus a need to log
-  incoming deliveries with a photo and route them to the right managers/supervisors.
-  Team/user-role part needs no code (create "Lab Processes" in Settings' existing Team
-  CRUD, assign AccessLevel via Settings, Team Membership picker for assignment — all
-  Pass 7A/16 machinery already there). The new mechanic is the delivery record itself:
-
-  - New `Delivery` model: `TrackingNumber?`, `Brand?`, `OrderNumber?` (all optional —
-    a delivery with none of the three is still a valid log), `Team?` (picked from the
-    managed Team list when the logger can tell whose delivery it is), `PhotoPath`
-    (required, at least one), `LoggedBy`/`LoggedAt`. Claim lifecycle copied from
-    `VisTask` (Models/VisTask.cs) as-is: `Status` Open/Claimed/Done,
-    `ClaimedBy?`/`ClaimedAt?`, `CompletedAt?`.
-  - Photo storage: `C:\VIS_Inventory\DeliveryPhotos\` — external, deliberately moved
-    out of publish same as `inventory.db` (see "Deployment lineage" in the addendum —
-    this project already has one bug history of things living inside publish getting
-    wiped), but served over a normal URL via a second `UseStaticFiles` mapping
-    (`PhysicalFileProvider` + `/delivery-photos` request path) in `Program.cs`, so it's
-    fully visible in the app despite not living in `wwwroot`. Resize/re-encode on
-    upload (cap ~1600px longest edge, JPEG) to keep footprint down.
-  - Who can log one: `AccessLevel >= Standard` (2), matching every other create-style
-    action (`CreateItem`/`StartOrder`/Intake, Pass 9).
-  - Notify: reuses `NotificationService.CreateForLevel` as-is. Team picked → notify
-    `AccessLevel >= Management` (4) on that team via `UserTeams`. Team blank/unknown →
-    same tier org-wide. Management(4)+Admin(5) collapses "managers, supervisors, and
-    admins" into one existing band — no new tier needed.
-  - Who can claim: same `AccessLevel >= Management` band it was sent to.
-  - Visible claim state: new "Deliveries" board (parallel to Tasks Available/Pickup
-    Queue) — Open items visible to the notified band, "Claimed by X" once taken, same
-    lock-in UX `VisTask`'s board already has.
-  - Explicitly out of scope for this pass: scanning units and moving them between
-    locations — parked, not forgotten.
-  - Optional small add-on if wanted alongside this: an "unassigned users" filter on
-    the Team Membership picker (Settings), so a Team-cleanup pass doesn't require
-    eyeballing all 51 rows by hand.
-
-  Not yet built — waiting on go-ahead before opening a file.
+- **Delivery intake/claim workflow — scoped 2026-08-13 across four rounds, BUILT AND
+  VERIFIED LIVE 2026-08-14 (Pass 25).** Trigger: Shelly (Manager) and Chris (Engineer)
+  joining a new "Lab Processes" team, plus a need to log incoming deliveries with a
+  photo and route them to the right people. The Team/user-role part needed no code
+  (Settings' existing Team CRUD + Team Membership picker, Pass 7A/16). The scoping
+  trail changed shape twice before landing (single `Brand` → split
+  `BrandOfShipping`/`BrandOfItem`; Team-based routing → specific-person-or-
+  "Unknown Delivery" routing; photo path moved once more during the build itself,
+  `C:\VIS_Inventory\DeliveryPhotos\` → `C:\VIS_Image-Uploads\`) — **see the Pass 25
+  entry in the Pass log below for the actual shipped shape; treat every field/path
+  named above as historical, not current.** Scanning units and moving them between
+  locations stayed explicitly out of scope, parked. An "unassigned users" filter on
+  the Team Membership picker was floated as an optional add-on and not built.
 
 ---
 
@@ -1386,9 +1433,12 @@ triggered through a real approval), submit a real serial through either Pass 20'
 Modify Stock Add entrance or the batch review (both share `LogIntakeSerials`,
 verified live in Pass 17 through Registry/Intake, but not separately through either
 of these two newer entrances — both live batch tests so far used a bare quantity,
-deliberately, to keep the round-trip trivial to reverse), and give Pass 24's
-responsive work a real-device pass with an actual phone/tablet (browser-emulated
-viewport resize is a good proxy but not a substitute) plus a live check of
-Settings on mobile once the superuser passcode is available.
+deliberately, to keep the round-trip trivial to reverse). **The real-device pass on
+Pass 24's responsive work happened 2026-08-14 (Pass 26) — found and fixed two real
+bugs the emulated-viewport checks had missed** (`background-attachment: fixed`
+breaking mobile scroll entirely; an invisible navbar toggler). Scroll fix confirmed
+on my actual phone; navbar fix still only confirmed through the emulation tool,
+not my phone yet. Still open: a live check of Settings on mobile once the
+superuser passcode is available there.
 Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
 expansion work, not a blocker.
