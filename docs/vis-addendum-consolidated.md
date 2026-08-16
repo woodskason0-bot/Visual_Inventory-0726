@@ -102,11 +102,19 @@ collision.
 
 | Layer | z-index |
 |---|---|
+| sidebar (desktop, sticky) | 200 |
+| mobile sidebar backdrop | 1050 |
+| mobile sidebar (off-canvas) | 1100 |
 | holo overlay | 2000 |
 | modal-backdrop | 2150 |
 | modal | 2200 |
 | not-authorized banner | 4000 |
 | toast | 12000 |
+
+Sidebar layers (Pass 27 phase 1) sit deliberately below the holo overlay/modal
+stack — if a modal ever opens while the mobile drawer is open, the modal should
+still win. Keep any future overlay's z-index decision anchored to this table,
+not a guess.
 
 Bootstrap's confirm modal defaults to 1055 and opened *behind* the holo overlay at 2000
 — visible and completely unclickable, zero network requests on every attempt. All

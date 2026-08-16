@@ -62,6 +62,34 @@
         if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
         return utc.ToLocalTime().ToString("MMM d");
     };
+
+    // Identity breadcrumb: Branch -> Line -> tier, real data only, blank parts
+    // dropped. Same "effective branch" formula HomeController.Index computes
+    // as ViewBag.MyBranch, replicated here since this needs to render on
+    // every page, not just the dashboard.
+    string myBranchLabel = "";
+    if (signedIn)
+    {
+        myBranchLabel = !string.IsNullOrWhiteSpace(CurrentUser.Line)
+            ? (Visual_Inventory_System.Services.OrgStructure.BranchFor(CurrentUser.Line) ?? "")
+            : (CurrentUser.Branch ?? "");
+    }
+    string myTierLabel = signedIn ? Visual_Inventory_System.Services.AccessLevels.Name(CurrentUser.Level) : "";
+    var breadcrumbParts = new List<string>();
+    if (!string.IsNullOrWhiteSpace(myBranchLabel)) breadcrumbParts.Add(myBranchLabel);
+    if (!string.IsNullOrWhiteSpace(myLine)) breadcrumbParts.Add(myLine);
+    if (!string.IsNullOrWhiteSpace(myTierLabel)) breadcrumbParts.Add(myTierLabel);
+    string identityBreadcrumb = string.Join(" → ", breadcrumbParts);
+
+    // Active-state helper for sidebar links -- same action/controller checks
+    // the old top navbar used, just applied to the new markup.
+    Func<string, bool> isActiveAction = action => currentAction == action;
+    bool isSettingsActive = ViewContext.RouteData.Values["controller"]?.ToString() == "Settings";
+
+    // Sign-in has nothing to navigate to yet -- every other route just
+    // bounces back here pre-authentication -- so the shell adds nothing but
+    // wasted screen space on a page that's supposed to be one centered card.
+    bool isIdentifyPage = currentAction == "Identify";
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@theme">
@@ -75,18 +103,18 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/Visual_Inventory_System.styles.css" asp-append-version="true" />
     <style>
-        /* Green accent across the whole nav while an order is being built */
-        .rheem-navbar { position: relative; }
-        .rheem-navbar.order-mode {
+        /* Green accent across the top bar while an order is being built --
+           same effect the old horizontal navbar had, just retargeted from
+           .rheem-navbar to .top-bar (still a horizontal bar, so the geometry
+           carries over unchanged). */
+        .top-bar { position: relative; }
+        .top-bar.order-mode {
             border-bottom: 4px solid var(--vis-green);
             box-shadow: 0 4px 16px rgba(34, 197, 94, 0.28);
             background-image: linear-gradient(rgba(34,197,94,0.07), rgba(34,197,94,0.07));
-            overflow: visible; /* let the impact pop bloom just past the right edge */
+            overflow: visible;
         }
-        /* The line "flies" left -> right along the bottom border when order mode begins.
-           Plays on first add (class added live) and on each load while order mode persists.
-           z-index kept local + low: well under holo overlay (2000) and modals (2150/2200). */
-        .rheem-navbar.order-mode::after {
+        .top-bar.order-mode::after {
             content: "";
             position: absolute;
             left: 0; right: 0; bottom: -4px;
@@ -98,8 +126,7 @@
             pointer-events: none;
             z-index: 4;
         }
-        /* The little "blow up" when the sweep meets the right wall. */
-        .rheem-navbar.order-mode::before {
+        .top-bar.order-mode::before {
             content: "";
             position: absolute;
             right: 0; bottom: -3px;
@@ -108,7 +135,7 @@
             background: radial-gradient(circle, #8af0b0 0%, var(--vis-green) 45%, rgba(34,197,94,0) 72%);
             transform: translate(50%, 50%) scale(0);
             opacity: 0;
-            animation: vis-order-pop 0.34s ease-out 0.66s both; /* fires as the sweep lands */
+            animation: vis-order-pop 0.34s ease-out 0.66s both;
             pointer-events: none;
             z-index: 5;
         }
@@ -124,10 +151,10 @@
             100% { transform: translate(50%,50%) scale(2.2); opacity: 0; }
         }
         @@media (prefers-reduced-motion: reduce) {
-            .rheem-navbar.order-mode::after,
-            .rheem-navbar.order-mode::before { animation: none; }
-            .rheem-navbar.order-mode::after { transform: scaleX(1); }
-            .rheem-navbar.order-mode::before { opacity: 0; }
+            .top-bar.order-mode::after,
+            .top-bar.order-mode::before { animation: none; }
+            .top-bar.order-mode::after { transform: scaleX(1); }
+            .top-bar.order-mode::before { opacity: 0; }
         }
         .order-mode-badge {
             display: inline-flex;
@@ -187,188 +214,214 @@
     </style>
 </head>
 <body>
-    <header>
-        <nav class="navbar navbar-expand-lg navbar-dark rheem-navbar mb-3 @(orderMode ? "order-mode" : "")">
-            <div class="container-fluid px-4">
+    @if (isIdentifyPage)
+    {
+        <div class="container-fluid px-4">
+            <main role="main" class="pb-3">
+                @if (TempData["AuthError"] != null)
+                {
+                    <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center shadow-lg" role="alert"
+                         style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 4000; max-width: 640px; width: calc(100% - 40px); border-left: 4px solid #b02a37;">
+                        <i class="bi bi-shield-lock-fill me-2"></i>
+                        <div>@TempData["AuthError"]</div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                }
+                @RenderBody()
+            </main>
+        </div>
+    }
+    else
+    {
+    <div class="app-shell">
+        <aside class="sidebar" id="appSidebar">
+            <a class="sidebar-brand text-decoration-none" asp-area="" asp-controller="Home" asp-action="Index">
+                <img src="~/images/RheemLogo.png" alt="Rheem" />
+                <span class="sidebar-brand-text text-white fw-bold" style="font-size: 0.95rem; line-height: 1.15;">
+                    <span style="color: var(--vis-red);">V</span>isual
+                    <span style="color: var(--vis-red);">I</span>nventory
+                    <span style="color: var(--vis-red);">S</span>ystem
+                </span>
+            </a>
 
-                <a class="navbar-brand d-flex align-items-center" asp-area="" asp-controller="Home" asp-action="Index">
-                    <!-- RESTORED RHEEM LOGO -->
-                    <img src="~/images/RheemLogo.png" alt="Rheem" height="40" class="me-3" />
-
-                    <!-- Stylized "Visual Inventory System" text -->
-                    <span class="text-white fw-bold" style="letter-spacing: 0.5px; font-size: 1.4rem;">
-                        <span style="color: var(--vis-red); font-size: 1.7rem;">V</span>isual
-                        <span style="color: var(--vis-red); font-size: 1.7rem; margin-left: 4px;">I</span>nventory
-                        <span style="color: var(--vis-red); font-size: 1.7rem; margin-left: 4px;">S</span>ystem
-                    </span>
+            <nav class="sidebar-nav">
+                <a class="sidebar-link @(isActiveAction("Index") ? "active" : "")" asp-controller="Home" asp-action="Index">
+                    <i class="bi bi-grid-1x2-fill"></i><span class="sidebar-link-text">Dashboard</span>
                 </a>
+                <a class="sidebar-link @(isActiveAction("Logs") ? "active" : "")" asp-controller="Home" asp-action="Logs">
+                    <i class="bi bi-journal-text"></i><span class="sidebar-link-text">View Logs</span>
+                </a>
+                <a class="sidebar-link @(isActiveAction("MyOrders") ? "active" : "")" asp-controller="Home" asp-action="MyOrders">
+                    <i class="bi bi-cart-fill"></i><span class="sidebar-link-text">My Orders</span>
+                </a>
+                @* Pass 9: bulk intake, Standard+ -- interns can log stock without
+                   being able to invent a location. *@
+                <a class="sidebar-link @(isActiveAction("Intake") ? "active" : "")" asp-controller="Home" asp-action="Intake">
+                    <i class="bi bi-inboxes-fill"></i><span class="sidebar-link-text">Intake</span>
+                </a>
+                <a class="sidebar-link @(isActiveAction("LogDelivery") ? "active" : "")" asp-controller="Home" asp-action="LogDelivery">
+                    <i class="bi bi-camera-fill"></i><span class="sidebar-link-text">Log Delivery</span>
+                </a>
+                @if (isManager)
+                {
+                    <a class="sidebar-link @(isActiveAction("Deliveries") ? "active" : "")" asp-controller="Home" asp-action="Deliveries">
+                        <i class="bi bi-box-seam-fill"></i><span class="sidebar-link-text">Deliveries</span>
+                    </a>
+                }
+                @if (signedIn && string.Equals(visUser, SuperuserGate.SuperuserName, StringComparison.OrdinalIgnoreCase))
+                {
+                    <a class="sidebar-link @(isSettingsActive ? "active" : "")" asp-controller="Settings" asp-action="Index">
+                        <i class="bi bi-gear-fill"></i><span class="sidebar-link-text">Settings</span>
+                    </a>
+                }
+            </nav>
 
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse">
-                    <span class="navbar-toggler-icon"></span>
+            <div class="sidebar-footer">
+                <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn">
+                    <i class="bi bi-chevron-double-left" id="sidebarCollapseIcon"></i>
+                    <span class="sidebar-link-text" id="sidebarCollapseLabel">Collapse</span>
                 </button>
-                @* Pass 24: was d-sm-inline-flex/navbar-expand-sm (576px+) -- the nav
-                   links + right-side controls (notifications/theme/user badge) need
-                   ~620px alone, which overflowed on real tablets (768px) once the
-                   brand logo was added in. Bumped to lg (992px) so it only expands
-                   to the inline layout once there's genuinely desktop-width room;
-                   phones and tablets both get the hamburger collapse instead. *@
-                <div class="navbar-collapse collapse d-lg-inline-flex justify-content-end align-items-center">
+            </div>
+        </aside>
+
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+        <div class="main-area">
+            <div class="top-bar @(orderMode ? "order-mode" : "")">
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="sidebar-hamburger" id="sidebarHamburger" aria-label="Open navigation">
+                        <i class="bi bi-list"></i>
+                    </button>
                     @if (orderMode)
                     {
-                        <span class="order-mode-badge me-4"><i class="bi bi-cart-fill"></i> Order Mode</span>
+                        <span class="order-mode-badge"><i class="bi bi-cart-fill"></i> Order Mode</span>
                     }
-                    <ul class="navbar-nav me-4">
-                        <li class="nav-item">
-                            <a class="nav-link @(currentAction == "Index" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Index">Dashboard</a>
-                        </li>
-                        <li class="nav-item ms-3">
-                            <a class="nav-link @(currentAction == "Logs" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Logs">View Logs</a>
-                        </li>
-                        <li class="nav-item ms-3">
-                            <a class="nav-link @(currentAction == "MyOrders" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="MyOrders">My Orders</a>
-                        </li>
-                        @* Pass 9: bulk intake, Standard+ -- interns can log stock without
-                           being able to invent a location. *@
-                        <li class="nav-item ms-3">
-                            <a class="nav-link @(currentAction == "Intake" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Intake">Intake</a>
-                        </li>
-                        <li class="nav-item ms-3">
-                            <a class="nav-link @(currentAction == "LogDelivery" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="LogDelivery">Log Delivery</a>
-                        </li>
-                        @if (isManager)
-                        {
-                            <li class="nav-item ms-3">
-                                <a class="nav-link @(currentAction == "Deliveries" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Home" asp-action="Deliveries">Deliveries</a>
-                            </li>
-                        }
-                        @if (signedIn && string.Equals(visUser, SuperuserGate.SuperuserName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            <li class="nav-item ms-3">
-                                <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Settings" ? "text-white border-bottom border-danger border-2 pb-1" : "nav-link-dim")" asp-controller="Settings" asp-action="Index"><i class="bi bi-gear-fill"></i> Settings</a>
-                            </li>
-                        }
-                    </ul>
+                </div>
 
-                    <div class="d-flex align-items-center border-start border-secondary ps-4">
-                        @if (signedIn)
-                        {
-                            <form asp-controller="Home" asp-action="SetTheme" method="post" class="m-0 me-3">
-                                @Html.AntiForgeryToken()
-                                <input type="hidden" name="theme" value="@(theme == "light" ? "dark" : "light")" />
-                                <button type="submit" class="btn btn-link p-0 align-baseline"
-                                        title="Switch to @(theme == "light" ? "dark" : "light") mode"
-                                        style="color:#a0aab5; text-decoration:none;">
-                                    <i class="bi @(theme == "light" ? "bi-moon-stars-fill" : "bi-sun-fill") fs-5"></i>
-                                </button>
-                            </form>
-                        }
-                        @if (signedIn)
-                        {
-                            <div class="dropdown me-4" id="notifBellWrap">
-                                <a href="#" class="position-relative d-inline-block text-decoration-none" role="button"
-                                   id="notifBell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-                                   style="cursor:pointer; color:#a0aab5;">
-                                    <i class="bi bi-bell-fill fs-5"></i>
-                                    <span id="notifBadge"
-                                          class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger @(unreadCount > 0 ? "" : "d-none")"
-                                          style="font-size:9px;">@unreadCount</span>
-                                </a>
-                                <div class="dropdown-menu dropdown-menu-end notif-menu p-0" aria-labelledby="notifBell">
-                                    <div class="notif-header">Notifications</div>
-                                    @if (isManager && alertCount > 0)
+                <div class="d-flex align-items-center">
+                    @if (signedIn)
+                    {
+                        <form asp-controller="Home" asp-action="SetTheme" method="post" class="m-0 me-3">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="theme" value="@(theme == "light" ? "dark" : "light")" />
+                            <button type="submit" class="btn btn-link p-0 align-baseline"
+                                    title="Switch to @(theme == "light" ? "dark" : "light") mode"
+                                    style="color:#a0aab5; text-decoration:none;">
+                                <i class="bi @(theme == "light" ? "bi-moon-stars-fill" : "bi-sun-fill") fs-5"></i>
+                            </button>
+                        </form>
+                    }
+                    @if (signedIn)
+                    {
+                        <div class="dropdown me-4" id="notifBellWrap">
+                            <a href="#" class="position-relative d-inline-block text-decoration-none" role="button"
+                               id="notifBell" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                               style="cursor:pointer; color:#a0aab5;">
+                                <i class="bi bi-bell-fill fs-5"></i>
+                                <span id="notifBadge"
+                                      class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger @(unreadCount > 0 ? "" : "d-none")"
+                                      style="font-size:9px;">@unreadCount</span>
+                            </a>
+                            <div class="dropdown-menu dropdown-menu-end notif-menu p-0" aria-labelledby="notifBell">
+                                <div class="notif-header">Notifications</div>
+                                @if (isManager && alertCount > 0)
+                                {
+                                    <a class="notif-lowstock" asp-controller="Home" asp-action="Index">
+                                        <i class="bi bi-exclamation-triangle-fill"></i>
+                                        <span>@alertCount item@(alertCount == 1 ? "" : "s") low on stock</span>
+                                    </a>
+                                }
+                                <ul class="list-unstyled m-0" id="notifList">
+                                    @foreach (var n in notifications)
                                     {
-                                        <a class="notif-lowstock" asp-controller="Home" asp-action="Index">
-                                            <i class="bi bi-exclamation-triangle-fill"></i>
-                                            <span>@alertCount item@(alertCount == 1 ? "" : "s") low on stock</span>
-                                        </a>
-                                    }
-                                    <ul class="list-unstyled m-0" id="notifList">
-                                        @foreach (var n in notifications)
+                                        string nIcon; string nColor;
+                                        switch (n.Category)
                                         {
-                                            string nIcon; string nColor;
-                                            switch (n.Category)
+                                            case "PickupRequested": nIcon = "bi-cart-plus-fill"; nColor = "text-info"; break;
+                                            case "Fulfilled": nIcon = "bi-check-circle-fill"; nColor = "text-success"; break;
+                                            default: nIcon = "bi-bell-fill"; nColor = "text-light"; break;
+                                        }
+                                        <li class="notif-item d-flex align-items-stretch @(n.IsRead ? "" : "notif-unread")" data-id="@n.Id">
+                                            @if (!string.IsNullOrEmpty(n.LinkUrl))
                                             {
-                                                case "PickupRequested": nIcon = "bi-cart-plus-fill"; nColor = "text-info"; break;
-                                                case "Fulfilled": nIcon = "bi-check-circle-fill"; nColor = "text-success"; break;
-                                                default: nIcon = "bi-bell-fill"; nColor = "text-light"; break;
-                                            }
-                                            <li class="notif-item d-flex align-items-stretch @(n.IsRead ? "" : "notif-unread")" data-id="@n.Id">
-                                                @if (!string.IsNullOrEmpty(n.LinkUrl))
-                                                {
-                                                    <a href="@n.LinkUrl" class="notif-link flex-grow-1">
-                                                        <div class="d-flex align-items-start">
-                                                            <i class="bi @nIcon me-2 @nColor"></i>
-                                                            <div>
-                                                                <div class="notif-msg">@n.Message</div>
-                                                                <div class="notif-time">@relTime(n.CreatedAt)</div>
-                                                            </div>
-                                                        </div>
-                                                    </a>
-                                                }
-                                                else
-                                                {
-                                                    <div class="notif-link flex-grow-1">
-                                                        <div class="d-flex align-items-start">
-                                                            <i class="bi @nIcon me-2 @nColor"></i>
-                                                            <div>
-                                                                <div class="notif-msg">@n.Message</div>
-                                                                <div class="notif-time">@relTime(n.CreatedAt)</div>
-                                                            </div>
+                                                <a href="@n.LinkUrl" class="notif-link flex-grow-1">
+                                                    <div class="d-flex align-items-start">
+                                                        <i class="bi @nIcon me-2 @nColor"></i>
+                                                        <div>
+                                                            <div class="notif-msg">@n.Message</div>
+                                                            <div class="notif-time">@relTime(n.CreatedAt)</div>
                                                         </div>
                                                     </div>
-                                                }
-                                                <button type="button" class="notif-dismiss btn btn-link p-2" data-id="@n.Id" title="Dismiss">
-                                                    <i class="bi bi-x-lg"></i>
-                                                </button>
-                                            </li>
-                                        }
-                                    </ul>
-                                    <div class="notif-empty @(notifications.Any() ? "d-none" : "")" id="notifEmpty">
-                                        You're all caught up.
-                                    </div>
+                                                </a>
+                                            }
+                                            else
+                                            {
+                                                <div class="notif-link flex-grow-1">
+                                                    <div class="d-flex align-items-start">
+                                                        <i class="bi @nIcon me-2 @nColor"></i>
+                                                        <div>
+                                                            <div class="notif-msg">@n.Message</div>
+                                                            <div class="notif-time">@relTime(n.CreatedAt)</div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            }
+                                            <button type="button" class="notif-dismiss btn btn-link p-2" data-id="@n.Id" title="Dismiss">
+                                                <i class="bi bi-x-lg"></i>
+                                            </button>
+                                        </li>
+                                    }
+                                </ul>
+                                <div class="notif-empty @(notifications.Any() ? "d-none" : "")" id="notifEmpty">
+                                    You're all caught up.
                                 </div>
-                                @Html.AntiForgeryToken()
                             </div>
-                        }
-                        <div class="d-flex align-items-center">
-                            <div class="bg-secondary text-white rounded-circle d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px; font-size: 12px; font-weight: bold;">@initials</div>
-                            <div style="line-height: 1.2;">
-                                <div class="text-white small fw-bold">@displayName</div>
-                                @if (signedIn)
-                                {
-                                    <form asp-controller="Home" asp-action="SignOut" method="post" class="m-0 p-0">
-                                        @Html.AntiForgeryToken()
-                                        <button type="submit" class="btn btn-link p-0 text-decoration-none" style="color: var(--vis-red); font-size: 10px; line-height:1;">
-                                            <i class="bi bi-box-arrow-right me-1"></i>Sign Out
-                                        </button>
-                                    </form>
-                                }
-                                else
-                                {
-                                    <div style="color: var(--vis-text-muted); font-size: 10px;">Guest</div>
-                                }
-                            </div>
+                            @Html.AntiForgeryToken()
+                        </div>
+                    }
+                    <div class="d-flex align-items-center">
+                        <div class="bg-secondary text-white rounded-circle d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px; font-size: 12px; font-weight: bold; flex-shrink:0;">@initials</div>
+                        <div style="line-height: 1.2;">
+                            <div class="text-white small fw-bold">@displayName</div>
+                            @if (signedIn && !string.IsNullOrWhiteSpace(identityBreadcrumb))
+                            {
+                                <div class="identity-breadcrumb">@identityBreadcrumb</div>
+                            }
+                            @if (signedIn)
+                            {
+                                <form asp-controller="Home" asp-action="SignOut" method="post" class="m-0 p-0">
+                                    @Html.AntiForgeryToken()
+                                    <button type="submit" class="btn btn-link p-0 text-decoration-none" style="color: var(--vis-red); font-size: 10px; line-height:1;">
+                                        <i class="bi bi-box-arrow-right me-1"></i>Sign Out
+                                    </button>
+                                </form>
+                            }
+                            else
+                            {
+                                <div style="color: var(--vis-text-muted); font-size: 10px;">Guest</div>
+                            }
                         </div>
                     </div>
                 </div>
             </div>
-        </nav>
-    </header>
 
-    <div class="container-fluid px-4">
-        <main role="main" class="pb-3">
-            @if (TempData["AuthError"] != null)
-            {
-                <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center shadow-lg" role="alert"
-                     style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 4000; max-width: 640px; width: calc(100% - 40px); border-left: 4px solid #b02a37;">
-                    <i class="bi bi-shield-lock-fill me-2"></i>
-                    <div>@TempData["AuthError"]</div>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            }
-            @RenderBody()
-        </main>
+            <div class="container-fluid px-4">
+                <main role="main" class="pb-3">
+                    @if (TempData["AuthError"] != null)
+                    {
+                        <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center shadow-lg" role="alert"
+                             style="position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 4000; max-width: 640px; width: calc(100% - 40px); border-left: 4px solid #b02a37;">
+                            <i class="bi bi-shield-lock-fill me-2"></i>
+                            <div>@TempData["AuthError"]</div>
+                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                        </div>
+                    }
+                    @RenderBody()
+                </main>
+            </div>
+        </div>
     </div>
+    }
 
     <!-- Toast container (Fixed Z-Index) -->
     <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 12000;"></div>

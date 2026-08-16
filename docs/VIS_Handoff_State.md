@@ -1106,6 +1106,90 @@ it is.
   but whether it generalizes across the board is still an open question I'm running down
   separately.
 
+**Pass 27 phase 1 (2026-08-16) — full UI redesign kickoff: left sidebar shell
+replaces the top navbar app-wide.** Scoped from a real design mockup (industrial
+ops platform aesthetic, light/white surfaces, Rheem red as the sole accent),
+broken into 4 phases so each lands and gets tested separately: (1) sidebar
+shell — this pass; (2) Command Center rebuild; (3) new Search Center page,
+extracted from what's currently baked into `Index.cshtml`; (4) a visual pass
+extending the shell's light/shadow card system to the remaining un-rebuilt
+views. Full scope, including the 4 pre-build decisions locked in (mobile
+sidebar = off-canvas drawer; "In Transit" = real Pending-order allocation, not
+invented data; "System Status" card dropped rather than faked; "Pending
+Orders" = `Order.Status=="Pending"` + held `IntakeBatches` combined), is in the
+conversation history, not restated here — this entry covers what phase 1
+actually shipped.
+
+- **`_Layout.cshtml` rebuilt: `<header><nav>` (horizontal, top) → `.app-shell`
+  (`.sidebar` + `.main-area`)**, since this file wraps every page in the app,
+  this single change is the highest-leverage, highest-risk edit in the whole
+  redesign. Every existing nav item (Dashboard/View Logs/My Orders/Intake/Log
+  Delivery/Deliveries/Settings), the same exact server-side gates
+  (`isManager` for Deliveries, superuser-name match for Settings), the theme
+  toggle, notification bell (full dropdown + read/dismiss JS, unchanged IDs
+  so the existing fetch-based JS needed zero changes), and the user identity
+  badge/sign-out all moved into the new shell with no functional changes —
+  purely relocated. Deliberately did **not** add "Search Center" to the nav
+  yet — that route doesn't exist until phase 3, and a dead nav link would be
+  worse than a temporarily-incomplete one.
+- **New: identity breadcrumb** (Branch → Line → tier, e.g. "Commercial Air →
+  Commercial Packaged/Splits → Admin") under the display name, real data only
+  — same "effective branch" formula `HomeController.Index`'s `ViewBag.MyBranch`
+  already computes, replicated directly in the layout since it needs to
+  render on every page, not just the dashboard. Blank parts drop out of the
+  breadcrumb entirely rather than showing empty arrows.
+- **Desktop: sidebar collapses to icon-only**, state kept in `localStorage`
+  (`vis-sidebar-collapsed`) — a UI preference, not judged worth a `User`
+  table field yet. **Mobile (<992px, the same breakpoint the old navbar's
+  hamburger used): off-canvas drawer** — `position: fixed`, opens over a
+  backdrop, closes on backdrop click or any nav-link click. Deliberately does
+  **not** lock body scroll while open — Pass 26 already found one real
+  mobile-scroll bug from an unrelated fixed-position/background interaction
+  the night before this one; staying conservative here rather than risk a
+  second for a cosmetic nicety nobody asked for.
+- **New site-wide CSS added to `site.css`** (`.app-shell`/`.sidebar`/
+  `.sidebar-nav`/`.sidebar-link`/`.top-bar`/`.sidebar-backdrop`, ~200 lines),
+  fully driven by the existing `--vis-*` CSS variables — no new light/dark
+  override rules needed, the shell adapts to both themes for free. New
+  `site.js` content (`vis-sidebar-collapsed` persistence, mobile drawer
+  open/close) — the file was previously just SDK scaffold comments, empty of
+  real code.
+- **Two new z-index layers, added to the addendum's registry table**
+  deliberately below the holo overlay/modal stack (sidebar 200, mobile
+  backdrop 1050, mobile sidebar 1100) so a modal opened while the drawer's
+  open still wins. Z-index collisions are this project's single worst bug in
+  its history — every future overlay should check that table, not guess.
+- **Verified live**: signed in as Admin, confirmed every relocated nav item
+  present with correct gating, active-link highlighting correct on Dashboard/
+  Deliveries/Log Delivery, breadcrumb rendering real data
+  ("Commercial Air → Commercial Packaged/Splits → Admin"), notification
+  bell/theme-toggle/sign-out all functionally unchanged. Desktop collapse and
+  mobile drawer (open via hamburger, close via backdrop, close via link
+  click) all confirmed via direct DOM/class inspection — this session's
+  Browser-pane tool can't render real CSS transitions (documented in Pass
+  26's Traps entry), so the *animated* collapse was confirmed correct by
+  disabling the transition and checking the instant before/after values
+  rather than watching it animate; the class-toggle logic and final CSS
+  values are what's actually verified, not the visual motion.
+- **Follow-up same session, from real-phone feedback: the sign-in ("lock
+  screen") page no longer renders the shell at all.** There's nothing to
+  navigate to pre-authentication — every other route just bounces back to
+  sign-in anyway — so the sidebar/top-bar were pure wasted screen space on a
+  page that's supposed to be one centered card. `_Layout.cshtml` now branches
+  on `isIdentifyPage` (`currentAction == "Identify"`) and renders a bare
+  `container-fluid`/`main`/`@@RenderBody()` with no shell for that one route;
+  every other page is unaffected. Confirmed live: sign-in page has neither
+  `#appSidebar` nor `.top-bar` in the DOM; signing in still lands on the full
+  shell with Dashboard correctly active. Also noted and deliberately not
+  acted on: the mobile drawer, when open, necessarily covers dashboard
+  content underneath it (standard overlay behavior) — flagged as a real
+  tension worth revisiting once Command Center's actual phase-2 content
+  exists to design around, not a phase-1 bug.
+- **Not yet built (phases 2-4):** Command Center rebuild, Search Center page,
+  visual pass on the remaining views. `Index.cshtml` itself is completely
+  untouched by phase 1 — still the old dashboard content, just now rendered
+  inside the new shell.
+
 ---
 
 ## Backlog
