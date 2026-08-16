@@ -214,6 +214,39 @@
     </style>
 </head>
 <body>
+    @* Pass 27: jQuery/Bootstrap/site.js load HERE, before any page's own
+       content/inline scripts render via @@RenderBody() below -- previously
+       these loaded at the very bottom of body, AFTER a page's own script had
+       already executed, which is the exact reason a shared helper couldn't
+       be centralized in site.js before now (see the Traps entry this
+       supersedes: encodeLoc's move to site.js was "tried and reverted" for
+       this reason). All the DOM these scripts might reference synchronously
+       lives above this point in the document (sidebar shell) or is added by
+       @@RenderBody() itself further down, so nothing here depends on body
+       content that hasn't rendered yet -- only script EXECUTION order moved. *@
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="~/js/site.js" asp-append-version="true"></script>
+    <script>
+        function showToast(message, type) {
+        var toastId = 't' + Math.floor(Math.random() * 1000000);
+        var bgClass = (type === 'success') ? 'bg-success text-white' : 'bg-danger text-white';
+        var icon = (type === 'success') ? '<i class="bi bi-check-circle-fill me-2"></i>' : '<i class="bi bi-exclamation-triangle-fill me-2"></i>';
+
+        var html = `
+        <div id="${toastId}" class="toast ${bgClass} border-0 shadow-lg" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="4000">
+        <div class="toast-body fw-bold" style="font-size: 1.05rem;">
+        ${icon} ${message}
+        </div>
+        </div>`;
+        $('#toastContainer').append(html);
+        var el = document.getElementById(toastId);
+        var bs = new bootstrap.Toast(el);
+        bs.show();
+        el.addEventListener('hidden.bs.toast', function () { el.remove(); });
+        }
+    </script>
+
     @if (isIdentifyPage)
     {
         <div class="container-fluid px-4">
@@ -425,29 +458,6 @@
 
     <!-- Toast container (Fixed Z-Index) -->
     <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 12000;"></div>
-
-    <script src="~/lib/jquery/dist/jquery.min.js"></script>
-    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="~/js/site.js" asp-append-version="true"></script>
-    <script>
-        function showToast(message, type) {
-        var toastId = 't' + Math.floor(Math.random() * 1000000);
-        var bgClass = (type === 'success') ? 'bg-success text-white' : 'bg-danger text-white';
-        var icon = (type === 'success') ? '<i class="bi bi-check-circle-fill me-2"></i>' : '<i class="bi bi-exclamation-triangle-fill me-2"></i>';
-
-        var html = `
-        <div id="${toastId}" class="toast ${bgClass} border-0 shadow-lg" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="4000">
-        <div class="toast-body fw-bold" style="font-size: 1.05rem;">
-        ${icon} ${message}
-        </div>
-        </div>`;
-        $('#toastContainer').append(html);
-        var el = document.getElementById(toastId);
-        var bs = new bootstrap.Toast(el);
-        bs.show();
-        el.addEventListener('hidden.bs.toast', function () { el.remove(); });
-        }
-    </script>
 
     <script>
         (function () {

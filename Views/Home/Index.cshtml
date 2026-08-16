@@ -3369,7 +3369,10 @@
     })();
 
     function syncHeaderOffset() {
-        const header = document.querySelector('header');
+        // Pass 27 phase 1: the old <header> was replaced by the sidebar shell's
+        // .top-bar -- same role (the horizontal chrome .overlay-grid must sit
+        // below), different element.
+        const header = document.querySelector('.top-bar');
         if (!header) return;
         const rect = header.getBoundingClientRect();
         const breathingRoom = 28; //accounts for the navbar's mb-3 margin + looks better kinda
@@ -3392,7 +3395,7 @@
         .then(data => {
             if (data.success) {
                 orderActive = true;
-                document.querySelector('.rheem-navbar')?.classList.add('order-mode');
+                document.querySelector('.top-bar')?.classList.add('order-mode');
                 if (window.showToast) showToast(data.message, "success");
                 const b = form.querySelector('button');
                 if (b) { b.classList.replace('btn-primary', 'btn-success'); b.innerText = "Added!"; b.disabled = true; }
