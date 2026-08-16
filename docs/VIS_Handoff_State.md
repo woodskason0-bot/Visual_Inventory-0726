@@ -1190,6 +1190,138 @@ actually shipped.
   untouched by phase 1 — still the old dashboard content, just now rendered
   inside the new shell.
 
+**Pass 27 phase 1 follow-up (2026-08-16, same day) — two regressions fixed,
+plus a prerequisite for phase 2.** Found while mapping `Index.cshtml`'s JS
+ahead of phase 2's extraction work, fixed immediately since they were real
+live bugs, not phase-2 scope:
+
+- **`syncHeaderOffset()` still queried the `<header>` element phase 1
+  removed** — silently no-op'd every call, so `--vis-header-bottom` (which
+  `.overlay-grid`'s desktop positioning reads) fell back to a stale
+  hardcoded `110px` instead of the real top-bar height. Now measures
+  `.top-bar`. Verified live: the CSS variable resolves to a real measured
+  value again (`101.98px` in the test session, not the fallback).
+- **The Add-to-Cart submit handler still targeted `.rheem-navbar`** to
+  trigger the order-mode green sweep animation — that class was renamed to
+  `.top-bar` in phase 1, so the animation has been silently dead since phase
+  1 shipped. Fixed to match.
+- **`jQuery`/`Bootstrap`/`site.js` moved to load right after `<body>` opens,
+  instead of after `@@RenderBody()`.** Previously a page's own inline
+  `<script>` block (e.g. `Index.cshtml`'s ~1,820-line one) executed BEFORE
+  site.js existed — the exact reason `encodeLoc` couldn't be centralized
+  there before ("tried and reverted", per the Traps entry this
+  supersedes). This is a hard prerequisite for phase 2's shared-partial
+  extraction below: any utility promoted to `site.js` under the old load
+  order would break every page's top-level (synchronous, not
+  event-handler-deferred) call to it. Safe because all the DOM these
+  scripts might touch synchronously either lives above this point already
+  (the sidebar shell) or is added by `@@RenderBody()` itself further down —
+  only script *execution* order changed, no HTML moved. Verified live:
+  `itemsList`/jQuery/Bootstrap all still available to the page script,
+  toast and notification bell both still work. Commit `385f625`.
+
+**Pass 28 (scoped 2026-08-16, not started) — Command Center rebuild +
+Search Center extraction. Full scope below so a fresh session can resume
+without re-deriving any of this.**
+
+*Why this is bigger than "build Command Center":* `Index.cshtml` today is
+simultaneously the dashboard AND the search/browse page — Advanced Filters,
+Omni Search, the results grid, Export Wizard, and the generic Modify Stock
+entry point all live in one view, driven by one `HomeController.Index(...)`
+action. Command Center's KPI strip, donuts, and bottom-row cards all need to
+link somewhere real — but Search Center doesn't exist yet. So this pass has
+to do a **mechanical, non-visual extraction** of the filter/search/results/
+export/modify-stock content into a new `/Home/SearchCenter` route as part
+of the *same* pass, left dark-themed and unstyled — phase 4 (the visual
+pass) is what makes it match the new look, not this pass.
+
+**Command Center content, exact fields:**
+- KPI strip (Total Items/Active Locations/Low Stock/Out of Stock/Needs PN,
+  reusing `HomeController.Index`'s existing `ViewBag` math verbatim) — each
+  card links into Search Center with the same query-string convention Quick
+  Filters already use (`?mode=Filter&...` / `?mode=Omni&omniSearch=...`).
+- Map + Location list as one synced object set, built from the map's
+  existing client-side `zoneDataMap` (Parent name → `{TotalRows, HasAlert,
+  Majors:{...}}`) — render a list from the *same* object, hover/click
+  cross-highlights list item ↔ map pin.
+- Activity Feed (`ViewBag.RecentActivity`, top 5) — rows where
+  `isItemAction` is true AND the item still exists call the existing
+  `handleStock(itemId)` to open Modify Stock preloaded (Pass 20's exact
+  mechanism). Non-item rows and rows pointing at a deleted item stay
+  non-clickable.
+- **Two donuts, not a 4-segment health donut** (cut per feedback — "nice
+  but not necessary for an R&D tool"): Need PN (`pnBacklogItems.Count` of
+  `TotalItems`, existing blank-or-"N/A" check) and Need Serial
+  (`CompressorUnits` with blank `SerialNumber`, out of total
+  `CompressorUnits` — **compressors only**, motors deliberately excluded
+  since `MotorUnit` has no `SerialNumber` field at all, only an optional
+  `LabNumber` — a different concept, not a gap to fill). Plain CSS
+  `conic-gradient`, no charting library.
+- Quick Actions, 4 buttons reusing the existing `#modifyStockModal` as-is:
+  New Item (Registry, unchanged) / Stock Adjustment (pre-sets
+  `#stock-action-type` to `"Adjustment"`) / **Transfer Items pre-sets
+  `"Ownership"` — labeled "Internal - Transfer" in the modal, NOT
+  `"Location Transfer"`** (corrected from an earlier draft of this scope) —
+  gated `AccessLevel >= Engineer` to match, since `"Ownership"` is an
+  Engineer+-only `<option>` in the modal itself / View Cart (unchanged).
+- Bottom row, 3 cards (a 4th "System Status" card was cut — no real signal
+  backs it, deliberately not faked): Stock Alerts (reuses the *existing*
+  dashboard widget's own definition — `AlertThreshold>0 &&
+  Quantity<=AlertThreshold`, which already includes zero-stock-with-
+  threshold items, not a new definition) / Pending (`Order.Status=="Pending"`
+  count **+** `IntakeBatch.Status==IntakeStatus.Pending` held-batch count,
+  summed into one card) / Incoming Shipments (open+claimed `Delivery` rows
+  → `/Home/Deliveries`).
+
+**Sub-phase breakdown, each landing and tested before the next:**
+- **2a** — Extract Modify Stock, New Item Registry, and Alert Rules modals
+  into shared partial views (needed by both Command Center's Quick Actions
+  and Search Center). Zero visible change, verified against the live
+  dashboard before anything else moves. **Not started.**
+- **2b** — New `SearchCenter` route: Advanced Filters, Omni Search, results
+  grid, Export Wizard, referencing 2a's shared partials. Built and tested
+  standalone, `/` untouched throughout.
+- **2c** — New Command Center content (the fields above) built standalone,
+  also referencing 2a's shared partials.
+- **2d** — The actual swap: `/` starts rendering Command Center, sidebar
+  nav gains the real Search Center link. Old combined content retired only
+  once both new pages are confirmed working.
+
+**The JS dependency map (2a's real prerequisite work) — `Index.cshtml`'s
+script is one ~1,820-line block (was lines 2426-4246 pre-phase-2), not
+modular, every modal sharing scope:**
+
+- *Generic utilities → `site.js`* (safe now that jQuery/Bootstrap/site.js
+  load before page scripts, see the fix above): `bindAutocomplete`,
+  `bindValueAutocomplete`, `executeSubmit`, `encodeLoc`.
+- *Modify Stock shared partial* (needed by both Command Center's Quick
+  Actions and Search Center): the modal markup +
+  `getStockItem`/`getSelectedVariant`/`populateVariantSel`/
+  `toggleStockUI`/`prefillEditDetails`/`refreshSerialFields`/
+  `refreshTcFields`/`handleStock`/`jumpToHandleStock`/`isMotorType`/
+  `isCompressorType`, the whole Location Transfer cascade
+  (`locHierarchyData`, `locDecode`, `locFill`, `seedLocationTransfer`,
+  etc. — **`locDecode` is also used by the map's zone-menu labels, a real
+  cross-cutting dependency, not exclusive to this modal**), and the
+  Ownership pane's Branch/Line cascade (`branchForLine`, `wireLineCascade`,
+  `populateEditLinePickers`, etc.).
+- *New Item Registry shared partial:* its own modal +
+  `regPreviewId`/`bindRegUnitCapture`/`bindCascadingLocation` for the
+  `reg-*` fields. Needs `itemsList`/`orgStructure`/`teamLines`/`locMap`
+  (name-keyed, different from `locHierarchyData` which is code-keyed)/
+  `encodeLoc`.
+- *Alert Rules shared partial:* `applyBulkThreshold` + its own search
+  binding.
+- *Command Center only:* `zoneDataMap`/`resizeMap` (the map),
+  `updateLiveTrackingTime`.
+- *Search Center only:* the compressor/motor filter functions
+  (`compApplyFilter`/`motorApplyFilter`), Export Wizard's own
+  `bindCascadingLocation` call.
+- *Server data every shared partial needs passed in regardless of which
+  page renders it:* `itemsList` (`ViewBag.AutocompleteJson`), `orgStructure`
+  (`ViewBag.OrgStructureJson`), `teamLines` (`ViewBag.TeamLinesJson`),
+  `rackRowMap` (`ViewBag.RackRowJson`).
+
 ---
 
 ## Backlog
