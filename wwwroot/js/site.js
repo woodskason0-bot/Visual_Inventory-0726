@@ -21,17 +21,32 @@
         if (collapseLabel) collapseLabel.textContent = collapsed ? 'Expand' : 'Collapse';
     }
 
+    // Desktop-only: the dashboard's .overlay-grid/.selection-grid are
+    // position:fixed (see Index.cshtml's own <style> block), so they don't
+    // participate in .app-shell's normal flex layout and never noticed the
+    // sidebar's width at all -- collapsed or not, they sat under it rather
+    // than beside it. This CSS var is their hook back in, read only above
+    // the 992px breakpoint where the sidebar is the persistent rail (below
+    // it the sidebar is an off-canvas drawer and takes no layout space).
+    // Same "measure once, expose as a custom property" pattern
+    // syncHeaderOffset() already uses for --vis-header-bottom.
+    function applySidebarWidthVar(collapsed) {
+        document.documentElement.style.setProperty('--vis-sidebar-width', collapsed ? '68px' : '240px');
+    }
+
     var startCollapsed = localStorage.getItem('vis-sidebar-collapsed') === '1';
     if (startCollapsed) {
         sidebar.classList.add('collapsed');
         applyCollapsedUI(true);
     }
+    applySidebarWidthVar(startCollapsed);
 
     if (collapseBtn) {
         collapseBtn.addEventListener('click', function () {
             var collapsed = sidebar.classList.toggle('collapsed');
             localStorage.setItem('vis-sidebar-collapsed', collapsed ? '1' : '0');
             applyCollapsedUI(collapsed);
+            applySidebarWidthVar(collapsed);
         });
     }
 

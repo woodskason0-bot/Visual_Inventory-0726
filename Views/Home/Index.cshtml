@@ -163,6 +163,22 @@
         z-index: 100;
     }
 
+    /* Being position:fixed, these never noticed the app shell's own sidebar
+       (Pass 27) -- left:12px measured from the viewport edge regardless of
+       whether the 240px rail, the 68px collapsed rail, or nothing (mobile
+       off-canvas) sat there, so the grid's left edge sat under the sidebar
+       instead of beside it, unchanged by collapse/expand. Only real above
+       the 992px breakpoint where the sidebar is the persistent rail, not an
+       off-canvas drawer; --vis-sidebar-width is kept current by
+       site.js (applySidebarWidthVar), same pattern --vis-header-bottom
+       already uses for syncHeaderOffset(). */
+    @@media (min-width: 992px) {
+        .overlay-grid, .selection-grid {
+            left: calc(var(--vis-sidebar-width, 240px) + 12px);
+            transition: left 0.2s ease;
+        }
+    }
+
         /* Force specific cell coordinates to persist even if external styles compete */
         .overlay-grid .r1 {
             grid-row-start: 1 !important;

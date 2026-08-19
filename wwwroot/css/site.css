@@ -486,14 +486,12 @@ body {
 /* =========================================================
    LIGHT THEME  (toggled via <html data-theme="light">)
    Covers global chrome: page background, surfaces, inputs,
-   scrollbars. The top nav stays dark in both themes so its
-   white text remains legible.
+   scrollbars. Sidebar and top bar switch to a light surface
+   (var(--vis-card)) along with everything else as of Pass 27's
+   sidebar shell -- unlike the old always-dark top navbar this
+   replaced, so any hardcoded .text-white inside them needs its
+   own light-mode override below (see the App Shell section).
 ========================================================= */
-
-/* Keep the top bar dark regardless of theme. */
-.rheem-navbar {
-    background-color: #15161B;
-}
 
 :root[data-theme="light"] {
     --vis-bg: #F4F6F8;
@@ -598,6 +596,15 @@ body {
 :root[data-theme="light"] #startOrderModal .modal-body,
 :root[data-theme="light"] #startOrderModal .modal-body .text-white { color: #1A1D23 !important; }
 :root[data-theme="light"] #startOrderModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }
+
+/* Sidebar brand text ("Visual Inventory System") and the top bar's signed-in
+   user name both carry Bootstrap's .text-white, inherited from when the
+   sidebar/top bar were always dark (pre-Pass-27). Both now sit on
+   var(--vis-card), white in light mode, so only the inline-red V/I/S letters
+   stayed visible -- the rest of "isual nventory ystem" and the whole user
+   name were white-on-white. */
+:root[data-theme="light"] .sidebar-brand-text { color: #1A1D23 !important; }
+:root[data-theme="light"] .user-name { color: #1A1D23 !important; }
 
 /* =========================================================
    APP SHELL -- left sidebar nav, replacing the old top navbar
