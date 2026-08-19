@@ -1,0 +1,927 @@
+@using Visual_Inventory_System.Services
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+
+<div class="modal fade" id="deleteVariantModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="DeleteVariant" method="post" id="delete-variant-frm">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="itemId" id="delete-variant-item-id" />
+                <input type="hidden" name="variantId" id="delete-variant-variant-id" />
+                <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Delete Stack</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">
+                    <p class="mb-2"><strong id="delete-variant-label"></strong></p>
+                    <p>This stack is empty. It'll be removed; the rest of the item's stock is untouched.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="executeSubmit('delete-variant-frm', this)">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modifyStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="ModifyStock" method="post" id="modify-stock-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-tools me-2"></i>Modify Stock</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <div class="mb-3 position-relative">
+                        <label class="form-label small fw-bold text-light-gray">Search Item</label>
+                        <input type="text" id="stock-search" class="form-control" placeholder="Type ID, Rheem PN, or Name..." autocomplete="off" />
+                        <div id="stock-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Selected Item ID</label>
+                            <input type="text" name="itemId" id="stock-item-id" class="form-control text-white fw-bold" style="background-color: var(--vis-card-border);" readonly required />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Action</label>
+                            <select name="actionType" id="stock-action-type" class="form-select fw-bold text-primary" onchange="toggleStockUI()">
+                                <option value="Add">Add Stock (+)</option>
+                                <option value="Adjustment">Adjustment (+/-)</option>
+                                <option value="Location Transfer">Location Transfer</option>
+                                @if (CurrentUser.Level >= AccessLevels.Engineer)
+                                {
+                                    <option value="Scrap">Scrap (-)</option>
+                                    <option value="Ownership">Internal - Transfer</option>
+                                    <option value="Edit Details">Edit Details (PN / Desc / Brand)</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- LOCATION / VARIANT picker: which physical stack this action hits.
+                         Hidden for single-location items on non-Add actions (posts nothing ->
+                         primary variant, old behavior). Add always shows it for the
+                         "New location..." option. -->
+                    <div id="stock-variant-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Location / Variant</label>
+                        <div class="d-flex gap-2 align-items-start">
+                            <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
+                            @if (CurrentUser.Level >= AccessLevels.Admin)
+                            {
+                                @* A zero-qty stack on a multi-variant item has no other way to
+                                   go away -- Delete Item needs the item's TOTAL to be 0, which
+                                   this variant alone drained to while siblings still carry
+                                   stock. Shown/hidden by refreshDeleteVariantBtn() based on the
+                                   currently-selected variant's quantity. *@
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="stock-delete-variant-btn"
+                                        style="display:none; white-space:nowrap;" title="Delete this empty stack"
+                                        onclick="openDeleteVariant()">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </div>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
+                    </div>
+
+                    <div id="stock-qty-div" class="mb-3">
+                        <label class="form-label small fw-bold text-light-gray">Quantity</label>
+                        <input type="number" name="quantity" id="stock-qty-input" class="form-control" value="1" required />
+                        <small class="text-light-gray" id="stock-qty-help">Amount to ADD to current inventory.</small>
+                    </div>
+
+                    <!-- THERMOCOUPLED subset (motors only). One field for Add/Scrap; a
+                         twin lives in the transfer move-qty row. Whichever is hidden is
+                         DISABLED so exactly one "thermocoupledQty" ever posts. -->
+                    <div id="stock-tc-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold" style="color: var(--vis-amber, #F59E0B);">
+                            <i class="bi bi-thermometer-half me-1"></i>Thermocoupled
+                        </label>
+                        <input type="number" name="thermocoupledQty" id="stock-tc-input" class="form-control fw-bold"
+                               value="0" min="0" disabled
+                               style="border-color:#F59E0B;" />
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-tc-help">How many of these are thermocoupled?</small>
+                    </div>
+
+                    @* Compressor serial capture on Add -- Pass 17 parity for the
+                       jump-in-from-Registry path. Optional, one box per unit being
+                       added; same serial_N convention CreateItem already reads. *@
+                    <div id="stock-serial-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Serial # <span class="text-light-gray">(optional, one per unit)</span></label>
+                        <div id="stock-serial-rows"></div>
+                    </div>
+
+                    <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
+                        @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
+                           (Commercial, Residential) with one LINE (International, which
+                           sits under Commercial Air) as if they were peers -- a flattened,
+                           wrong copy of OrgStructure. Group is also derived from the
+                           registering user's Line and frozen at creation, so letting a
+                           transfer change it would put an item's Group at odds with its
+                           own ItemId prefix.
+                           Ownership now moves the thing that actually governs visibility:
+                           Branch/Line. Same element ids as the old Edit Details cascade,
+                           so populateEditLinePickers() drives this unchanged. *@
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Branch</label>
+                            <select id="edit-line-branch" class="form-select" disabled>
+                                <option value="">-- Branch --</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">Line</label>
+                            <select name="newLine" id="edit-line" class="form-select" disabled>
+                                <option value="">Unassigned</option>
+                            </select>
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;">
+                                Takes effect immediately &mdash; no transfer window. Blank = visible to everyone.
+                            </small>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold text-light-gray">New Team</label>
+                            @* Pass 7A: data-driven from the Teams table, and blank is
+                               allowed -- team is optional now. The project code follows
+                               whichever team is chosen, resolved server-side. *@
+                            <select name="newTeam" id="edit-team" class="form-select" disabled>
+                                <option value="">N/A — no team</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(string.IsNullOrWhiteSpace(t.ProjectCode) ? "" : $" ({t.ProjectCode})")</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- EDIT DETAILS (Engineer+): family-level identity fields. Inputs are
+                         DISABLED unless this pane is active so they never post alongside a
+                         stock action. Rheem PN is unique across items (server rejects a
+                         taken PN); Brand is fill-if-blank only -- an existing brand locks
+                         the field. Prefilled from itemsList when the pane opens. -->
+                    <div id="stock-edit-div" class="mb-3" style="display:none;">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold text-light-gray">Rheem Part Number</label>
+                            <div class="btn-group btn-group-sm mb-2 d-flex" role="group" aria-label="Rheem PN mode">
+                                <input type="radio" class="btn-check" name="editRpnMode" id="edit-rpn-mode-real" autocomplete="off" disabled>
+                                <label class="btn btn-outline-light" for="edit-rpn-mode-real">Has a Part #</label>
+                                <input type="radio" class="btn-check" name="editRpnMode" id="edit-rpn-mode-na" autocomplete="off" disabled>
+                                <label class="btn btn-outline-secondary" for="edit-rpn-mode-na">N/A</label>
+                            </div>
+                            <input type="text" name="newRheemPart" id="edit-rpn" class="form-control fw-bold" disabled placeholder="From the physical Rheem label" />
+                            <small class="text-warning mt-1" style="font-size:10px; display:none;" id="edit-rpn-warn"></small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold text-light-gray">Description</label>
+                            <input type="text" name="newDescription" id="edit-desc" class="form-control" disabled />
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label small fw-bold text-light-gray">Brand</label>
+                            <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
+                            <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
+                        </div>
+                        @* Pass 7B: Branch/Line moved OUT of here and into Internal -
+                           Transfer, where reassigning ownership belongs. Pass 3 put it
+                           here because Edit Details was the only Engineer+ pane that
+                           existed at the time; that made Internal - Transfer vestigial.
+                           Edit Details is identity only again: PN, Description, Brand. *@
+                    </div>
+
+                    <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
+                         selected item's current location. 0 = unspecified at every level but Parent. -->
+                    <div id="stock-loc-div" class="mb-1" style="display:none;">
+                        <div class="py-2 px-3 mb-3 small rounded" style="background:#14151A; border:1px solid #3D4351; color:#94A3B8;">
+                            <i class="bi bi-geo-alt me-1"></i> Current location: <span class="fw-bold text-info" id="loc-current">--</span>
+                        </div>
+                        <div id="loc-needs-item" class="small text-warning mb-2">
+                            <i class="bi bi-info-circle me-1"></i> Select an item above to edit its location.
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Parent</label>
+                                <select name="newParent" id="loc-parent" class="form-select" disabled>
+                                    <option value="">Select Parent...</option>
+                                    @* Pass 7C: from the Locations table, codes derived. *@
+                                    @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                    {
+                                        <option value="@lp.Code">@lp.Name (@lp.Code)</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Major</label>
+                                <select name="newMajor" id="loc-major" class="form-select" disabled></select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-light-gray">Sub</label>
+                                <select name="newSub" id="loc-sub" class="form-select" disabled></select>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6 position-relative">
+                                <label class="form-label small fw-bold text-light-gray">Rack</label>
+                                <input type="text" name="newRack" id="loc-rack" class="form-control" placeholder="0" disabled autocomplete="off" />
+                                <div id="loc-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                            </div>
+                            <div class="col-md-6 position-relative">
+                                <label class="form-label small fw-bold text-light-gray">Row</label>
+                                <input type="text" name="newRow" id="loc-row" class="form-control" placeholder="0" disabled autocomplete="off" />
+                                <div id="loc-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-2" id="loc-moveqty-div" style="display:none;">
+                            <div class="col-md-5">
+                                <label class="form-label small fw-bold text-light-gray">Quantity to move</label>
+                                <input type="number" name="transferQty" id="loc-moveqty" class="form-control" min="1" />
+                                <small class="text-light-gray d-block mt-1" style="font-size:10px;">Defaults to the whole stack. Less = split off a new variant.</small>
+                            </div>
+                            <!-- Transfer-context TC twin (motors only). Disabled unless a
+                                 motor is being transferred, so it never double-posts with
+                                 the Add/Scrap TC field above. -->
+                            <div class="col-md-4" id="loc-tc-div" style="display:none;">
+                                <label class="form-label small fw-bold" style="color:#F59E0B;">
+                                    <i class="bi bi-thermometer-half me-1"></i>Of these, TC
+                                </label>
+                                <input type="number" name="thermocoupledQty" id="loc-tc-input" class="form-control fw-bold"
+                                       value="0" min="0" disabled style="border-color:#F59E0B;" />
+                                <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="loc-tc-help">How many moved are TC?</small>
+                            </div>
+                            <div class="col-md-3 d-flex align-items-center">
+                                <small id="loc-merge-note" class="text-warning fw-bold" style="display:none; font-size:11px;"></small>
+                            </div>
+                        </div>
+                        <div class="p-2 mt-2 border rounded" style="background-color:#14151A; border-color:#3D4351 !important;">
+                            <label class="form-label small fw-bold text-info mb-1">New FDA String</label>
+                            <input type="text" id="loc-fda" class="form-control fw-bold border-0 text-white" style="background:transparent; font-size:15px;" readonly placeholder="--" />
+                        </div>
+                        <small class="text-light-gray d-block mt-2" style="font-size:10px;">
+                            Set any level to <strong>0</strong> for "unspecified". Parent is required.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary fw-bold" onclick="executeSubmit('modify-stock-frm', this)">Execute</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Closes whichever preview modal (Low Stock / Out of Stock / Needs PN) is
+    // open, waits for the close transition, then opens Modify Stock for that
+    // item -- avoids two Bootstrap modals stacking backdrops.
+    function jumpToHandleStock(itemId, modalId) {
+        const cur = document.getElementById(modalId);
+        const inst = cur ? bootstrap.Modal.getInstance(cur) : null;
+        if (inst) {
+            cur.addEventListener('hidden.bs.modal', function h() {
+                cur.removeEventListener('hidden.bs.modal', h);
+                handleStock(itemId);
+            });
+            inst.hide();
+        } else {
+            handleStock(itemId);
+        }
+    }
+    // Opens the Modify Stock panel pre-loaded with a specific item (from a search row).
+    function handleStock(itemId) {
+        const idField = document.getElementById('stock-item-id');
+        const searchField = document.getElementById('stock-search');
+        if (idField) idField.value = itemId;
+        if (searchField) searchField.value = itemId;
+        if (typeof toggleStockUI === 'function') toggleStockUI();
+        const el = document.getElementById('modifyStockModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+    // ---- Variant helpers -------------------------------------------------
+    function getStockItem() {
+        const idEl = document.getElementById('stock-item-id');
+        const itemId = idEl ? idEl.value : '';
+        if (!itemId) return null;
+        return itemsList.find(function (i) { return i.id === itemId; }) || null;
+    }
+    // The variant currently chosen in the selector (never "NEW"); falls back
+    // to the item's first (primary) variant.
+    function getSelectedVariant(item) {
+        if (!item || !item.variants || !item.variants.length) return null;
+        const sel = document.getElementById('stock-variant-sel');
+        if (sel && sel.value && sel.value !== 'NEW') {
+            const vid = parseInt(sel.value, 10);
+            const f = item.variants.find(function (v) { return v.vid === vid; });
+            if (f) return f;
+        }
+        return item.variants[0];
+    }
+    // (Re)build the Location/Variant selector for the current item + action.
+    // Shown when the item is split across locations, or on Add (for the
+    // "New location..." option). Hidden = posts nothing = primary variant.
+    function populateVariantSel(action) {
+        const div = document.getElementById('stock-variant-div');
+        const sel = document.getElementById('stock-variant-sel');
+        const help = document.getElementById('stock-variant-help');
+        if (!div || !sel) return;
+
+        const item = getStockItem();
+        const vars = (item && item.variants) ? item.variants : [];
+        const show = item && (vars.length > 1 || action === 'Add')
+            && action !== 'Ownership' && action !== 'Edit Details';
+
+        sel.innerHTML = '';
+        if (!show) { div.style.display = 'none'; refreshDeleteVariantBtn(); return; }
+
+        vars.forEach(function (v) {
+            const o = document.createElement('option');
+            o.value = String(v.vid);
+            o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+            sel.appendChild(o);
+        });
+        if (action === 'Add') {
+            const o = document.createElement('option');
+            o.value = 'NEW';
+            o.textContent = '+ New location...';
+            sel.appendChild(o);
+        }
+        if (help) {
+            help.textContent = (action === 'Location Transfer')
+                ? 'Which stack to move FROM.'
+                : (action === 'Add' ? 'Which stack to add to — or start a new location.'
+                                    : 'Which physical stack this action applies to.');
+        }
+        div.style.display = 'block';
+        refreshDeleteVariantBtn();
+    }
+    // Admin-only: a zero-qty stack on a multi-variant item has no other way
+    // to go away (Delete Item needs the item's TOTAL to be 0). Shown only
+    // when the variant selector itself is showing a real (non-"NEW")
+    // multi-variant choice and that choice is currently empty.
+    function refreshDeleteVariantBtn() {
+        const btn = document.getElementById('stock-delete-variant-btn');
+        if (!btn) return;   // not rendered at all for non-Admin
+        const div = document.getElementById('stock-variant-div');
+        const sel = document.getElementById('stock-variant-sel');
+        const item = getStockItem();
+        const activeVarCount = (item && item.variants) ? item.variants.length : 0;
+        const isRealVariant = sel && sel.value && sel.value !== 'NEW';
+        const v = isRealVariant ? getSelectedVariant(item) : null;
+        const show = div && div.style.display !== 'none' && isRealVariant && activeVarCount > 1 && v && v.qty === 0;
+        btn.style.display = show ? '' : 'none';
+    }
+    function openDeleteVariant() {
+        const item = getStockItem();
+        const v = getSelectedVariant(item);
+        if (!item || !v) return;
+        document.getElementById('delete-variant-item-id').value = item.id;
+        document.getElementById('delete-variant-variant-id').value = v.vid;
+        document.getElementById('delete-variant-label').textContent =
+            item.name + ' — Variant ' + v.num + ' (' + (v.fda || '--') + ')';
+        const el = document.getElementById('deleteVariantModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+    // Transfer only: warn when the destination matches a sibling stack, since
+    // executing will MERGE quantities (source retires if fully drained).
+    function refreshMergeNote() {
+        const note = document.getElementById('loc-merge-note');
+        if (!note) return;
+        const action = document.getElementById('stock-action-type').value;
+        if (action !== 'Location Transfer') { note.style.display = 'none'; return; }
+
+        const item = getStockItem();
+        const srcVar = getSelectedVariant(item);
+        if (!item || !srcVar) { note.style.display = 'none'; return; }
+
+        const seg = function (id) {
+            const el = document.getElementById(id);
+            const v = el ? String(el.value || '').trim().toUpperCase() : '';
+            return v === '' ? '0' : v;
+        };
+        const norm = function (v) {
+            const s = (v == null ? '' : String(v).trim().toUpperCase());
+            return s === '' ? '0' : s;
+        };
+        const dest = [seg('loc-parent'), seg('loc-major'), seg('loc-sub'), seg('loc-rack'), seg('loc-row')];
+
+        const hit = (item.variants || []).find(function (v) {
+            if (v.vid === srcVar.vid) return false;
+            return norm(v.parent) === dest[0] && norm(v.major) === dest[1] && norm(v.sub) === dest[2]
+                && norm(v.rack) === dest[3] && norm(v.row) === dest[4];
+        });
+
+        if (hit) {
+            note.innerHTML = '<i class="bi bi-arrow-down-up me-1"></i>Merges into Variant ' + hit.num
+                + ' (Qty ' + hit.qty + ') — source retires if fully drained.';
+            note.style.display = 'block';
+        } else {
+            note.style.display = 'none';
+        }
+    }
+    // Prefill "Quantity to move" with the source stack's full amount.
+    function refreshMoveQty() {
+        const input = document.getElementById('loc-moveqty');
+        if (!input) return;
+        const srcVar = getSelectedVariant(getStockItem());
+        if (srcVar) { input.value = srcVar.qty; input.max = srcVar.qty; }
+    }
+    function toggleStockUI() {
+        const action = document.getElementById('stock-action-type').value;
+        const qtyDiv = document.getElementById('stock-qty-div');
+        const ownDiv = document.getElementById('stock-own-div');
+        const locDiv = document.getElementById('stock-loc-div');
+        const moveQtyDiv = document.getElementById('loc-moveqty-div');
+        const qtyInput = document.getElementById('stock-qty-input');
+        const helpText = document.getElementById('stock-qty-help');
+
+        // Pass 7B: transfer-pane inputs are inert unless Internal - Transfer is
+        // the active action (re-enabled below when it is).
+        ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = true;
+        });
+
+        populateVariantSel(action);
+        const variantSel = document.getElementById('stock-variant-sel');
+        const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
+
+        // Edit Details pane: identity fields only. Inputs stay DISABLED (= never
+        // post) unless this action is active; prefilled fresh from the selected
+        // item each time so the human edits what's actually there.
+        const editDiv = document.getElementById('stock-edit-div');
+        const editOn = (action === 'Edit Details');
+        if (editDiv) {
+            editDiv.style.display = editOn ? 'block' : 'none';
+            // Pass 7B: edit-line-branch / edit-line no longer live in this pane.
+            ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.disabled = !editOn;
+            });
+            if (editOn) prefillEditDetails();
+        }
+
+        if (action === 'Edit Details') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'none';
+            if (locDiv) locDiv.style.display = 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = false;
+        } else if (action === 'Ownership') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'flex';
+            if (locDiv) locDiv.style.display = 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = false;
+            // Pass 7B: seed Branch/Line from the item's CURRENT line so the pane
+            // opens showing where it is now, not a blank slate. Uses getStockItem()
+            // -- the same lookup prefillEditDetails() uses -- because stock-item-id
+            // is a readonly text input, not a select with options to read.
+            // Disabled inputs don't post. These three stay disabled outside this
+            // action so a hidden pane can never contribute a stray value to an
+            // unrelated submit -- the same guard the Edit Details pane uses.
+            ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            if (typeof populateEditLinePickers === 'function') {
+                const ownItem = getStockItem();
+                populateEditLinePickers(ownItem ? (ownItem.line || '') : '');
+            }
+        } else if (action === 'Location Transfer') {
+            qtyDiv.style.display = 'none';
+            ownDiv.style.display = 'none';
+            if (locDiv) locDiv.style.display = 'block';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'flex';
+            qtyInput.required = false;
+            if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
+            refreshMoveQty();
+            refreshMergeNote();
+        } else {
+            qtyDiv.style.display = 'block';
+            ownDiv.style.display = 'none';
+            // Add-to-NEW-location reuses the transfer cascade for the address,
+            // but hides the move-qty row (the main Quantity box is the amount).
+            if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+            if (moveQtyDiv) moveQtyDiv.style.display = 'none';
+            qtyInput.required = true;
+            if (addingNew) {
+                locSetEnabled(true);
+                locRefreshFda();
+            }
+
+            if (action === 'Add') helpText.innerText = addingNew
+                ? "Amount to place at the NEW location."
+                : "Amount to ADD to current inventory.";
+            else if (action === 'Scrap') helpText.innerText = "Amount to REMOVE from inventory.";
+            else if (action === 'Adjustment') helpText.innerText = "Use negative numbers (-) to subtract, positive to add.";
+        }
+
+        refreshTcFields(action);
+        refreshSerialFields(action);
+    }
+    // ---- Edit Details (identity fields) -----------------------------------
+    // Seed the pane from the selected item. Brand LOCKS when the item already
+    // has a real one (fill-if-blank rule); PN gets a live "taken" warning
+    // against the loaded items list (server re-checks authoritatively).
+    function prefillEditDetails() {
+        const item = getStockItem();
+        const rpn = document.getElementById('edit-rpn');
+        const desc = document.getElementById('edit-desc');
+        const brand = document.getElementById('edit-brand');
+        const brandHelp = document.getElementById('edit-brand-help');
+        const warn = document.getElementById('edit-rpn-warn');
+        const rpnReal = document.getElementById('edit-rpn-mode-real');
+        const rpnNa = document.getElementById('edit-rpn-mode-na');
+        if (!rpn || !desc || !brand) return;
+
+        // "N/A" and blank are the same state -- both land on the N/A toggle,
+        // readOnly (still posts "N/A"); anything else is a real PN, editable.
+        const rawRpn = item ? (item.rpn || '') : '';
+        const isNa = !rawRpn || rawRpn.trim().toUpperCase() === 'N/A';
+        rpn.value = isNa ? 'N/A' : rawRpn;
+        rpn.readOnly = isNa;
+        if (rpnReal && rpnNa) { rpnNa.checked = isNa; rpnReal.checked = !isNa; }
+        desc.value = item ? (item.desc || '') : '';
+        if (warn) warn.style.display = 'none';
+
+        const hasBrand = item && item.brand && item.brand.trim() !== ''
+            && item.brand.trim().toLowerCase() !== 'unknown';
+        brand.value = item ? (item.brand || '') : '';
+        brand.disabled = !item || hasBrand;   // locked if a real brand exists
+        if (brandHelp) brandHelp.textContent = hasBrand
+            ? 'This item already has a brand — it can\'t be changed here.'
+            : 'Brand can only be ADDED when the item has none.';
+
+        // Pass 7B: the Branch/Line pickers moved to Internal - Transfer, which
+        // seeds them itself. Edit Details no longer touches them.
+    }
+    function populateEditLinePickers(currentLine) {
+        setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), currentLine);
+    }
+    wireLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'));
+    // Auto-fill: picking a Team in the Ownership pane suggests its home Line
+    // (same convenience-not-lock behavior as registration). The pane seeds
+    // from the item's CURRENT line each time it's opened (populateEditLinePickers
+    // above); this only reacts to the human actually changing Team afterward.
+    (function bindEditTeamAutoFill() {
+        const editTeam = document.getElementById('edit-team');
+        if (!editTeam) return;
+        editTeam.addEventListener('change', function () {
+            const suggested = teamLines[editTeam.value];
+            if (!suggested) return;
+            setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), suggested);
+        });
+    })();
+    // Live duplicate check as the PN is typed: warn if another item owns it.
+    // "N/A" is exempt -- it's the shared sentinel, never a real duplicate.
+    (function bindRpnDupCheck() {
+        const rpn = document.getElementById('edit-rpn');
+        const warn = document.getElementById('edit-rpn-warn');
+        if (!rpn || !warn) return;
+        rpn.addEventListener('input', function () {
+            const val = String(rpn.value || '').trim().toLowerCase();
+            if (val === 'n/a') { warn.style.display = 'none'; return; }
+            const me = (document.getElementById('stock-item-id') || {}).value || '';
+            const hit = val && itemsList.find(function (i) {
+                return i.id !== me && i.rpn && i.rpn.trim().toLowerCase() === val;
+            });
+            if (hit) {
+                warn.textContent = 'Taken: PN belongs to ' + hit.id + ' (' + hit.name + ').';
+                warn.style.display = 'block';
+            } else {
+                warn.style.display = 'none';
+            }
+        });
+    })();
+    // N/A <-> Has-a-Part# toggle for Edit Details. N/A makes the field
+    // readOnly (not disabled, so it still posts "N/A"); switching back to
+    // Has-a-Part# clears the sentinel and focuses the box for typing.
+    (function bindEditRpnMode() {
+        const real = document.getElementById('edit-rpn-mode-real');
+        const na = document.getElementById('edit-rpn-mode-na');
+        const rpn = document.getElementById('edit-rpn');
+        const warn = document.getElementById('edit-rpn-warn');
+        if (!real || !na || !rpn) return;
+
+        function apply() {
+            if (na.checked) {
+                rpn.value = 'N/A';
+                rpn.readOnly = true;
+                if (warn) warn.style.display = 'none';
+            } else {
+                if (rpn.value.trim().toUpperCase() === 'N/A') rpn.value = '';
+                rpn.readOnly = false;
+                rpn.focus();
+            }
+        }
+        real.addEventListener('change', apply);
+        na.addEventListener('change', apply);
+    })();
+    // ---- Thermocoupled (motors only) -------------------------------------
+    // Keep in lockstep with InventoryService.IsMotorType: a type ending in
+    // "Motor" (Motor / ID Motor / OD Motor) is TC-eligible; nothing else is.
+    function isMotorType(t) {
+        return !!t && String(t).trim().toLowerCase().endsWith('motor');
+    }
+    // Keep in lockstep with InventoryService.IsCompressorType: exact match
+    // only, same rule the server enforces.
+    function isCompressorType(t) {
+        return !!t && String(t).trim().toLowerCase() === 'compressor';
+    }
+    // ---- Compressor serial capture (Add only) ------------------------------
+    // Pass 17 parity for the jump-in-from-Registry path: same optional,
+    // one-box-per-unit shape New Item Registry already has (reg-serial-rows),
+    // gated to Add + compressor Type. Rebuilt whenever qty or action changes.
+    function refreshSerialFields(action) {
+        const item = getStockItem();
+        const div = document.getElementById('stock-serial-div');
+        const rows = document.getElementById('stock-serial-rows');
+        if (!div || !rows) return;
+
+        if (action !== 'Add' || !item || !isCompressorType(item.type)) {
+            div.style.display = 'none';
+            rows.innerHTML = '';
+            return;
+        }
+
+        div.style.display = 'block';
+        const n = Math.max(0, parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0);
+        rows.innerHTML = '';
+        for (let i = 0; i < n; i++) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.name = 'serial_' + i;
+            input.className = 'form-control form-control-sm mb-1';
+            input.placeholder = 'Unit ' + (i + 1) + ' serial (optional)';
+            rows.appendChild(input);
+        }
+    }
+    // Show/enable exactly the right TC input for the action, and cap it so the
+    // human can never enter an impossible number. Disabled inputs don't post,
+    // so the hidden twin stays out of the way. Add/Scrap use #stock-tc-input;
+    // Location Transfer uses #loc-tc-input.
+    function refreshTcFields(action) {
+        const item = getStockItem();
+        const motor = item && isMotorType(item.type);
+
+        const stockDiv = document.getElementById('stock-tc-div');
+        const stockInput = document.getElementById('stock-tc-input');
+        const stockHelp = document.getElementById('stock-tc-help');
+        const locDiv = document.getElementById('loc-tc-div');
+        const locInput = document.getElementById('loc-tc-input');
+        const locHelp = document.getElementById('loc-tc-help');
+
+        // Default: both off. We turn on only what applies below.
+        const off = function (div, input) {
+            if (div) div.style.display = 'none';
+            if (input) { input.disabled = true; input.value = 0; }
+        };
+        off(stockDiv, stockInput);
+        off(locDiv, locInput);
+
+        if (!motor) return;   // non-motors never carry TC
+
+        const clampInto = function (input, floor, ceil, help, helpText) {
+            let v = parseInt(input.value, 10); if (isNaN(v)) v = 0;
+            v = Math.max(floor, Math.min(ceil, v));
+            input.value = v;
+            input.min = floor;
+            input.max = ceil;
+            if (help) help.textContent = floor > 0
+                ? (helpText + ' (at least ' + floor + ' must be)')
+                : helpText;
+        };
+
+        if (action === 'Add') {
+            // Of the amount being added, any number can be TC (0..qty added).
+            const qty = parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0;
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, 0, Math.max(0, qty), stockHelp, 'How many added are thermocoupled?');
+        } else if (action === 'Scrap') {
+            const v = getSelectedVariant(item);
+            const scrapQty = parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0;
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            const eff = Math.min(scrapQty, v ? (v.qty || 0) : scrapQty);
+            const floor = Math.max(0, eff - nonTc);      // forced TC if not enough non-TC to cover
+            const ceil = Math.min(eff, tcHave);
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, floor, Math.max(floor, ceil), stockHelp, 'How many scrapped are thermocoupled?');
+        } else if (action === 'Location Transfer') {
+            const v = getSelectedVariant(item);
+            const moveQty = parseInt((document.getElementById('loc-moveqty') || {}).value, 10) || 0;
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            const eff = Math.min(moveQty, v ? (v.qty || 0) : moveQty);
+            const floor = Math.max(0, eff - nonTc);
+            const ceil = Math.min(eff, tcHave);
+            locDiv.style.display = 'block';
+            locInput.disabled = false;
+            clampInto(locInput, floor, Math.max(floor, ceil), locHelp, 'How many moved are TC?');
+        } else if (action === 'Adjustment') {
+            // Reclassifying EXISTING on-hand stock as TC -- independent of
+            // whatever quantity delta this same adjustment also makes ("take
+            // my current N, mark X of those as TC" rather than adding new TC
+            // stock, which Add already covers). Capped by what's not already
+            // TC at this location right now.
+            const v = getSelectedVariant(item);
+            const tcHave = v ? (v.tcqty || 0) : 0;
+            const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
+            stockDiv.style.display = 'block';
+            stockInput.disabled = false;
+            clampInto(stockInput, 0, nonTc, stockHelp, 'How many of the existing stock should be marked thermocoupled?');
+        }
+    }
+    // Recompute TC caps (and, on Add, the serial-box count) live as the
+    // driving quantities change.
+    (function bindTcRecompute() {
+        const q = document.getElementById('stock-qty-input');
+        if (q) q.addEventListener('input', function () {
+            const a = document.getElementById('stock-action-type').value;
+            if (a === 'Add' || a === 'Scrap') refreshTcFields(a);
+            if (a === 'Add') refreshSerialFields(a);
+        });
+        const mq = document.getElementById('loc-moveqty');
+        if (mq) mq.addEventListener('input', function () {
+            if (document.getElementById('stock-action-type').value === 'Location Transfer')
+                refreshTcFields('Location Transfer');
+        });
+    })();
+    // Variant choice changes reshape the panel: re-seed transfer source,
+    // re-prefill move qty, re-check merges, or reveal the new-location cascade.
+    (function bindVariantSel() {
+        const sel = document.getElementById('stock-variant-sel');
+        if (!sel) return;
+        sel.addEventListener('change', function () {
+            const action = document.getElementById('stock-action-type').value;
+            refreshDeleteVariantBtn();
+            if (typeof refreshTcFields === 'function') refreshTcFields(action);
+            if (action === 'Location Transfer') {
+                if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
+                refreshMoveQty();
+                refreshMergeNote();
+                if (typeof refreshTcFields === 'function') refreshTcFields(action);
+            } else if (action === 'Add') {
+                // Only the loc-div visibility depends on NEW vs existing.
+                const locDiv = document.getElementById('stock-loc-div');
+                const addingNew = (sel.value === 'NEW');
+                if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+                const helpText = document.getElementById('stock-qty-help');
+                if (helpText) helpText.innerText = addingNew
+                    ? "Amount to place at the NEW location."
+                    : "Amount to ADD to current inventory.";
+                if (addingNew) { locSetEnabled(true); locRefreshFda(); }
+            }
+        });
+    })();
+    /* ---- LOCATION TRANSFER cascade ----------------------------------------
+       Item-first: fields seed from the selected item's stored location, then
+       can be edited. Major/Sub options come from the REAL coded hierarchy
+       (locHierarchyData = Parent -> Major -> [Subs]). 0 = "unspecified" and is
+       selectable at every level below Parent; setting a level to 0 leaves the
+       levels under it with only their 0 option (they pin to 0 naturally,
+       because the hierarchy has no children under a 0 segment). */
+    const locHierarchyData = @Html.Raw(ViewBag.LocationHierarchyCodedJson ?? "{}");
+    // Populate a <select> with a leading "0 (Unspecified)", the given values,
+    // and the item's current value if it isn't already present, then preselect
+    // `current` (or 0 when current is blank/0).
+    function locFill(selectEl, values, current) {
+        if (!selectEl) return;
+        const seen = {};
+        const opts = [{ v: "0", label: "0 (Unspecified)" }];
+        seen["0"] = true;
+        (values || []).forEach(function (v) {
+            if (v == null) return;
+            const s = String(v).trim();
+            if (!s || seen[s]) return;
+            seen[s] = true;
+            opts.push({ v: s, label: s });
+        });
+        const cur = (current == null ? "" : String(current).trim());
+        if (cur && cur !== "0" && !seen[cur]) {
+            seen[cur] = true;
+            opts.push({ v: cur, label: cur });
+        }
+        selectEl.innerHTML = '';
+        opts.forEach(function (o) {
+            const opt = document.createElement('option');
+            opt.value = o.v;
+            opt.textContent = o.label;
+            selectEl.appendChild(opt);
+        });
+        selectEl.value = (cur && cur !== "") ? cur : "0";
+        if (!selectEl.value) selectEl.value = "0";
+    }
+    function locMajorsFor(parentCode) {
+        const p = locHierarchyData[parentCode];
+        return p ? Object.keys(p) : [];
+    }
+    function locSubsFor(parentCode, majorCode) {
+        const p = locHierarchyData[parentCode];
+        if (!p) return [];
+        return p[majorCode] || [];
+    }
+    // Rebuild the FDA preview from the five fields. Blank segment -> "0".
+    function locRefreshFda() {
+        const seg = function (id) {
+            const el = document.getElementById(id);
+            const v = el ? String(el.value || '').trim() : '';
+            return v === '' ? '0' : v;
+        };
+        const fda = [seg('loc-parent'), seg('loc-major'), seg('loc-sub'), seg('loc-rack'), seg('loc-row')].join('.');
+        const out = document.getElementById('loc-fda');
+        if (out) out.value = fda;
+    }
+    function locSetEnabled(on) {
+        ['loc-parent', 'loc-major', 'loc-sub', 'loc-rack', 'loc-row'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = !on;
+        });
+        const warn = document.getElementById('loc-needs-item');
+        if (warn) warn.style.display = on ? 'none' : 'block';
+    }
+    // Seed the cascade from the currently-selected item's stored location.
+    function seedLocationTransfer() {
+        const idEl = document.getElementById('stock-item-id');
+        const itemId = idEl ? idEl.value : '';
+        const cur = document.getElementById('loc-current');
+
+        if (!itemId) {
+            locSetEnabled(false);
+            if (cur) cur.textContent = '--';
+            locRefreshFda();
+            return;
+        }
+        const item = itemsList.find(function (i) { return i.id === itemId; });
+        if (!item) { locSetEnabled(false); if (cur) cur.textContent = '--'; return; }
+
+        // Seed from the SELECTED variant (transfer source), not the item-level
+        // primary -- for single-location items these are the same thing.
+        const srcVar = getSelectedVariant(item) || item;
+
+        locSetEnabled(true);
+        if (cur) cur.textContent = srcVar.fda || item.fda || '--';
+
+        // Parent (fixed coded select). Add the stored code if it isn't a known
+        // option so we never silently drop a real value.
+        const parentEl = document.getElementById('loc-parent');
+        const pcode = (srcVar.parent == null ? '' : String(srcVar.parent).trim());
+        if (parentEl) {
+            const has = Array.from(parentEl.options).some(function (o) { return o.value === pcode; });
+            if (pcode && !has) {
+                const opt = document.createElement('option');
+                opt.value = pcode; opt.textContent = pcode;
+                parentEl.appendChild(opt);
+            }
+            parentEl.value = pcode || '';
+        }
+
+        const majorEl = document.getElementById('loc-major');
+        locFill(majorEl, locMajorsFor(pcode), srcVar.major);
+        const subEl = document.getElementById('loc-sub');
+        locFill(subEl, locSubsFor(pcode, majorEl ? majorEl.value : ''), srcVar.sub);
+
+        const rk = document.getElementById('loc-rack');
+        const rw = document.getElementById('loc-row');
+        if (rk) rk.value = (srcVar.rack == null || String(srcVar.rack).trim() === '') ? '0' : String(srcVar.rack).trim();
+        if (rw) rw.value = (srcVar.row == null || String(srcVar.row).trim() === '') ? '0' : String(srcVar.row).trim();
+
+        locRefreshFda();
+        refreshMergeNote();
+    }
+    // Wire the cascade once on load. Bind-time does no data reads (safe re: const TDZ).
+    (function bindLocTransfer() {
+        const parentEl = document.getElementById('loc-parent');
+        const majorEl = document.getElementById('loc-major');
+        const subEl = document.getElementById('loc-sub');
+        const rackEl = document.getElementById('loc-rack');
+        const rowEl = document.getElementById('loc-row');
+
+        function fdaAndMerge() { locRefreshFda(); if (typeof refreshMergeNote === 'function') refreshMergeNote(); }
+        if (parentEl) parentEl.addEventListener('change', function () {
+            locFill(majorEl, locMajorsFor(parentEl.value), null);
+            locFill(subEl, locSubsFor(parentEl.value, majorEl ? majorEl.value : ''), null);
+            fdaAndMerge();
+        });
+        if (majorEl) majorEl.addEventListener('change', function () {
+            locFill(subEl, locSubsFor(parentEl ? parentEl.value : '', majorEl.value), null);
+            fdaAndMerge();
+        });
+        if (subEl) subEl.addEventListener('change', fdaAndMerge);
+        if (rackEl) rackEl.addEventListener('input', fdaAndMerge);
+        if (rowEl) rowEl.addEventListener('input', fdaAndMerge);
+
+        // Rack/Row suggestions -- loc-parent/major/sub are CODE-valued
+        // selects already (unlike reg-/exp-'s name-valued ones), so no
+        // encodeLoc() needed here.
+        if (rackEl) {
+            bindValueAutocomplete(rackEl, document.getElementById('loc-rack-list'), function () {
+                return racksRowsFor(parentEl ? parentEl.value : '', majorEl ? majorEl.value : '', subEl ? subEl.value : '').racks;
+            });
+        }
+        if (rowEl) {
+            bindValueAutocomplete(rowEl, document.getElementById('loc-row-list'), function () {
+                return racksRowsFor(parentEl ? parentEl.value : '', majorEl ? majorEl.value : '', subEl ? subEl.value : '').rows;
+            });
+        }
+    })();
+    bindAutocomplete('stock-search', 'stock-autocomplete-list', 'stock-item-id', false);
+</script>
