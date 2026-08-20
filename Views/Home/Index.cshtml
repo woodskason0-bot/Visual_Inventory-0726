@@ -1730,6 +1730,32 @@
     </div>
 </div>
 
+<script>
+    // Pass 28 (2a) split this page's one script block into four (this page's
+    // own, plus Modify Stock / Alert Rules / New Item Registry partials, each
+    // with its own <script> tag) but left these consts declared down in
+    // section 8 below, after all three partials render. Top-level (not
+    // deferred to a later function call) code in those partials -- Modify
+    // Stock's wireLineCascade() call, New Item Registry's Type-field
+    // autocomplete -- referenced orgStructure/itemsList immediately, before
+    // this script tag had run: "orgStructure is not defined" /
+    // "itemsList is not defined", each silently killing the rest of its own
+    // partial's script. Same failure shape as the 2026-08-05 Handle
+    // Stock/Add to Cart break these comments already warned about, just
+    // across script-tag boundaries instead of within one -- moved here,
+    // before every partial, for the same reason.
+    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    // Team -> home Line, e.g. { "Samurai": "Commercial Packaged/Splits" }. A
+    // team with no assigned Line simply has no key here.
+    const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    // Rack/Row suggestions (Pass 23), keyed "ParentCode|MajorCode|SubCode" --
+    // see BuildRackRowMap(). Deliberately data-derived, not a managed
+    // vocabulary: Rack/Row stay free-form, so a key with nothing typed under
+    // it yet just yields no suggestions, never a block.
+    const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+</script>
+
 @await Html.PartialAsync("_ModifyStockPartial")
 
 <!-- ADD TO CART subprocess modal. One shared instance; openAddToCart(itemId)
@@ -1922,26 +1948,9 @@
 
 <!-- 8. SCRIPTS -->
 <script>
-    // These three are read by functions defined throughout this whole script
-    // block, some of which (the Ownership pane's Branch/Line cascade) now run
-    // immediately at page load rather than waiting for a user action. They
-    // MUST come first: a const declared further down is in the temporal dead
-    // zone until its own line executes, and any earlier synchronous reference
-    // to it throws ReferenceError and kills the rest of the script silently --
-    // that's exactly what broke Handle Stock/Add to Cart on 2026-08-05, moved
-    // here as the fix.
-    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
-    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
-    // Team -> home Line, e.g. { "Samurai": "Commercial Packaged/Splits" }. A
-    // team with no assigned Line simply has no key here.
-    const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
-    // Rack/Row suggestions (Pass 23), keyed "ParentCode|MajorCode|SubCode" --
-    // see BuildRackRowMap(). Deliberately data-derived, not a managed
-    // vocabulary: Rack/Row stay free-form, so a key with nothing typed under
-    // it yet just yields no suggestions, never a block.
-    const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
-
-
+    // itemsList / orgStructure / teamLines / rackRowMap: declared in the
+    // <script> block above section 7, before every partial include -- see
+    // the comment there for why they can't live down here anymore.
 
 
 
@@ -2353,6 +2362,20 @@
     window.addEventListener('resize', resizeMap);
     const facilityImg = document.getElementById('facility-map-img');
     if(facilityImg) facilityImg.addEventListener('load', resizeMap);
+
+    // Sidebar collapse/expand reflows .map-image-frame's width via CSS
+    // grid/flex layout, not a window resize -- the listener above never
+    // fires for it, so the zone pins stayed pinned to pixel coordinates
+    // computed for whatever size the frame was at the last real resize/load,
+    // drifting off their real zones (or off the map entirely) once the
+    // sidebar toggled. ResizeObserver watches the frame's actual rendered
+    // size directly, so it re-fires resizeMap() for that case too -- and
+    // for anything else that changes the frame's size without a window
+    // resize (browser zoom, etc.), not just this one known trigger.
+    const mapFrame = document.querySelector('.map-image-frame');
+    if (mapFrame && typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(() => resizeMap()).observe(mapFrame);
+    }
 
     window.addEventListener('load', syncHeaderOffset);
     window.addEventListener('resize', syncHeaderOffset);

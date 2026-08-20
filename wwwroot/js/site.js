@@ -6,7 +6,16 @@
 // App shell: sidebar collapse (desktop) + off-canvas drawer (mobile).
 // Collapse state is client-side only (localStorage), not a User field --
 // a UI preference, not worth a schema change yet.
-(function () {
+//
+// Deferred to DOMContentLoaded: this script tag loads at the top of <body>
+// (Pass 27, so the helper functions below are available to page-inline
+// scripts that run later), but #appSidebar itself renders further down the
+// page and doesn't exist yet at that point -- querying for it immediately
+// silently no-ops the whole block (getElementById returns null, the guard
+// bails). Waiting for DOMContentLoaded doesn't reopen the problem that load
+// order fixed, since it only delays *running* this IIFE, not the parsing
+// that defines the functions further down this file.
+document.addEventListener('DOMContentLoaded', function () {
     var sidebar = document.getElementById('appSidebar');
     if (!sidebar) return;
 
@@ -64,7 +73,7 @@
     sidebar.querySelectorAll('.sidebar-link').forEach(function (a) {
         a.addEventListener('click', closeMobileSidebar);
     });
-})();
+});
 
 // ---------------------------------------------------------------------------
 // Pass 28 (2a): generic dashboard-modal utilities promoted here from
