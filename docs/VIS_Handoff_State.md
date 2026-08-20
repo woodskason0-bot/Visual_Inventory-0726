@@ -1039,7 +1039,57 @@ shared JS there breaks any IIFE that calls it at parse time.
 reference them synchronously** — not just before code that merely defines a function
 using them (Pass 11). If a page-load bug takes out a seemingly unrelated set of buttons,
 check whether something new is being called unconditionally at top level rather than
-deferred into a handler.
+deferred into a handler. **This rule doesn't stop mattering once the code is split
+across separate `<script>` tags (Pass 28 2a) — it gets worse.** A top-level `const`
+declared in one `<script>` tag is not visible to code that runs in an *earlier*
+`<script>` tag in the same document, even though both eventually share the page's
+global scope: the browser executes tags in document order, and a reference to the
+name before its own declaring tag has run throws `ReferenceError: X is not defined`
+(not a temporal-dead-zone error — the binding genuinely doesn't exist yet anywhere
+in scope). This is exactly what happened when `3691cb9` extracted Modify Stock/New
+Item Registry/Alert Rules into their own partials but left `itemsList`/
+`orgStructure`/`teamLines`/`rackRowMap` declared in `Index.cshtml`'s own script
+block, which renders *after* all three partials — fixed in `15822b4` by moving the
+consts before the first partial include. **Whenever a page's script gets split
+into more `<script>` tags (2b/2c will do this again for Search Center/Command
+Center), audit every partial for top-level — not handler-deferred — references to
+data the "parent" page declares, and make sure the declaring tag renders first.**
+
+**A script that queries the DOM at parse time needs that markup to already exist —
+literally earlier in the same HTML document, not just logically "available."** Pass
+27 moved `jQuery`/`Bootstrap`/`site.js` to load right after `<body>` opens, reasoning
+that "all the DOM these scripts might touch synchronously already lives above this
+point." That was true for most of `site.js`, but not for `#appSidebar` — the sidebar
+markup itself renders later in `_Layout.cshtml` than the script tag does.
+`site.js`'s sidebar-collapse IIFE ran `document.getElementById('appSidebar')`
+immediately at parse time, got `null`, and its `if (!sidebar) return;` guard
+silently killed collapse/mobile-drawer wiring entirely — no error, no console
+output, it just never worked. Not caught until `15822b4` (2026-08-19), three
+commits after the load-order move that caused it. Fix: deferred that IIFE to
+`document.addEventListener('DOMContentLoaded', ...)`, which doesn't reopen the
+problem the load-order move fixed (this only delays *running* the block, not the
+parsing that makes `site.js`'s functions available to later inline scripts). If a
+new `site.js` block needs a specific element to exist, wrap it in `DOMContentLoaded`
+rather than assuming load order alone guarantees it — don't just eyeball "is this
+above or below" in the `.cshtml` source.
+
+**A container-size-dependent layout (pixel positions computed from
+`getBoundingClientRect`/`clientWidth`) needs to react to more than
+`window.addEventListener('resize', ...)`.** The dashboard map's zone pins
+(`resizeMap()` in `Index.cshtml`) only recomputed on window resize + facility image
+load. Collapsing the sidebar can resize `.map-image-frame` without ever firing a
+window resize event (it's a CSS layout reflow from a class toggle, not a viewport
+change) — the pins went stale, staying pinned to pixel coordinates computed for
+whatever size the frame was at the last real trigger. Fixed in `15822b4` with a
+`ResizeObserver` on the frame element itself, which fires on any actual box-size
+change regardless of cause. Prefer `ResizeObserver` over `window.resize` any time
+JS computes pixel geometry from an element that isn't guaranteed to be exactly
+viewport-sized. (Note: this environment's Browser-pane `resize_window` tool does
+not reliably trigger `ResizeObserver` even though it does change real layout
+dimensions — confirmed by attaching a fresh observer and getting zero fires across
+a genuine `getBoundingClientRect()` change. Don't use that tool to disprove a
+`ResizeObserver` fix; verify container-resize fixes via an actual DOM mutation
+(e.g. toggling the class by hand) instead.)
 
 **A copied scratchpad/backup `.db` file needs its `-wal`/`-shm` sidecars copied as one
 atomic set, or not at all (Pass 13).** A stale `-wal`/`-shm` pair left over from an
@@ -1277,7 +1327,15 @@ pass) is what makes it match the new look, not this pass.
 - **2a** — Extract Modify Stock, New Item Registry, and Alert Rules modals
   into shared partial views (needed by both Command Center's Quick Actions
   and Search Center). Zero visible change, verified against the live
-  dashboard before anything else moves. **Not started.**
+  dashboard before anything else moves. **DONE, and actually verified live
+  (2026-08-19, commit `15822b4`) — the extraction commit (`3691cb9`) shipped
+  from a remote session with no compiler available, so its own "verified"
+  claim was line-count/`node --check` only. Clicking through it for real
+  found three regressions the next session should not repeat the shape of:
+  see the new Traps entries below on cross-`<script>`-tag data-const
+  ordering and script-vs-markup load order. All three fixed; Modify Stock,
+  New Item Registry, and Alert Rules all confirmed running their scripts to
+  completion with zero console errors.**
 - **2b** — New `SearchCenter` route: Advanced Filters, Omni Search, results
   grid, Export Wizard, referencing 2a's shared partials. Built and tested
   standalone, `/` untouched throughout.
@@ -1321,6 +1379,61 @@ modular, every modal sharing scope:**
   page renders it:* `itemsList` (`ViewBag.AutocompleteJson`), `orgStructure`
   (`ViewBag.OrgStructureJson`), `teamLines` (`ViewBag.TeamLinesJson`),
   `rackRowMap` (`ViewBag.RackRowJson`).
+
+**Pass 28 (2a) verification pass (2026-08-19, commit `15822b4`) — three
+regressions found and fixed by actually running the extraction instead of
+trusting `3691cb9`'s commit message.** That commit shipped from a remote
+session with no compiler available, so "verified" there meant line-count
+and `node --check` only — genuinely useful checks, but not the same claim
+as "the app runs." Signing in and clicking through Modify Stock / New Item
+Registry / Alert Rules immediately surfaced two silent script-killing
+bugs, plus a third, unrelated bug found the same session while clicking
+through the sidebar:
+
+- **`itemsList`/`orgStructure`/`teamLines`/`rackRowMap` were still declared
+  in `Index.cshtml`'s own `<script>` block, which the extraction left
+  rendering *after* all three new partials.** Modify Stock's
+  `wireLineCascade()` call and New Item Registry's Type-field autocomplete
+  both reference these at their own script's top level (not deferred into
+  a handler) — `orgStructure is not defined` / `itemsList is not defined`,
+  each silently killing everything *after* that point in its own partial's
+  script (in Modify Stock's 927-line partial, that meant the Location
+  Transfer cascade and most of the Ownership pane below line 557 never
+  ran). Same failure shape as the 2026-08-05 Handle Stock/Add to Cart
+  break the Traps section already warned about — this time across
+  `<script>`-tag boundaries, not within one. Fix: moved the four consts
+  into a new `<script>` block before the first partial include.
+- **`site.js`'s sidebar-collapse IIFE queried `#appSidebar` at parse
+  time**, but Pass 27's load-order move put that script tag before the
+  sidebar markup in `_Layout.cshtml` — the query always returned `null`,
+  the `if (!sidebar) return;` guard fired, and collapse/mobile-drawer
+  wiring silently never attached. `75d1949`'s sidebar-collapse-width fix,
+  landed the same day, was logically correct but never ran for the same
+  reason. Fix: deferred the IIFE to `DOMContentLoaded`.
+- **Dashboard map zone pins only re-synced on `window.resize` + facility
+  image load**, not on a container resize with no window-resize event
+  behind it (found while re-testing sidebar collapse). Fix: added a
+  `ResizeObserver` on `.map-image-frame`.
+
+All three verified live in the running app: zero console errors opening
+and using any of the three modals; sidebar collapse/expand and light/dark
+toggle both confirmed; map pins confirmed staying matched to their zones
+after collapsing the sidebar. Two new Traps entries added below so 2b/2c
+— which will do more of exactly this kind of script-splitting — don't
+reintroduce either bug shape.
+
+*Same session, outside git — real db changes, not code:* deleted the one
+test item that had made it into the live db (`CCR-0255`, "just a test
+model", Id 574, registered 2026-08-13 — the only item with non-standard
+casing or an obviously-fake name found across all 492 items at the time),
+db backed up first to `inventory.db.pre-cleanup-backup-20260819-140533`.
+Separately pulled the full compressor catalog against a part-number list
+from Sean — Copeland `YA{76,83,104,122,137,154,182}K1E-{TF5,TFD,TFE}` and
+LG `YRH{076,083,104,122}`/`YGH{137,154,182}` × `{R,T,W}A{0,2}` — 58
+matches (34 Copeland + 24 LG; 2 of those are likely typo'd duplicates of
+existing rows — `CCR-0106` `YA154KIE-TF5-XXX` and `CCR-0225` `YGH17R` —
+folded into the list on request, not otherwise touched), exported to xlsx
+and handed off. No inventory quantities changed by the pull itself.
 
 ---
 
@@ -1658,3 +1771,23 @@ not my phone yet. Still open: a live check of Settings on mobile once the
 superuser passcode is available there.
 Everything else on the scaling list (SQL Server/Azure SQL move, SSO, backup story) is
 expansion work, not a blocker.
+Pass 25 added the Delivery intake/claim workflow (photo capture, Open/Claimed/Done
+board). Pass 26 was the real-phone pass on Pass 24's responsive work, and found two
+bugs the emulated-viewport checks had missed. Pass 27 phase 1 replaced the top navbar
+app-wide with a left sidebar shell (`Index.cshtml` itself untouched — still the old
+combined dashboard/search content, just inside the new shell), with a same-day
+follow-up fixing two regressions and moving `site.js`/jQuery/Bootstrap load order
+ahead of Pass 28's extraction work. Pass 28 (2a) then did that extraction — Modify
+Stock, New Item Registry, and Alert Rules pulled into shared partials — but shipped
+from a remote session with no compiler available, so its "verified" claim was
+line-count/`node --check` only, not a real build or click-through; the same remote
+session's light-mode/sidebar-collapse fix (`75d1949`) carried the same caveat. Both
+got their real live verification on 2026-08-19 (`15822b4`), which found and fixed
+three regressions — two silent script-killing bugs from the extraction itself, one
+unrelated map-pin resize bug found along the way — all detailed in the Pass 28 (2a)
+entry above and the Traps section. **2a is now actually done and verified; 2b
+(the new `SearchCenter` route) has not been started.**
+The same 2026-08-19 session deleted one test item that had made it into the live db
+and pulled the compressor catalog against a part list from Sean — see the Pass 28
+(2a) entry above for exactly what changed; the db was backed up first, and nothing
+else in the live data was touched.

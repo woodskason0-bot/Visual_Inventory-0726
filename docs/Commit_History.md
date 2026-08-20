@@ -9,6 +9,141 @@ landed, when."
 
 ---
 
+## 2026-08-19
+
+### `15822b4` — Pass 28 (2a) verification pass: fix three live regressions
+`3691cb9`'s extraction and `75d1949`'s sidebar/light-mode fix both shipped without
+a real `dotnet build` or clicking through the app (no compiler available in that
+remote session). Clicked through live instead of trusting the commit messages, found
+three real bugs: (1) `site.js`'s sidebar-collapse IIFE queried `#appSidebar` at parse
+time, but that markup renders after the script tag (Pass 27's load-order move) — the
+query always returned `null`, silently no-op'ing collapse/mobile-drawer entirely;
+deferred to `DOMContentLoaded`. (2) `itemsList`/`orgStructure`/`teamLines`/
+`rackRowMap` were still declared in `Index.cshtml`'s own script block, which now
+renders *after* all three partials `3691cb9` extracted — Modify Stock's
+`wireLineCascade()` call and New Item Registry's Type-field autocomplete both
+referenced them at their own script's top level, throwing `ReferenceError` and
+silently killing the rest of each partial's script (same failure shape as the
+2026-08-05 Handle Stock/Add to Cart break, now across script-tag boundaries instead
+of within one); moved the four consts to a new script block before the first
+partial include. (3) Dashboard map zone pins only re-synced on `window.resize` +
+image load, not on the sidebar-collapse-driven container resize the map frame can
+undergo — added a `ResizeObserver` on `.map-image-frame`. All three verified live
+(Modify Stock/New Item Registry/Alert Rules all run to completion with zero console
+errors; sidebar collapse and light/dark toggle both confirmed; map pins confirmed
+staying on-zone after collapse). Closes out Pass 28 (2a) as actually verified, not
+just merged.
+**Touched:** `Views/Home/Index.cshtml`, `wwwroot/js/site.js`.
+
+*Same session, outside git:* deleted the one test item that had made it into the
+live db (`CCR-0255`, "just a test model", registered 2026-08-13), db backed up
+first to `inventory.db.pre-cleanup-backup-20260819-140533`. Pulled the full
+compressor catalog against a part-number list from Sean (Copeland YA*K1E-TF5/TFD/TFE
+and LG YRH/YGH-RAA/WAA/TAA families) — 58 matches (34 Copeland + 24 LG, 2 of them
+likely typo'd duplicates folded in on request), exported to xlsx and handed off.
+See `## Current state` for the running total.
+
+### `75d1949` — Fix light-mode text legibility and sidebar-collapse layout
+Three real bugs from live use of Pass 27's sidebar shell, found and fixed in the same
+remote session as `3691cb9` (no compiler available — see that commit's note):
+sidebar brand text and the top-bar user name both still carried Bootstrap's
+`.text-white` from when the shell was always dark, going white-on-white once the
+shell started switching with theme; `.rheem-navbar`'s now-dead CSS rule (renamed to
+`.top-bar` in Pass 27) removed along with the light-theme section comment that still
+claimed the top nav "stays dark in both themes"; `.overlay-grid`/`.selection-grid`
+never actually noticed sidebar collapse/expand (`position:fixed` with a flat
+`left:12px`) — added `--vis-sidebar-width`, kept current by `site.js`
+(`applySidebarWidthVar`), read in a new `@@media (min-width: 992px)` block. Not
+verified against a running app at commit time (see `15822b4` above for the actual
+live verification, which found this fix's own wiring never ran due to the
+`#appSidebar` timing bug, and fixed it).
+**Touched:** `Views/Home/Index.cshtml`, `Views/Shared/_Layout.cshtml`,
+`wwwroot/css/site.css`, `wwwroot/js/site.js`.
+
+### `3691cb9` — Pass 28 (2a): extract Modify Stock, New Item Registry, and Alert Rules into shared partials; promote generic JS to site.js
+Mechanical extraction, zero intended behavior change, prerequisite for Command
+Center + Search Center (2b–2d). `Index.cshtml`'s three modals move to
+`_ModifyStockPartial.cshtml`, `_NewItemRegistryPartial.cshtml`, and
+`_AlertRulesPartial.cshtml` verbatim, each carrying its own `<script>` block. Also
+promoted to `site.js`, beyond the original scope note: the shared Branch→Line
+cascade primitives (`branchForLine`, `populateBranchSelect`, `populateLineSelect`,
+`wireLineCascade`, `setLineCascade` — three callers, not one: Ownership, Registry,
+and the compressor/motor filters) and `bindCascadingLocation` (shared between
+Registry and Export Wizard), plus `bindAutocomplete`/`bindValueAutocomplete`/
+`executeSubmit`/`encodeLoc`/`locDecode`. `HomeController.cs` needed no changes.
+Verified only without a compiler (line-partition + `<div>` count + `node --check`
+checks — no real build or click-through); see `15822b4` for what that verification
+gap actually cost.
+**Touched:** `Views/Home/Index.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`,
+`Views/Home/_NewItemRegistryPartial.cshtml`, `Views/Home/_AlertRulesPartial.cshtml`,
+`wwwroot/js/site.js`.
+
+## 2026-08-16
+
+### `84b959a` — docs: log Pass 27 phase 1 regression fixes and full Pass 28 scope
+`385f625`'s regression fixes were never logged in the Pass log. More importantly,
+phase 2's entire scope (Command Center fields, the Search Center sequencing
+resolution, the 2a–2d sub-phase breakdown, and the full JS dependency map derived
+from reading `Index.cshtml`'s ~1,820-line script block) existed only in
+conversation, not in the docs. Written in so a fresh session could resume phase 2
+without re-deriving it.
+**Touched:** `docs/VIS_Handoff_State.md`.
+
+### `385f625` — Fix two Phase 1 regressions, move site.js/jQuery/Bootstrap load order
+`syncHeaderOffset()` still queried the old `<header>` element Phase 1 removed —
+silently no-op'd every call, `--vis-header-bottom` fell back to a stale hardcoded
+`110px`. Now measures `.top-bar`. The Add-to-Cart order-mode class add still
+targeted `.rheem-navbar` (renamed `.top-bar` in Phase 1) — the order-mode sweep
+animation had been silently dead since. Both found while mapping `Index.cshtml`'s JS
+ahead of phase 2's extraction work. `jQuery`/`Bootstrap`/`site.js` moved to load
+right after `<body>` opens instead of after `@@RenderBody()` — prerequisite for
+phase 2's shared-partial extraction, since without it any utility promoted to
+`site.js` would break every page's top-level call to it. Verified live.
+**Touched:** `Views/Home/Index.cshtml`, `Views/Shared/_Layout.cshtml`.
+
+### `5ac6288` — Pass 27 phase 1: left sidebar shell, replacing the top navbar app-wide
+`_Layout.cshtml` rebuilt around `.app-shell` (sidebar + main-area) instead of the old
+`<header><nav>`, per a real design mockup targeting an industrial ops platform look.
+Every existing nav item, gate (`isManager`/superuser), theme toggle, notification
+bell, and identity/sign-out relocated with no functional changes — pure structural
+move. New: real Branch→Line→tier identity breadcrumb. Desktop collapses to
+icon-only (localStorage); mobile (<992px) gets an off-canvas drawer, deliberately
+without a body-scroll-lock given how close Pass 26's scroll bug was to this same
+code path. Follow-up from real-phone feedback same session: the sign-in page now
+renders with no shell at all. `Index.cshtml` itself untouched — still the old
+dashboard content, just inside the new shell.
+**Touched:** `Views/Shared/_Layout.cshtml`, `wwwroot/css/site.css`,
+`wwwroot/js/site.js`, `docs/VIS_Handoff_State.md`, `docs/vis-addendum-consolidated.md`.
+
+## 2026-08-14
+
+### `c35c963` — Pass 26: fix mobile scroll and invisible navbar toggler, found on a real phone
+`background-attachment: fixed` on body's dot-matrix background desyncs from
+foreground scroll on mobile Safari/Chrome (dashboard wouldn't scroll, only the
+background moved) — drops to `scroll` below 1100px. Navbar toggler never had
+`navbar-dark`, so its icon/border defaulted to a dark-on-dark light-navbar variant,
+invisible against this app's permanently-dark navbar. Both bugs slipped past Pass
+24's "verified live" claim because that verification ran through Claude Code's
+Browser-pane tool, which isn't a visually-composited real renderer and can't catch
+this class of bug — documented as a new Trap entry. Scroll fix confirmed on a real
+phone; navbar fix confirmed via computed styles only at commit time.
+**Touched:** `Views/Shared/_Layout.cshtml`, `wwwroot/css/site.css`,
+`docs/VIS_Handoff_State.md`.
+
+### `bb1b1ce` — Pass 25: Delivery intake/claim workflow with photo capture
+New `Delivery` model/table: photo (required, saved to `C:\VIS_Image-Uploads` outside
+publish, resized/re-encoded via `System.Drawing.Common`), optional tracking#/order#/
+brand-of-shipping/brand-of-item with the Rheem-PN-style N/A toggle, routed to a
+specific Management+ person or the shared "Unknown Delivery" bucket, `VisTask`-style
+Open/Claimed/Done claim lifecycle on a new Deliveries board. Verified live against
+the real db end-to-end.
+**Touched:** `Controllers/HomeController.cs`, `Data/AppDbContext.cs`,
+`Models/Delivery.cs`, `Models/ViewModels/DeliveryViewModel.cs`, `Program.cs`,
+`Services/DeliveryPhotoStorage.cs`, `Views/Home/Deliveries.cshtml`,
+`Views/Home/LogDelivery.cshtml`, `Views/Shared/_Layout.cshtml`,
+`Visual_Inventory_System.csproj`, plus the `AddDeliveries` migration,
+`docs/VIS_Handoff_State.md`.
+
 ## 2026-08-13
 
 ### `01bfae6` — docs: log Pass 24 (responsive pass) in handoff/addendum
