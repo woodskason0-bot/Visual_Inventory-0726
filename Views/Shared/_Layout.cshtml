@@ -63,23 +63,12 @@
         return utc.ToLocalTime().ToString("MMM d");
     };
 
-    // Identity breadcrumb: Branch -> Line -> tier, real data only, blank parts
-    // dropped. Same "effective branch" formula HomeController.Index computes
-    // as ViewBag.MyBranch, replicated here since this needs to render on
-    // every page, not just the dashboard.
-    string myBranchLabel = "";
-    if (signedIn)
-    {
-        myBranchLabel = !string.IsNullOrWhiteSpace(CurrentUser.Line)
-            ? (Visual_Inventory_System.Services.OrgStructure.BranchFor(CurrentUser.Line) ?? "")
-            : (CurrentUser.Branch ?? "");
-    }
-    string myTierLabel = signedIn ? Visual_Inventory_System.Services.AccessLevels.Name(CurrentUser.Level) : "";
+    // Identity breadcrumb: Line | L<level>, real data only, blank Line dropped.
+    string myTierLabel = signedIn ? $"L{CurrentUser.Level}" : "";
     var breadcrumbParts = new List<string>();
-    if (!string.IsNullOrWhiteSpace(myBranchLabel)) breadcrumbParts.Add(myBranchLabel);
     if (!string.IsNullOrWhiteSpace(myLine)) breadcrumbParts.Add(myLine);
     if (!string.IsNullOrWhiteSpace(myTierLabel)) breadcrumbParts.Add(myTierLabel);
-    string identityBreadcrumb = string.Join(" → ", breadcrumbParts);
+    string identityBreadcrumb = string.Join(" | ", breadcrumbParts);
 
     // Active-state helper for sidebar links -- same action/controller checks
     // the old top navbar used, just applied to the new markup.
