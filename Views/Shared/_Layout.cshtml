@@ -279,7 +279,12 @@
 
             <nav class="sidebar-nav">
                 <a class="sidebar-link @(isActiveAction("Index") ? "active" : "")" asp-controller="Home" asp-action="Index">
-                    <i class="bi bi-grid-1x2-fill"></i><span class="sidebar-link-text">Dashboard</span>
+                    <i class="bi bi-grid-1x2-fill"></i><span class="sidebar-link-text">Command Center</span>
+                </a>
+                @* Pass 28 (2d): real link now that the route exists -- Pass 27
+                   deliberately left this out while it was still a dead link. *@
+                <a class="sidebar-link @(isActiveAction("SearchCenter") ? "active" : "")" asp-controller="Home" asp-action="SearchCenter">
+                    <i class="bi bi-search"></i><span class="sidebar-link-text">Search Center</span>
                 </a>
                 <a class="sidebar-link @(isActiveAction("Logs") ? "active" : "")" asp-controller="Home" asp-action="Logs">
                     <i class="bi bi-journal-text"></i><span class="sidebar-link-text">View Logs</span>

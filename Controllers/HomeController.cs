@@ -30,40 +30,41 @@ namespace Visual_Inventory_System.Controllers
             _notifications = notifications;
         }
 
-        // filterRheem replaced the old filterName slot: the Name filter box is
-        // now "Rheem Part #" per leadership (PN is a primary identifier).
-        public IActionResult Index(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode)
+        // Pass 28 (2d) -- the swap. "/" now renders Command Center directly
+        // (KPI strip, map + location list, Activity Feed, Need PN / Need Serial
+        // donuts, Quick Actions, Stock Alerts/Pending/Incoming Shipments) instead
+        // of the old combined dashboard+search page. Advanced Filters/Omni
+        // Search/results grid/Export Wizard/Compressor+Motor Registry moved to
+        // SearchCenter() in 2b and stay there -- Index() takes no query params
+        // anymore, there's no holo-viewer here to feed. Picks up the sidebar's
+        // light/shadow-card visual language rather than the old page's dark/
+        // unstyled look -- Kason's call once he saw the sidebar next to the old
+        // dashboard, ahead of Phase 4's originally-planned broader visual pass.
+        public IActionResult Index()
         {
             var allItems = _inventoryService.GetAll().ToList();
+            PopulateSearchViewBag(allItems);
+            // The view recomputes its own zoneDataMap from a fresh GetAll() --
+            // needs the service reference for that.
+            ViewBag.InventoryService = _inventoryService;
 
-            // 1. MAP OVERLAY STATS (header cards above the map)
+            // KPI strip.
             ViewBag.TotalItems = allItems.Count;
             ViewBag.LowStockCount = allItems.Count(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold && i.Quantity > 0);
             ViewBag.OutOfStockCount = allItems.Count(i => i.Quantity == 0);
             ViewBag.ActiveLocationsCount = allItems.Select(i => i.Parent).Where(p => !string.IsNullOrEmpty(p)).Distinct().Count();
+            ViewBag.PnBacklogCount = GetPnBacklogItems(allItems).Count;
 
-            // 2. RECENT ACTIVITY FEED (Top 5 latest actions). Pass 15: same Line
-            // visibility as View Logs -- see ApplyLogVisibility.
+            // Activity Feed (top 5). Pass 15: same Line visibility as View Logs.
             ViewBag.RecentActivity = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
                 .AsNoTracking())
                 .OrderByDescending(t => t.Timestamp)
                 .Take(5)
                 .ToList();
 
-            // 2b. PENDING PICKUPS (powers the level-2 runner banner; oldest first)
-            ViewBag.PendingPickups = _db.Orders
-                .AsNoTracking()
-                .Include(o => o.Items)
-                .Where(o => o.Status == "Pending")
-                .OrderBy(o => o.CreatedAt)
-                .ToList();
-
-            // 3. AUTOCOMPLETE, ORG/LOCATION/TEAM DATA -- shared with SearchCenter().
-            PopulateSearchViewBag(allItems);
-
-            // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
-            // -- the one copy of the location vocabulary 7C missed, because it was
-            // an image map rather than a dropdown.
+            // Map zones -- the view builds zoneDataMap client-side from this plus
+            // LocationParents (already in PopulateSearchViewBag), and renders a
+            // Location List from that same object.
             ViewBag.MapZones = _db.LocationZones.AsNoTracking()
                 .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
                       z => z.LocationId, l => l.Id,
@@ -73,48 +74,42 @@ namespace Visual_Inventory_System.Controllers
                               X: z.X, Y: z.Y, W: z.W, H: z.H))
                 .ToList();
 
-            var currentDraft = _orderService.GetCurrentDraft();
-            var draftEntries = currentDraft.Entries;
-            ViewBag.DraftItemIds = draftEntries.Select(e => e.ItemId).ToHashSet();
+            // Need Serial donut: real on-hand compressor STOCK (by quantity) that
+            // has no serial recorded, same "physical gap" framing Need PN uses --
+            // not blank-serial rows within the CompressorUnits table alone. Only
+            // 184 of the 849 real on-hand compressor units have ever been logged
+            // into CompressorUnits at all, and whoever creates a row tends to
+            // fill the serial in at the same time, so "blank among rows that
+            // exist" reads as a near-zero gap by construction, not the real one.
+            // Found live (Kason: Need PN said 100%, Need Serial said 0% right
+            // next to it, those should mean the same thing) -- verified against
+            // the real db: true gap is 849 - 184 = 665 (78%), not 0.
+            var compressorItems = allItems.Where(i => InventoryService.IsCompressorType(i.Type)).ToList();
+            var compItemIds = compressorItems.Select(i => i.ItemId).ToHashSet();
+            var onHandCompUnits = _db.CompressorUnits.AsNoTracking()
+                .Where(u => u.Status == UnitStatus.OnHand).ToList();
+            int compQtyTotal = compressorItems.Sum(i => i.Quantity);
+            int compSerialsRecorded = onHandCompUnits.Count(u =>
+                compItemIds.Contains(u.ItemId) && !string.IsNullOrWhiteSpace(u.SerialNumber));
+            ViewBag.CompUnitsTotal = compQtyTotal;
+            ViewBag.CompUnitsNeedSerialCount = Math.Max(0, compQtyTotal - compSerialsRecorded);
 
-            // LEDGER MODE
-            if (mode == "Ledger")
-            {
-                ViewBag.SearchResult = new SearchResult { Mode = "Ledger", Items = new List<InventoryItem>() };
-                ViewBag.Ledger = new LedgerViewModel { Entries = draftEntries };
-                ViewBag.InventoryService = _inventoryService;
-                return View();
-            }
+            // Bottom row: Pending combines an Order in flight with a held (not yet
+            // approved/rejected) Intake batch -- two different tables, one
+            // number. Incoming Shipments is anything not yet marked Done on the
+            // Deliveries board.
+            ViewBag.PendingCount = _db.Orders.AsNoTracking().Count(o => o.Status == "Pending")
+                + _db.IntakeBatches.AsNoTracking().Count(b => b.Status == IntakeStatus.Pending);
+            ViewBag.IncomingShipmentsCount = _db.Deliveries.AsNoTracking().Count(d => d.Status != "Done");
 
-            // SEARCH MODE
-            var searchResult = new SearchResult { Mode = mode ?? "None" };
-            if (mode != "None")
-            {
-                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
-                searchResult.Items = foundItems;
-
-                if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
-                else if (foundItems.Any() || mode == "Filter") searchResult.Mode = "Filter";
-            }
-
-            ViewBag.SearchResult = searchResult;
-            ViewBag.InventoryService = _inventoryService;
-
-            ViewBag.OmniSearch = omniSearch ?? "";
-            ViewBag.FilterRheem = filterRheem ?? "";
-            ViewBag.FilterType = filterType ?? "";
-            ViewBag.FilterBrand = filterBrand ?? "";
-            ViewBag.FilterNotes = filterNotes ?? "";
-
-            return View();
+            return View("CommandCenter");
         }
 
-        // Pass 28 (2b) -- standalone Search Center: Advanced Filters, Omni Search,
-        // results grid, Export Wizard, Compressor/Motor Registry, Modify Stock.
-        // Same query params and mode branching as Index() on purpose -- until 2d
-        // retires Index's own copy of this content, the two pages need to behave
-        // identically, just at different routes. Left dark-themed/unstyled: the
-        // visual match to the sidebar's new look is Phase 4, not this pass.
+        // Pass 28 (2b) -- Search Center: Advanced Filters, Omni Search, results
+        // grid, Export Wizard, Compressor/Motor Registry, Modify Stock. Left
+        // dark-themed/unstyled on purpose -- the visual match to the sidebar's
+        // new look is Phase 4, not this pass (Command Center picked that up
+        // early in 2c/2d; this page is still waiting on it).
         public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode, string? stockView)
         {
             var allItems = _inventoryService.GetAll().ToList();
@@ -171,88 +166,6 @@ namespace Visual_Inventory_System.Controllers
             return View();
         }
 
-        // Pass 28 (2c) -- standalone Command Center: KPI strip, map + location
-        // list, Activity Feed, Need PN / Need Serial donuts, Quick Actions, and a
-        // Stock Alerts / Pending / Incoming Shipments bottom row. Built standalone
-        // (not yet what "/" renders -- that's 2d), referencing 2a's Modify Stock
-        // and New Item Registry partials. Unlike SearchCenter, this one DOES pick
-        // up the sidebar's light/shadow-card visual language rather than staying
-        // dark/unstyled -- Kason's call once he saw the sidebar next to the old
-        // dashboard look, ahead of Phase 4's originally-planned broader visual pass.
-        public IActionResult CommandCenter()
-        {
-            var allItems = _inventoryService.GetAll().ToList();
-            PopulateSearchViewBag(allItems);
-            // The view recomputes its own zoneDataMap from a fresh GetAll() (same
-            // pattern Index.cshtml uses) rather than serializing allItems through
-            // ViewBag -- needs the service reference for that.
-            ViewBag.InventoryService = _inventoryService;
-
-            // KPI strip -- same math Index() has always used, verbatim.
-            ViewBag.TotalItems = allItems.Count;
-            ViewBag.LowStockCount = allItems.Count(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold && i.Quantity > 0);
-            ViewBag.OutOfStockCount = allItems.Count(i => i.Quantity == 0);
-            ViewBag.ActiveLocationsCount = allItems.Select(i => i.Parent).Where(p => !string.IsNullOrEmpty(p)).Distinct().Count();
-            ViewBag.PnBacklogCount = GetPnBacklogItems(allItems).Count;
-
-            // Activity Feed, same as Index().
-            ViewBag.RecentActivity = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
-                .AsNoTracking())
-                .OrderByDescending(t => t.Timestamp)
-                .Take(5)
-                .ToList();
-
-            // Map zones, same as Index() -- the view builds zoneDataMap client-side
-            // from this plus LocationParents (already in PopulateSearchViewBag),
-            // and now also renders a location list from that same object.
-            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
-                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
-                      z => z.LocationId, l => l.Id,
-                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
-                .ToList()
-                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
-                              X: z.X, Y: z.Y, W: z.W, H: z.H))
-                .ToList();
-
-            // Need Serial donut: real on-hand compressor STOCK (by quantity) that
-            // has no serial recorded, same "physical gap" framing Need PN already
-            // uses -- not blank-serial rows within the CompressorUnits table
-            // alone. That first version (still what the original scope doc says
-            // literally) read as "0% need serial" next to "100% need PN", which
-            // is misleading rather than just an unrelated pair of true numbers:
-            // only 184 of the 849 real on-hand compressor units have EVER been
-            // logged into CompressorUnits at all (the roster only grows as
-            // someone opens Log Units and types something in -- see its own
-            // "may only have a few units listed below for a while" caveat), and
-            // whoever creates a row tends to fill the serial in at the same
-            // time, so "blank among rows that exist" was trivially near-zero by
-            // construction. Found live (Kason: the two donuts should mean the
-            // same thing, they don't) -- verified against the real db: 849
-            // total on-hand compressor quantity, 184 CompressorUnits rows, all
-            // 184 already On Hand with a real serial, so the true gap is
-            // 849 - 184 = 665 (78%), not 0.
-            var compressorItems = allItems.Where(i => InventoryService.IsCompressorType(i.Type)).ToList();
-            var compItemIds = compressorItems.Select(i => i.ItemId).ToHashSet();
-            var onHandCompUnits = _db.CompressorUnits.AsNoTracking()
-                .Where(u => u.Status == UnitStatus.OnHand).ToList();
-            int compQtyTotal = compressorItems.Sum(i => i.Quantity);
-            int compSerialsRecorded = onHandCompUnits.Count(u =>
-                compItemIds.Contains(u.ItemId) && !string.IsNullOrWhiteSpace(u.SerialNumber));
-            ViewBag.CompUnitsTotal = compQtyTotal;
-            ViewBag.CompUnitsNeedSerialCount = Math.Max(0, compQtyTotal - compSerialsRecorded);
-
-            // Bottom row: Pending combines an Order in flight with a held (not yet
-            // approved/rejected) Intake batch -- two different tables, one number,
-            // same combination the original dashboard's "Pending Orders" widget
-            // description already implied. Incoming Shipments is anything not yet
-            // marked Done on the Deliveries board.
-            ViewBag.PendingCount = _db.Orders.AsNoTracking().Count(o => o.Status == "Pending")
-                + _db.IntakeBatches.AsNoTracking().Count(b => b.Status == IntakeStatus.Pending);
-            ViewBag.IncomingShipmentsCount = _db.Deliveries.AsNoTracking().Count(d => d.Status != "Done");
-
-            return View();
-        }
-
         // Shared "what counts as low stock / out of stock / needs a PN" --
         // reused by Search Center's stockView filter and Command Center's
         // Stock Alerts card / Need PN donut, so the definition can't drift into
@@ -262,7 +175,7 @@ namespace Visual_Inventory_System.Controllers
         // definition the dashboard's Stock Alerts widget has always used; the KPI
         // strip's separate "Low Stock" COUNT (which does exclude zero, so it
         // doesn't double-count with "Out of Stock") stays its own inline
-        // expression in Index()/CommandCenter(), not routed through this.
+        // expression in Index(), not routed through this.
         private static bool NeedsRheemPn(string? pn) =>
             string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
 
@@ -1865,7 +1778,7 @@ namespace Visual_Inventory_System.Controllers
 
         // Full roster page for the "Total Items" dashboard stat. Deep-linking into
         // a specific item's Handle Stock panel reuses the existing Omni search
-        // route (/Home/Index?omniSearch=ID) rather than duplicating that JS here.
+        // route (/Home/SearchCenter?omniSearch=ID) rather than duplicating that JS here.
         public IActionResult AllItems()
         {
             var items = _inventoryService.GetAll().OrderBy(i => i.ItemId).ToList();

@@ -80,7 +80,7 @@
                         <td class="fw-bold @(item.Quantity == 0 ? "text-danger" : (item.AlertThreshold > 0 && item.Quantity <= item.AlertThreshold ? "text-warning" : ""))">@item.Quantity</td>
                         <td class="text-dim">@item.FdaString</td>
                         <td>
-                            <a asp-controller="Home" asp-action="Index" asp-route-omniSearch="@item.ItemId" class="btn btn-sm btn-outline-info">
+                            <a asp-controller="Home" asp-action="SearchCenter" asp-route-omniSearch="@item.ItemId" class="btn btn-sm btn-outline-info">
                                 Handle Stock
                             </a>
                         </td>
