@@ -277,10 +277,28 @@
         display: flex;
         flex-direction: column;
         gap: 2px;
+        position: relative;
     }
 
         .cc-bottom-card:hover {
             border-color: var(--vis-red);
+        }
+
+    /* Sits above the card's own stretched-link so it opens Alert Rules
+       instead of following the card through to Search Center. */
+    .cc-bottom-gear {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 2;
+        color: var(--vis-text-muted);
+        background: transparent;
+        border: none;
+        padding: 2px 4px;
+    }
+
+        .cc-bottom-gear:hover {
+            color: var(--vis-red);
         }
 
     .cc-bottom-value {
@@ -659,10 +677,15 @@
 
     <!-- Bottom row -->
     <div class="cc-bottom-row">
-        <a href="/Home/SearchCenter?stockView=LowStock" class="cc-card cc-bottom-card">
-            <span class="cc-bottom-value">@ViewBag.LowStockCount</span>
-            <span class="cc-bottom-label">Stock Alerts</span>
-        </a>
+        <div class="cc-card cc-bottom-card">
+            <a href="/Home/SearchCenter?stockView=LowStock" class="stretched-link text-decoration-none">
+                <span class="cc-bottom-value">@ViewBag.LowStockCount</span>
+                <span class="cc-bottom-label">Stock Alerts</span>
+            </a>
+            <button type="button" class="cc-bottom-gear" data-bs-toggle="modal" data-bs-target="#modifyAlertsModal" title="Modify Alert Rules">
+                <i class="bi bi-gear-fill"></i>
+            </button>
+        </div>
         <a href="/Home/PickupQueue" class="cc-card cc-bottom-card">
             <span class="cc-bottom-value">@ViewBag.PendingCount</span>
             <span class="cc-bottom-label">Pending</span>
@@ -759,6 +782,12 @@
 
 @await Html.PartialAsync("_ModifyStockPartial")
 @await Html.PartialAsync("_NewItemRegistryPartial")
+@* Found missing during the 2d.1 legibility pass: nothing triggered
+   #modifyAlertsModal anywhere after Index.cshtml was retired in 2d -- this
+   partial was never actually wired into either new page. Per-item and bulk
+   (Management+) alert thresholds were unreachable in the live app until now.
+   The trigger is the gear icon on the Stock Alerts card above. *@
+@await Html.PartialAsync("_AlertRulesPartial")
 
 <script>
     function ccActivityClick(el) {

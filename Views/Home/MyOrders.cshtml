@@ -15,6 +15,14 @@
         margin-bottom: 1.5rem;
     }
     .mo-h { color: var(--vis-text); font-weight: 700; }
+    /* Was inline color:#F59E0B (--vis-yellow). Fine on dark, ~2.15:1 on the
+       light theme's white card (found live testing 2d.1) -- --vis-yellow is
+       a brand accent, deliberately unchanged between themes (see site.css),
+       so this needs its own light-mode override rather than just reaching
+       for the variable. */
+    .mo-outstanding { color: var(--vis-yellow); }
+
+    :root[data-theme="light"] .mo-outstanding { color: #8A6100; }
     .mo-sub { color: var(--vis-text-muted); }
     .mo-table { width: 100%; color: var(--vis-text); }
     .mo-table th { color: var(--vis-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--vis-card-border); padding: 8px 10px; text-align: left; }
@@ -81,7 +89,7 @@
                             @* A compressor is normally CONSUMED, so "still out" would
                                misdescribe it -- the counter means "not yet dispositioned". *@
                             <div class="mo-sub" style="font-size:11px;">@(loan.IsCompressor ? "In use" : "Still out")</div>
-                            <div class="mo-h" style="font-size:1.5rem; color:#F59E0B;">@loan.Outstanding</div>
+                            <div class="mo-h mo-outstanding" style="font-size:1.5rem;">@loan.Outstanding</div>
                         </div>
                     </div>
 

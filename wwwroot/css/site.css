@@ -347,6 +347,52 @@ html, body {
     filter: invert(1);
 }
 
+/* Every modal's <label> (Modify Stock, New Item Registry, Alert Rules, Export
+   Wizard, Add to Cart, ...) used to hardcode this color page-locally --
+   Index.cshtml and (after Pass 28 2b copied it forward) SearchCenter.cshtml
+   each carried their own copy, and Command Center (2c) simply never got one,
+   so its New Item Registry/Modify Stock labels rendered pure white (inherited
+   from .modal-content below) with nothing to override it. Globalized since
+   these are shared partials now, included on multiple pages -- one copy, not
+   three. #E2E8F0 has ~1.17:1 contrast against a light-theme white modal
+   (found live testing 2d.1, Kason: check light/dark legibility everywhere) --
+   the light-theme override below is what actually fixes it; see that section. */
+.modal-content label {
+    color: #E2E8F0;
+    font-weight: 600;
+}
+
+/* .text-light-gray never had a real base color anywhere in the app -- it
+   inherited from whatever ancestor happened to set `color` (usually
+   .modal-content's hardcoded white below), which read as "white," not
+   "light gray," and went fully invisible wherever an ancestor's background
+   flips to white in light theme (Advanced Filters card, any modal body).
+   Three narrow compound overrides already existed for this
+   (.vis-feed-panel/.holo-actions/.holo-row .text-light-gray, see the light
+   theme section) -- each was a band-aid for one container rather than a
+   real base rule. This is the real one: low specificity on purpose, so the
+   comp-row/motor-row override directly below (and those three older ones)
+   still win where the background is pinned dark regardless of theme. */
+.text-light-gray {
+    color: var(--vis-text-muted);
+}
+
+/* Compressor/Motor Registry rows AND their filter bar (Search Center) keep an
+   always-dark background regardless of theme (#14151A, inline on
+   .comp-row/.motor-row/.filter-bar-dark -- deliberate: this content stays
+   dark-themed until Phase 4's visual pass, see SearchCenter.cshtml). The rule
+   above would otherwise flip .text-light-gray to a dark gray in light mode
+   here too, unreadable against a background that never changes -- pin it
+   back to a light, dark-bg-only gray. The containers also get an explicit
+   light color, as a safety net for any plain/unclassed descendant text that
+   would otherwise keep climbing to .modal-content (below) for its color. */
+.comp-row, .motor-row, .filter-bar-dark {
+    color: #E2E8F0;
+}
+.comp-row .text-light-gray, .motor-row .text-light-gray, .filter-bar-dark .text-light-gray {
+    color: #94A3B8 !important;
+}
+
 .holo-viewer {
     background: var(--vis-bg);
     border: 1px solid var(--vis-card-border);
@@ -536,11 +582,59 @@ body {
 /* Widget card headers (Advanced Filters / Omni Search / Export Wizard / Modify Stock) + activity titles */
 :root[data-theme="light"] .grid-card .text-bright-white { color: #1A1D23 !important; }
 
+/* Every modal label (Modify Stock / New Item Registry / Alert Rules / Export
+   Wizard / Add to Cart) -- see the base .modal-content label rule above for
+   why this was invisible in light mode (~1.17:1 contrast, #E2E8F0 on a white
+   modal). */
+:root[data-theme="light"] .modal-content label { color: #1A1D23 !important; }
+
+/* .filter-bar-dark's own "Unclaimed only" checkbox label sits inside
+   .modal-content too, so the rule directly above would otherwise flip it
+   dark-on-dark (its background is pinned #14151A regardless of theme, same
+   as .comp-row/.motor-row -- see that comment). Four class-level selectors
+   here on purpose, to unambiguously outrank the three-selector rule above
+   regardless of source order, not just tie and hope. */
+:root[data-theme="light"] .modal-content .filter-bar-dark label { color: #E2E8F0 !important; }
+
+/* Bootstrap's text-info/text-warning (used throughout Modify Stock/New Item
+   Registry/Alert Rules/Export Wizard for section headers and field labels --
+   "Location Filter", "Generated FDA String", "Alert Threshold", etc.) are
+   tuned for dark surfaces; on a white modal/card they read as ~1.6-2.0:1,
+   washed out rather than fully invisible but still a real legibility miss.
+   Found live testing 2d.1 alongside the label bug above. */
+:root[data-theme="light"] .modal-content .text-info,
+:root[data-theme="light"] .grid-card .text-info { color: #087990 !important; }
+:root[data-theme="light"] .modal-content .text-warning,
+:root[data-theme="light"] .grid-card .text-warning { color: #8A6100 !important; }
+
+/* One of those (a compressor's blank-serial flag, in its History table) sits
+   inside .comp-row, whose background stays dark regardless of theme --
+   same exclusion shape as the label rule above, same reason: four
+   class-level selectors to unambiguously outrank the three above it. */
+:root[data-theme="light"] .comp-row .text-info,
+:root[data-theme="light"] .motor-row .text-info,
+:root[data-theme="light"] .filter-bar-dark .text-info { color: #0DCAF0 !important; }
+:root[data-theme="light"] .comp-row .text-warning,
+:root[data-theme="light"] .motor-row .text-warning,
+:root[data-theme="light"] .filter-bar-dark .text-warning { color: #FFC107 !important; }
+
 /* Quick Filters: Commercial / Residential, and the filter CLEAR button (outline-secondary forces white text) */
 :root[data-theme="light"] .btn-outline-secondary { color: #1A1D23 !important; }
 
 /* VIEW ORDERS (outline-info button carries a text-white class) */
 :root[data-theme="light"] .btn-outline-info.text-white { color: var(--vis-teal) !important; }
+
+/* Bootstrap's outline-danger/warning/info are tuned for dark surfaces --
+   ~2:1 contrast on white (found live testing 2d.1: Alert Rules' "Apply to
+   all" button). Sitewide, not scoped to Command/Search Center: these three
+   variants show up across MyOrders, PickupQueue, Intake, and AllItems too,
+   all with the same problem, none of it new. None of the app's always-dark
+   containers (.comp-row/.motor-row/.filter-bar-dark) use these outline
+   variants, so no exclusion needed the way the label/text-warning fixes
+   above required one. */
+:root[data-theme="light"] .btn-outline-danger { color: #A61E2B !important; border-color: #A61E2B !important; }
+:root[data-theme="light"] .btn-outline-warning { color: #8A6100 !important; border-color: #8A6100 !important; }
+:root[data-theme="light"] .btn-outline-info { color: #087990 !important; border-color: #087990 !important; }
 
 /* Pick Up Orders box (text-white sitting over a near-white box) */
 :root[data-theme="light"] .pickup-box,
