@@ -1,0 +1,1210 @@
+@using Visual_Inventory_System.Services
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@functions {
+    // Same three helpers Index.cshtml's holo-viewer uses -- kept in sync by hand
+    // until Pass 28 (2d) retires Index's own copy of this content.
+    string GetHoloTitle(Visual_Inventory_System.Models.SearchResult result)
+    {
+        if (result.Mode == "Omni") return $"Omni Search: \"{ViewBag.OmniSearch}\"";
+        if (result.Mode == "Filter") return "Filter Search";
+        return result.Mode == "Ledger" ? "Order Cart" : "Holo Viewer";
+    }
+
+    string FriendlyVarLoc(Visual_Inventory_System.Models.ItemVariant v)
+    {
+        bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+        var crumbs = new System.Collections.Generic.List<string>();
+        if (Real(v.Parent)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Parent));
+        if (Real(v.Major)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Major));
+        if (Real(v.Sub)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Sub));
+        string path = string.Join(" › ", crumbs);
+        string rr = "";
+        if (Real(v.Rack) || Real(v.Row))
+            rr = $"R{(Real(v.Rack) ? v.Rack.Trim() : "-")}/{(Real(v.Row) ? v.Row.Trim() : "-")}";
+        if (path == "" && rr == "") return string.IsNullOrWhiteSpace(v.FdaString) ? "-" : v.FdaString;
+        return rr == "" ? path : (path == "" ? rr : $"{path} · {rr}");
+    }
+
+    string TruncName(string name, int maxNonSpace)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        int nonSpace = 0;
+        var sb = new System.Text.StringBuilder();
+        foreach (char c in name)
+        {
+            if (!char.IsWhiteSpace(c))
+            {
+                if (nonSpace == maxNonSpace) return sb.ToString().TrimEnd() + "...";
+                nonSpace++;
+            }
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
+}
+
+@{
+    ViewData["Title"] = "Search Center";
+    var result = ViewBag.SearchResult as Visual_Inventory_System.Models.SearchResult;
+    bool showHolo = result != null && result.Mode != "None";
+    var headerDraftIds = ViewBag.DraftItemIds as System.Collections.Generic.HashSet<string>;
+    var hasDraft = headerDraftIds != null && headerDraftIds.Any();
+
+    var invSvc = ViewBag.InventoryService as Visual_Inventory_System.Services.InventoryService;
+    var allItems = invSvc?.GetAll() ?? new List<Visual_Inventory_System.Models.InventoryItem>();
+
+    // Compressor/Motor Registry modal data (Pass 28 2b: these moved here per the
+    // scope doc's own JS dependency map -- compApplyFilter/motorApplyFilter are
+    // "Search Center only"). Same blocks Index.cshtml still carries for its own
+    // unstyled copy of this content.
+    var compressorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsCompressorType(i.Type))
+        .OrderBy(i => i.ItemName).ToList();
+    var compressorBrands = compressorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
+        .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
+    var compressorUnitsByItem = invSvc?.GetCompressorUnitsGrouped()
+        ?? new Dictionary<string, List<Visual_Inventory_System.Models.CompressorUnit>>();
+
+    var motorUnitsByItem = invSvc?.GetMotorUnitsGrouped()
+        ?? new Dictionary<string, List<Visual_Inventory_System.Models.MotorUnit>>();
+    var motorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsMotorType(i.Type)
+            && (i.TotalThermocoupled > 0 || (motorUnitsByItem.TryGetValue(i.ItemId, out var muCheck)
+                && muCheck.Any(x => x.Status != Visual_Inventory_System.Models.UnitStatus.Scrapped))))
+        .OrderBy(i => i.ItemName).ToList();
+    var totalTcOnHand = motorItems.Sum(i => i.TotalThermocoupled);
+    var totalTcOnLoan = motorUnitsByItem.Values.SelectMany(v => v)
+        .Count(x => x.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp);
+    var motorBrands = motorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
+        .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
+
+    // Branch quick-filter graying -- same rule Index.cshtml uses.
+    string myBranch = ViewBag.MyBranch as string ?? "";
+    bool isAdmin = CurrentUser.Level >= AccessLevels.Admin;
+    Func<string, string> branchBtnClass = branchName =>
+        (isAdmin || myBranch.Length == 0 || myBranch == branchName)
+            ? "btn btn-sm btn-outline-secondary py-1"
+            : "btn btn-sm btn-outline-secondary py-1 disabled opacity-50";
+}
+
+<style>
+    /* Pass 28 (2b): left dark-themed/unstyled on purpose -- the visual match to
+       the sidebar shell's new look is Phase 4, not this pass. Only the CSS this
+       page's own layout needs (the fixed dashboard's .overlay-grid/.selection-grid
+       system is Command Center-only and stays out of this file). Everything else
+       (.grid-card, .holo-viewer, .holo-row, .filter-grid, etc.) already comes
+       from site.css. */
+
+    .holo-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(10, 11, 14, 0.85);
+        backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+    }
+
+    /* Bootstrap modals must sit ABOVE the holo overlay (z-index 2000),
+       otherwise modals opened from inside the cart view are hidden behind it. */
+    .modal {
+        z-index: 2200 !important;
+    }
+
+    .modal-backdrop {
+        z-index: 2150 !important;
+    }
+
+    .holo-viewer {
+        display: grid;
+        grid-template-columns: 1fr 280px !important;
+        grid-template-rows: auto 1fr;
+        width: 80vw !important;
+        max-width: 1200px;
+        height: 80vh !important;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+    }
+
+    .holo-header {
+        grid-column: 1 / span 2 !important;
+        grid-row: 1 !important;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 24px;
+        background: var(--vis-card);
+        border-bottom: 2px solid var(--vis-card-border);
+    }
+
+    .holo-body {
+        grid-column: 1 !important;
+        grid-row: 2 !important;
+        overflow-y: auto !important;
+        padding: 24px;
+        background: var(--vis-bg);
+    }
+
+    .holo-actions {
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        padding: 24px;
+        background: var(--vis-card);
+        border-left: 1px solid var(--vis-card-border);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-content label {
+        color: #E2E8F0 !important;
+        font-weight: 600 !important;
+    }
+</style>
+
+<div class="container-fluid py-3">
+    <h4 class="text-bright-white fw-bold mb-3">Search Center</h4>
+
+    <div class="row g-3 mb-3">
+        <!-- Advanced Filters -->
+        <div class="col-lg-5">
+            <div class="grid-card h-100">
+                <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
+                <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
+                    <div class="filter-grid mb-2">
+                        <input name="filterRheem" placeholder="Rheem Part #" class="form-control" value="@ViewBag.FilterRheem" />
+                        <input name="filterType" placeholder="Type" class="form-control" value="@ViewBag.FilterType" />
+                        <input name="filterBrand" placeholder="Brand" class="form-control" value="@ViewBag.FilterBrand" />
+                        <input name="filterNotes" placeholder="FDA Term" class="form-control" value="@ViewBag.FilterNotes" />
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary w-100 fw-bold">Apply Filters</button>
+                        <a href="/Home/SearchCenter" class="btn btn-outline-secondary text-white fw-bold">Clear</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Omni Search -->
+        <div class="col-lg-3">
+            <div class="grid-card h-100">
+                <label class="text-bright-white fw-bold mb-2">Omni Search</label>
+                <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
+                    <input name="omniSearch" placeholder="Search ID / Rheem PN / Brand / Location..." class="form-control mb-2" value="@ViewBag.OmniSearch" />
+                    <button type="submit" class="btn btn-outline-primary w-100 mb-1 fw-bold">GO TO →</button>
+                    <div class="small text-light-gray">Items: @allItems.Count()</div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Export + Modify Stock quick launch -->
+        <div class="col-lg-2">
+            <div class="grid-card h-100 d-flex flex-column">
+                <label class="text-bright-white fw-bold d-block mb-1" style="font-size: 14px;">Export Wizard</label>
+                <small class="d-block text-muted mb-2" style="font-size: 10px; line-height: 1.2;">Options: Group, Team, Type, Brand, Location</small>
+                <button type="button" class="btn btn-sm btn-dark w-100 py-2 fw-bold mt-auto" data-bs-toggle="modal" data-bs-target="#exportWizardModal">
+                    <i class="bi bi-file-earmark-arrow-down"></i> CSV
+                </button>
+            </div>
+        </div>
+        <div class="col-lg-2">
+            <div class="grid-card h-100 d-flex flex-column">
+                <label class="text-bright-white fw-bold d-block mb-1">Modify Stock</label>
+                <small class="d-block text-light-gray mb-2" style="line-height: 1.3;">Add, Scrap, Adjust, Transfer, Edit Details</small>
+                @if (CurrentUser.Level >= AccessLevels.Standard)
+                {
+                    <button type="button" class="btn btn-outline-primary w-100 py-2 fw-bold mt-auto" data-bs-toggle="modal" data-bs-target="#modifyStockModal">
+                        <i class="bi bi-tools-fill"></i> Transactions
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-outline-secondary w-100 py-2 fw-bold mt-auto" disabled title="Requires Standard access">
+                        <i class="bi bi-lock-fill"></i> View Only
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Filters -->
+    <div class="grid-card mb-3">
+        <label class="small fw-bold border-bottom mb-2 p-1 d-block">Quick Filters</label>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="/Home/SearchCenter?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
+            <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
+            <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
+            <span class="mx-1"></span>
+            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Commercial" class="@branchBtnClass("Commercial Air")">Commercial</a>
+            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Residential" class="@branchBtnClass("Residential Air")">Residential</a>
+            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
+            @if (CurrentUser.Level >= AccessLevels.Standard)
+            {
+                <a href="/Home/SearchCenter?mode=Ledger" class="btn btn-sm btn-info text-white py-2 ms-auto">
+                    <i class="bi bi-cart3 me-1"></i> View Cart
+                </a>
+            }
+        </div>
+    </div>
+</div>
+
+<!-- HOLOVIEWER (results / cart) -->
+@if (showHolo)
+{
+    <div class="holo-overlay">
+        <div class="holo-viewer" data-mode="@result.Mode">
+            <div class="holo-header">
+                <h3>@GetHoloTitle(result)</h3>
+                <a href="/Home/SearchCenter?mode=None&omniSearch=@ViewBag.OmniSearch&filterRheem=@ViewBag.FilterRheem" class="btn-close"></a>
+            </div>
+            <div class="holo-body">
+                @if (result.Mode == "Ledger")
+                {
+                    var ledger = ViewBag.Ledger as Visual_Inventory_System.Models.LedgerViewModel;
+                    if (ledger != null && ledger.Entries.Any())
+                    {
+                        foreach (var entry in ledger.Entries)
+                        {
+                            var item = invSvc?.GetById(entry.ItemId);
+                            <div class="holo-row" data-item-id="@entry.ItemId" tabindex="0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong class="text-white fs-5">@(item?.ItemName ?? "Unknown Item")</strong> <span class="text-light-gray ms-2">(ID: @entry.ItemId)</span><br />
+                                        <small class="text-light-gray">@(item?.Type ?? "-") | @(item?.Brand ?? "-")@(string.IsNullOrWhiteSpace(item?.RheemPartNumber) ? "" : $" | PN: {item!.RheemPartNumber}")</small>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="holo-qty fs-4">Qty: @entry.Quantity</span>
+                                        @if (Visual_Inventory_System.Services.InventoryService.IsMotorType(item?.Type) && entry.ThermocoupledCount > 0)
+                                        {
+                                            <span class="fw-bold ms-2" style="color:#F59E0B;">TC Ct: @entry.ThermocoupledCount</span>
+                                        }
+                                        <br />
+                                        <form asp-action="RemoveFromLedger" method="post" class="mt-2">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="itemId" value="@entry.ItemId" />
+                                            <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">Remove</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <div class="text-muted text-center mt-5 fs-5">Cart is empty.</div>
+                    }
+                }
+                else if (result.HasResults)
+                {
+                    foreach (var item in result.Items)
+                    {
+                        bool inDraft = headerDraftIds != null && headerDraftIds.Contains(item.ItemId);
+                        var actVars = item.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
+                        Func<string, bool> needsRheemPn = pn => string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
+                        <div class="holo-row" data-item-id="@item.ItemId" tabindex="0">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    @if (!needsRheemPn(item.RheemPartNumber))
+                                    {
+                                        <strong class="text-white fs-4 d-block" style="letter-spacing: 0.5px;">@item.RheemPartNumber</strong>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning text-dark fw-bold d-inline-block mb-1" title="Leadership requires a Rheem part number on every item — add it via Handle Stock → Edit Details.">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>No Rheem PN
+                                        </span>
+                                    }
+                                    <strong class="text-white fs-5">@item.ItemName</strong> <span class="text-light-gray ms-2">(ID: @item.ItemId)</span><br />
+                                    @{ bool itemIsMotor = Visual_Inventory_System.Services.InventoryService.IsMotorType(item.Type); }
+                                    <small class="text-light-gray">@item.Type | Stock: @item.Quantity@(itemIsMotor ? $" | TC Qty: {item.TotalThermocoupled}" : "")</small>
+                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableQuantity(item.ItemId) : item.Quantity)</span>
+                                    @if (actVars.Count > 1)
+                                    {
+                                        foreach (var v in actVars)
+                                        {
+                                            <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted);">
+                                                <i class="bi bi-geo-alt me-1"></i>Variant @v.VariantNumber — @FriendlyVarLoc(v) · Qty @v.Quantity@(itemIsMotor ? $" · TC {v.ThermocoupledQty}" : "")
+                                            </small>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted); opacity: 0.75;">No variants of item</small>
+                                    }
+                                </div>
+                                <div class="d-flex flex-column align-items-end gap-2">
+                                    @if (CurrentUser.Level >= AccessLevels.Standard)
+                                    {
+                                        @if (!inDraft)
+                                        {
+                                            <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openAddToCart('@item.ItemId')">
+                                                <i class="bi bi-cart-plus me-1"></i> Add to Cart
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary p-2 fs-6 fw-bold">In Cart</span>
+                                        }
+                                    }
+                                    @if (CurrentUser.Level >= AccessLevels.Standard)
+                                    {
+                                        <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
+                                            <i class="bi bi-box-seam me-1"></i> Handle Stock
+                                        </button>
+                                    }
+                                    @if (item.Quantity == 0 && CurrentUser.Level >= AccessLevels.Admin)
+                                    {
+                                        <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3" onclick="openDeleteItem('@item.ItemId', '@item.ItemName')">
+                                            <i class="bi bi-trash me-1"></i> Delete Item
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="text-end mt-1">
+                                <small class="text-light-gray" style="font-size: 10px; opacity: 0.7;">
+                                    <i class="bi bi-clock-history me-1"></i>Registered: @(item.RegisteredAt.HasValue ? item.RegisteredAt.Value.ToLocalTime().ToString("MMM d, yyyy") : "unknown")
+                                </small>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="text-muted text-center mt-5 fs-5">No results found.</div>
+                }
+            </div>
+            <div class="holo-actions">
+                @if (result.Mode == "Ledger")
+                {
+                    <button type="button" class="btn btn-success w-100 py-3 fs-5 fw-bold mb-2" data-bs-toggle="modal" data-bs-target="#confirmSubmitModal">Submit Order</button>
+                    <form asp-controller="Home" asp-action="CancelOrder" method="post" class="m-0">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="btn btn-outline-danger w-100 py-2 fw-bold">Cancel Order (Clear Cart)</button>
+                    </form>
+                }
+                else
+                {
+                    <div class="text-center text-light-gray p-3">
+                        <i class="bi bi-arrow-left-circle d-block mb-2 fs-3"></i>
+                        <div class="small">Set a quantity and click <strong>Add to Order</strong> on each item you need, then open your cart to submit.</div>
+                    </div>
+                }
+                <a href="/Home/SearchCenter?mode=None&omniSearch=@ViewBag.OmniSearch" class="btn btn-outline-secondary w-100 mt-3 py-2 text-white fw-bold">Close Viewer</a>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- DELETE ITEM -->
+<div class="modal fade" id="deleteItemModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="DeleteItem" method="post" id="delete-item-frm">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="itemId" id="delete-item-id" />
+                <div class="modal-header"><h5 class="modal-title text-danger fw-bold">Delete Item</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">
+                    <p class="mb-2"><strong id="delete-item-name"></strong> <span class="text-light-gray" id="delete-item-idlabel"></span></p>
+                    <p>This will delete this record from being used. It can be registered again, and only lives in the audit logs now.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="executeSubmit('delete-item-frm', this)">Delete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- SUBMIT ORDER -->
+<div class="modal fade" id="confirmSubmitModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="SubmitLedger" method="post" id="submit-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header"><h5>Confirm Final Order</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body text-white">Are you sure you want to submit this order?</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Back</button>
+                    <button type="button" class="btn btn-success fw-bold" onclick="executeSubmit('submit-frm', this)">Submit Now</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- START ORDER (first add) -->
+<div class="modal fade" id="startOrderModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-cart-plus me-2" style="color: var(--vis-green);"></i>Start an Order?</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white">
+                This will start an order and open an active cart. You can keep adding items, then submit when you're ready.
+            </div>
+            <div class="modal-footer" style="border-top: 1px solid var(--vis-card-border);">
+                <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Back</button>
+                <button type="button" id="startOrderConfirmBtn" class="btn btn-success fw-bold"><i class="bi bi-check2 me-1"></i> Continue</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- COMPRESSOR REGISTRY (Pass 28 2b: moved here, see comment above) -->
+<div class="modal fade" id="compressorRegistryModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-cpu-fill me-2 text-primary"></i>Compressors (@compressorItems.Count model@(compressorItems.Count == 1 ? "" : "s"))</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 65vh; overflow-y: auto;">
+                <p class="text-light-gray small mb-3">
+                    Lab #/Serial # are logged as units are picked up -- this is a running log,
+                    not a full map of current stock. A model showing Qty 12 may only have a
+                    few units listed below for a while; that gap closes as more get logged.
+                </p>
+
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="compFilterUnclaimed">
+                        <label class="form-check-label small" for="compFilterUnclaimed">Unclaimed only</label>
+                    </div>
+                    <select id="compFilterBranch" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="compFilterLine" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="compFilterTeam" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Teams</option>
+                        @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                        {
+                            <option value="@t.Name">@t.Name</option>
+                        }
+                    </select>
+                    <select id="compFilterBrand" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Brands</option>
+                        @foreach (var b in compressorBrands)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                    <span id="compFilterCount" class="text-light-gray small ms-auto"></span>
+                </div>
+
+                @if (!compressorItems.Any())
+                {
+                    <p class="text-light-gray mb-0">No compressor models visible to you yet.</p>
+                }
+                else
+                {
+                    @foreach (var it in compressorItems)
+                    {
+                        var units = compressorUnitsByItem.TryGetValue(it.ItemId, out var u) ? u : new List<Visual_Inventory_System.Models.CompressorUnit>();
+                        var onHandUnits = units.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
+                        var historyUnits = units.Where(x => x.Status != Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
+                        var collapseId = "compUnits-" + it.ItemId.Replace(" ", "");
+                        var isUnclaimed = string.IsNullOrWhiteSpace(it.Team) || string.IsNullOrWhiteSpace(it.Line);
+                        var itBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
+
+                        var roster = new List<(int UnitId, int VariantId, string? Serial, string? Lab, string VariantLabel)>();
+                        foreach (var v in it.ActiveVariants.OrderBy(v => v.VariantNumber))
+                        {
+                            var label = $"V{v.VariantNumber} — {v.FdaString}";
+                            var atThisVariant = onHandUnits.Where(x => x.ItemVariantId == v.Id).ToList();
+                            foreach (var cu in atThisVariant)
+                                roster.Add((cu.Id, v.Id, cu.SerialNumber, cu.LabNumber, label));
+                            int blanksNeeded = System.Math.Max(0, v.Quantity - atThisVariant.Count);
+                            for (int b = 0; b < blanksNeeded; b++)
+                                roster.Add((0, v.Id, null, null, label));
+                        }
+
+                        <div class="comp-row mb-2 p-2" data-branch="@itBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                                 data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                <div>
+                                    <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
+                                    <span class="text-light-gray ms-2" style="font-size:11px;">@(string.IsNullOrEmpty(it.Line) ? "" : $"[{it.Line}]")</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary me-2">Qty @it.Quantity</span>
+                                    <span class="badge bg-secondary" title="Units with a serial on record, out of the quantity on hand">
+                                        @onHandUnits.Count / @it.Quantity tracked
+                                    </span>
+                                    <i class="bi bi-chevron-down ms-1"></i>
+                                </div>
+                            </div>
+                            <div class="collapse mt-2" id="@collapseId">
+                                @if (!roster.Any())
+                                {
+                                    <p class="text-light-gray small mb-0">Nothing on hand right now.</p>
+                                }
+                                else
+                                {
+                                    <form asp-controller="Home" asp-action="LogCompressorUnits" method="post" class="mb-2">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="itemId" value="@it.ItemId" />
+                                        <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2" style="min-width:420px;">
+                                            <thead><tr><th>Location</th><th>Serial #</th><th>Lab #</th></tr></thead>
+                                            <tbody>
+                                                @{ string? lastLabel = null; int rowIdx = 0; }
+                                                @foreach (var row in roster)
+                                                {
+                                                    <tr>
+                                                        <td class="text-light-gray small">@(row.VariantLabel == lastLabel ? "" : row.VariantLabel)</td>
+                                                        <td>
+                                                            <input type="hidden" name="unitId_@rowIdx" value="@row.UnitId" />
+                                                            <input type="hidden" name="variantId_@rowIdx" value="@row.VariantId" />
+                                                            <input type="text" name="serial_@rowIdx" value="@row.Serial"
+                                                                   placeholder="@(row.UnitId == 0 ? "(unrecorded)" : "")"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                        <td>
+                                                            <input type="text" name="lab_@rowIdx" value="@row.Lab"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                    </tr>
+                                                    lastLabel = row.VariantLabel;
+                                                    rowIdx++;
+                                                }
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Save Serials / Lab #s</button>
+                                    </form>
+                                }
+                                @if (historyUnits.Any())
+                                {
+                                    <p class="text-light-gray small mb-1">History</p>
+                                    <div class="table-responsive">
+                                    <table class="table table-sm table-hover align-middle mb-0" style="min-width:480px;">
+                                        <thead><tr><th>Serial #</th><th>Lab #</th><th>Status</th><th>When</th><th>By</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var cu in historyUnits)
+                                            {
+                                                var scrapped = cu.Status == Visual_Inventory_System.Models.UnitStatus.Scrapped;
+                                                var stamp = cu.PickedUpAt ?? cu.RecordedAt;
+                                                var who = string.IsNullOrWhiteSpace(cu.PickedUpBy) ? cu.RecordedBy : cu.PickedUpBy;
+                                                <tr>
+                                                    <td class="@(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "text-warning" : "")">
+                                                        @(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "(missing)" : cu.SerialNumber)
+                                                    </td>
+                                                    <td class="text-light-gray">@(string.IsNullOrWhiteSpace(cu.LabNumber) ? "—" : cu.LabNumber)</td>
+                                                    <td>
+                                                        <span class="badge @(scrapped ? "bg-danger" : "bg-warning text-dark")">
+                                                            @cu.Status
+                                                        </span>
+                                                    </td>
+                                                    <td class="text-light-gray small">@stamp.ToLocalTime()</td>
+                                                    <td class="text-light-gray small">@((who ?? "").Replace('.', ' '))</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MOTORS (TC only) -->
+<div class="modal fade" id="motorRegistryModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--vis-card-border);">
+                <h5 class="modal-title fw-bold text-white"><i class="bi bi-fan me-2 text-primary"></i>TC Motors (@motorItems.Count model@(motorItems.Count == 1 ? "" : "s"))</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-white" style="max-height: 65vh; overflow-y: auto;">
+                <p class="text-light-gray small mb-3">
+                    TC (thermocoupled) comes from the manufacturer -- VIS never adds it, so only
+                    the TC subset of a motor model's stock is tracked here. No serial numbers;
+                    lab #s are recorded, not assigned, and often blank until a numbering process
+                    exists. Units still out on loan stay editable, not just what's on the shelf.
+                </p>
+
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                    <div class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" id="motorFilterUnclaimed">
+                        <label class="form-check-label small" for="motorFilterUnclaimed">Unclaimed only</label>
+                    </div>
+                    <select id="motorFilterBranch" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="motorFilterLine" class="form-select form-select-sm" style="width:auto;"></select>
+                    <select id="motorFilterTeam" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Teams</option>
+                        @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                        {
+                            <option value="@t.Name">@t.Name</option>
+                        }
+                    </select>
+                    <select id="motorFilterBrand" class="form-select form-select-sm" style="width:auto;">
+                        <option value="">All Brands</option>
+                        @foreach (var b in motorBrands)
+                        {
+                            <option value="@b">@b</option>
+                        }
+                    </select>
+                    <span id="motorFilterCount" class="text-light-gray small ms-auto"></span>
+                </div>
+
+                @if (!motorItems.Any())
+                {
+                    <p class="text-light-gray mb-0">No TC motor stock to track right now.</p>
+                }
+                else
+                {
+                    @foreach (var it in motorItems)
+                    {
+                        var muAll = motorUnitsByItem.TryGetValue(it.ItemId, out var muList)
+                            ? muList : new List<Visual_Inventory_System.Models.MotorUnit>();
+                        var onHandMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.OnHand).ToList();
+                        var outOnLoanMotors = muAll.Where(x => x.Status == Visual_Inventory_System.Models.UnitStatus.PickedUp).ToList();
+                        var collapseId = "motorUnits-" + it.ItemId.Replace(" ", "");
+                        var isUnclaimedMotor = string.IsNullOrWhiteSpace(it.Team) || string.IsNullOrWhiteSpace(it.Line);
+                        var motorBranch = Visual_Inventory_System.Services.OrgStructure.BranchFor(it.Line) ?? "";
+
+                        var roster = new List<(int UnitId, int VariantId, string? Lab, string GroupLabel)>();
+                        foreach (var v in it.ActiveVariants.OrderBy(v => v.VariantNumber))
+                        {
+                            if (v.ThermocoupledQty <= 0) continue;
+                            var label = $"On Hand — V{v.VariantNumber} — {v.FdaString}";
+                            var atThisVariant = onHandMotors.Where(x => x.ItemVariantId == v.Id).ToList();
+                            foreach (var mu in atThisVariant)
+                                roster.Add((mu.Id, v.Id, mu.LabNumber, label));
+                            int blanksNeeded = System.Math.Max(0, v.ThermocoupledQty - atThisVariant.Count);
+                            for (int b = 0; b < blanksNeeded; b++)
+                                roster.Add((0, v.Id, null, label));
+                        }
+                        foreach (var mu in outOnLoanMotors)
+                            roster.Add((mu.Id, 0, mu.LabNumber, "Out on Loan"));
+
+                        <div class="motor-row mb-2 p-2" data-branch="@motorBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimedMotor ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                                 data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                <div>
+                                    <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
+                                    <span class="text-light-gray ms-2" style="font-size:11px;">@(string.IsNullOrEmpty(it.Line) ? "" : $"[{it.Line}]")</span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-primary me-2">TC @it.TotalThermocoupled on hand</span>
+                                    @if (outOnLoanMotors.Count > 0)
+                                    {
+                                        <span class="badge bg-warning text-dark me-2">@outOnLoanMotors.Count out on loan</span>
+                                    }
+                                    <i class="bi bi-chevron-down ms-1"></i>
+                                </div>
+                            </div>
+                            <div class="collapse mt-2" id="@collapseId">
+                                @if (!roster.Any())
+                                {
+                                    <p class="text-light-gray small mb-0">Nothing to track right now.</p>
+                                }
+                                else
+                                {
+                                    <form asp-controller="Home" asp-action="LogMotorUnits" method="post">
+                                        @Html.AntiForgeryToken()
+                                        <input type="hidden" name="itemId" value="@it.ItemId" />
+                                        <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2" style="min-width:340px;">
+                                            <thead><tr><th>Location</th><th>Lab #</th></tr></thead>
+                                            <tbody>
+                                                @{ string? lastGroup = null; int rowIdx = 0; }
+                                                @foreach (var row in roster)
+                                                {
+                                                    <tr>
+                                                        <td class="text-light-gray small">@(row.GroupLabel == lastGroup ? "" : row.GroupLabel)</td>
+                                                        <td>
+                                                            <input type="hidden" name="unitId_@rowIdx" value="@row.UnitId" />
+                                                            <input type="hidden" name="variantId_@rowIdx" value="@row.VariantId" />
+                                                            <input type="text" name="lab_@rowIdx" value="@row.Lab"
+                                                                   placeholder="@(row.UnitId == 0 ? "(unrecorded)" : "")"
+                                                                   class="form-control form-control-sm" />
+                                                        </td>
+                                                    </tr>
+                                                    lastGroup = row.GroupLabel;
+                                                    rowIdx++;
+                                                }
+                                            </tbody>
+                                        </table>
+                                        </div>
+                                        <button type="submit" class="btn btn-sm btn-outline-success">Save Lab #s</button>
+                                    </form>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@* Pass 28 (2a)'s trap: a top-level const in a LATER script tag isn't visible to
+   code that runs in an earlier one, even though both share the page's global
+   scope -- the browser executes tags in document order. These five MUST render
+   before the Modify Stock partial include below, since its own script
+   references orgStructure/itemsList at top level (wireLineCascade()).
+   locMap specifically also can't live inside a function/IIFE (as Index.cshtml's
+   copy of this content still does, below the compressor/motor filter block) --
+   site.js's bindCascadingLocation() reads it as a free variable from ITS OWN
+   lexical scope (where it's defined, in site.js), not the caller's, so an
+   IIFE-local locMap is invisible to it: ReferenceError on the first Parent
+   pick, confirmed live against the actual running Export Wizard on both this
+   page and Index.cshtml (pre-existing there too, not introduced by this pass). *@
+<script>
+    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+    const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
+</script>
+
+@await Html.PartialAsync("_ModifyStockPartial")
+
+<!-- ADD TO CART subprocess modal -->
+<div class="modal fade" id="addToCartModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="AddToCart" method="post" id="add-to-cart-frm">
+                @Html.AntiForgeryToken()
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-cart-plus me-2"></i>Add to Cart</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <input type="hidden" name="itemId" id="atc-item-id" />
+
+                    <div class="mb-3">
+                        <div class="fw-bold fs-5 text-white" id="atc-item-name">--</div>
+                        <small class="text-light-gray" id="atc-item-sub">ID: --</small>
+                    </div>
+
+                    <div class="mb-3" id="atc-loc-div" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Pull location</label>
+                        <select name="requestedVariantId" id="atc-loc-sel" class="form-select fw-bold text-info"
+                                style="background-color:#14151A; border-color:#3D4351;"></select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">Which location the runner pulls from — or Either.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-light-gray">Add Quantity</label>
+                        <input type="number" name="quantity" id="atc-qty" class="form-control fw-bold" value="1" min="1" required
+                               oninput="atcRecomputeTcCap();" />
+                    </div>
+
+                    <div class="mb-3" id="atc-tc-div" style="display:none;">
+                        <label class="form-label small fw-bold" style="color:#F59E0B;">
+                            <i class="bi bi-thermometer-half me-1"></i>Thermocoupled count
+                        </label>
+                        <input type="number" name="thermocoupledCount" id="atc-tc" class="form-control fw-bold" value="0" min="0"
+                               style="border-color:#F59E0B;" disabled
+                               oninput="var m=parseInt(this.max)||0; var v=parseInt(this.value); if(isNaN(v)||v<0)v=0; if(v>m)v=m; this.value=v;" />
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">How many of these should be thermocoupled? (capped by the chosen location's TC stock)</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold"><i class="bi bi-cart-plus me-1"></i>Add to Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="exportWizardModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="ExportInventory" method="get">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-arrow-down me-2"></i>Export List Wizard</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <p class="small text-light-gray mb-3">Leave fields blank to include everything, or select options to narrow your export.</p>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Group</label>
+                            <select name="exportGroup" class="form-select form-select-sm">
+                                <option value="">-- Any Group --</option>
+                                <option value="Commercial">Commercial</option>
+                                <option value="Residential">Residential</option>
+                                <option value="International">International</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Team / Project</label>
+                            <select name="exportTeam" class="form-select form-select-sm">
+                                <option value="">-- Any Team --</option>
+                                @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.AllTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                                {
+                                    <option value="@t.Name">@t.Name@(t.IsActive ? "" : " (hidden)")</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Type</label>
+                            <input type="text" name="exportType" class="form-control form-control-sm" placeholder="e.g. Motor" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-light-gray">Brand</label>
+                            <input type="text" name="exportBrand" class="form-control form-control-sm" placeholder="e.g. Broad Ocean" />
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary" />
+                    <h6 class="text-info fw-bold small mb-2">Location Filter (Cascading)</h6>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4">
+                            <select id="exp-parent" class="form-select form-select-sm">
+                                <option value="">Any Parent...</option>
+                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                {
+                                    <option value="@lp.Name">@lp.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="exp-major" class="form-select form-select-sm" disabled>
+                                <option value="">Any Major...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="exp-sub" class="form-select form-select-sm" disabled>
+                                <option value="">Any Sub...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6 position-relative">
+                            <input type="text" id="exp-rack" class="form-control form-control-sm" placeholder="Any Rack..." autocomplete="off" />
+                            <div id="exp-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                        </div>
+                        <div class="col-md-6 position-relative">
+                            <input type="text" id="exp-row" class="form-control form-control-sm" placeholder="Any Row..." autocomplete="off" />
+                            <div id="exp-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
+                        </div>
+                    </div>
+                    <input type="hidden" name="exportFda" id="exp-fda" />
+
+                    <hr class="border-secondary" />
+                    <h6 class="text-warning fw-bold small mb-2">Include Status (OR Logic)</h6>
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="expAvailable" id="expAvailable" value="true" checked>
+                                <label class="form-check-label small fw-bold text-light-gray" for="expAvailable">Available (Qty > 0)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="expAlerts" id="expAlerts" value="true">
+                                <label class="form-check-label small fw-bold text-warning" for="expAlerts">Stock Alerts</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input exp-history-chk" type="checkbox" name="expScrap" id="expScrap" value="true">
+                                <label class="form-check-label small fw-bold text-danger" for="expScrap">Scrapped</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input exp-history-chk" type="checkbox" name="expOwnership" id="expOwnership" value="true">
+                                <label class="form-check-label small fw-bold text-info" for="expOwnership">Ownership Change</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-1 mt-3" id="expTimeFrameDiv" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">History Time Frame</label>
+                        <select name="expTimeFrame" class="form-select form-select-sm">
+                            <option value="7">Last 7 Days</option>
+                            <option value="30" selected>Last 30 Days</option>
+                            <option value="90">Last 90 Days</option>
+                            <option value="all">All Time</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold" onclick="setTimeout(()=>$('#exportWizardModal').modal('hide'), 500);">Download CSV</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function openDeleteItem(itemId, itemName) {
+        const idField = document.getElementById('delete-item-id');
+        const nameEl = document.getElementById('delete-item-name');
+        const idLabelEl = document.getElementById('delete-item-idlabel');
+        if (idField) idField.value = itemId;
+        if (nameEl) nameEl.textContent = itemName || itemId;
+        if (idLabelEl) idLabelEl.textContent = '(' + itemId + ')';
+        const el = document.getElementById('deleteItemModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    // Variants of the item currently shown in the Add to Cart modal (with tcqty),
+    // so the TC cap can react to the chosen pull-location.
+    let atcCurrentVariants = [];
+
+    function openAddToCart(itemId) {
+        const item = itemsList.find(function (i) { return i.id === itemId; });
+        if (!item) return;
+
+        atcCurrentVariants = (item.variants || []);
+
+        document.getElementById('atc-item-id').value = itemId;
+        document.getElementById('atc-item-name').textContent = item.name || itemId;
+        document.getElementById('atc-item-sub').textContent =
+            'ID: ' + itemId + (item.type ? '  ·  ' + item.type : '');
+
+        const xbtn = document.querySelector('#add-to-cart-frm .btn-close');
+        if (xbtn) { xbtn.textContent = ''; xbtn.disabled = false; }
+
+        const qty = document.getElementById('atc-qty');
+        qty.value = 1;
+
+        const locDiv = document.getElementById('atc-loc-div');
+        const locSel = document.getElementById('atc-loc-sel');
+        const vars = atcCurrentVariants;
+        locSel.innerHTML = '';
+        if (vars.length > 1) {
+            const either = document.createElement('option');
+            either.value = '';
+            either.textContent = 'Either location (picker chooses)';
+            locSel.appendChild(either);
+            vars.forEach(function (v) {
+                const o = document.createElement('option');
+                o.value = String(v.vid);
+                o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+                locSel.appendChild(o);
+            });
+            locDiv.style.display = 'block';
+        } else {
+            locDiv.style.display = 'none';
+        }
+        locSel.onchange = atcRecomputeTcCap;
+
+        const tcDiv = document.getElementById('atc-tc-div');
+        const tc = document.getElementById('atc-tc');
+        if (typeof isMotorType === 'function' && isMotorType(item.type)) {
+            tc.value = 0;
+            tc.disabled = false;
+            tcDiv.style.display = 'block';
+        } else {
+            tc.value = 0;
+            tc.disabled = true;
+            tcDiv.style.display = 'none';
+        }
+        atcRecomputeTcCap();
+
+        const el = document.getElementById('addToCartModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    function atcRecomputeTcCap() {
+        const tc = document.getElementById('atc-tc');
+        if (!tc || tc.disabled) return;
+        const qty = parseInt(document.getElementById('atc-qty').value, 10) || 0;
+        const sel = document.getElementById('atc-loc-sel');
+        const locDiv = document.getElementById('atc-loc-div');
+        const vars = atcCurrentVariants || [];
+
+        let availTc = 0;
+        if (locDiv && locDiv.style.display !== 'none' && sel) {
+            if (sel.value === '') {
+                availTc = vars.reduce(function (s, v) { return s + (v.tcqty || 0); }, 0);
+            } else {
+                const vid = parseInt(sel.value, 10);
+                const hit = vars.find(function (v) { return v.vid === vid; });
+                availTc = hit ? (hit.tcqty || 0) : 0;
+            }
+        } else {
+            availTc = vars.length ? (vars[0].tcqty || 0) : 0;
+        }
+
+        const ceil = Math.max(0, Math.min(qty, availTc));
+        tc.max = ceil;
+        let v = parseInt(tc.value, 10); if (isNaN(v) || v < 0) v = 0;
+        if (v > ceil) v = ceil;
+        tc.value = v;
+    }
+
+    // Order Mode is "active" once the cart holds at least one item.
+    let orderActive = @(hasDraft ? "true" : "false");
+    let pendingAddForm = null;
+
+    function performAdd(form) {
+        fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                orderActive = true;
+                document.querySelector('.top-bar')?.classList.add('order-mode');
+                if (window.showToast) showToast(data.message, "success");
+                const b = form.querySelector('button');
+                if (b) { b.classList.replace('btn-primary', 'btn-success'); b.innerText = "Added!"; b.disabled = true; }
+            }
+        }).catch(err => console.error(err));
+    }
+
+    document.addEventListener('submit', function (e) {
+        if (e.target && typeof e.target.action === 'string' && e.target.action.includes('AddToCart')) {
+            e.preventDefault();
+            const form = e.target;
+
+            const proceed = function () {
+                if (!orderActive) {
+                    pendingAddForm = form;
+                    const el = document.getElementById('startOrderModal');
+                    if (el) { new bootstrap.Modal(el).show(); }
+                    else { performAdd(form); }
+                } else {
+                    performAdd(form);
+                }
+            };
+
+            const atc = document.getElementById('addToCartModal');
+            const inst = atc ? bootstrap.Modal.getInstance(atc) : null;
+            if (inst) {
+                atc.addEventListener('hidden.bs.modal', proceed, { once: true });
+                inst.hide();
+            } else {
+                proceed();
+            }
+        }
+    });
+
+    (function () {
+        const btn = document.getElementById('startOrderConfirmBtn');
+        if (btn) {
+            btn.addEventListener('click', function () {
+                const el = document.getElementById('startOrderModal');
+                const m = el ? bootstrap.Modal.getInstance(el) : null;
+                if (m) m.hide();
+                if (pendingAddForm) { performAdd(pendingAddForm); pendingAddForm = null; }
+            });
+        }
+    })();
+
+    document.addEventListener('click', function (e) {
+        const row = e.target.closest('.holo-row');
+        if (!row) return;
+        document.querySelectorAll('.holo-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+        const b = document.getElementById('holo-add-submit');
+        const i = document.getElementById('holo-add-itemId');
+        if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
+    });
+
+    (function() {
+        const historyChks = document.querySelectorAll('.exp-history-chk');
+        const timeFrameDiv = document.getElementById('expTimeFrameDiv');
+        if (historyChks && timeFrameDiv) {
+            historyChks.forEach(chk => {
+                chk.addEventListener('change', () => {
+                    timeFrameDiv.style.display = Array.from(historyChks).some(c => c.checked) ? 'block' : 'none';
+                });
+            });
+        }
+
+        // ---- Compressor filter (Unclaimed / Branch / Line / Team / Brand) ----
+        function compApplyFilter() {
+            const unclaimedOnly = document.getElementById('compFilterUnclaimed')?.checked;
+            const branch = document.getElementById('compFilterBranch')?.value || '';
+            const line = document.getElementById('compFilterLine')?.value || '';
+            const team = document.getElementById('compFilterTeam')?.value || '';
+            const brand = document.getElementById('compFilterBrand')?.value || '';
+            const rows = document.querySelectorAll('#compressorRegistryModal .comp-row');
+            let shown = 0;
+            rows.forEach(function (row) {
+                let visible = true;
+                if (unclaimedOnly && row.dataset.unclaimed !== '1') visible = false;
+                if (branch && row.dataset.branch !== branch) visible = false;
+                if (line && row.dataset.line !== line) visible = false;
+                if (team && row.dataset.team !== team) visible = false;
+                if (brand && row.dataset.brand !== brand) visible = false;
+                row.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            const countEl = document.getElementById('compFilterCount');
+            if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' shown';
+        }
+        ['compFilterUnclaimed', 'compFilterBrand'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', compApplyFilter);
+        });
+        const compFilterBranchEl = document.getElementById('compFilterBranch');
+        const compFilterLineEl = document.getElementById('compFilterLine');
+        wireLineCascade(compFilterBranchEl, compFilterLineEl, compApplyFilter, 'All Branches', 'All Lines');
+        const compFilterTeamEl = document.getElementById('compFilterTeam');
+        if (compFilterTeamEl) {
+            compFilterTeamEl.addEventListener('change', function () {
+                const suggested = teamLines[compFilterTeamEl.value];
+                if (suggested) setLineCascade(compFilterBranchEl, compFilterLineEl, suggested, 'All Branches', 'All Lines');
+                compApplyFilter();
+            });
+        }
+        const compressorRegistryModal = document.getElementById('compressorRegistryModal');
+        if (compressorRegistryModal) compressorRegistryModal.addEventListener('shown.bs.modal', compApplyFilter);
+
+        // ---- Motor filter (same shape as compressor filter above) ----
+        function motorApplyFilter() {
+            const unclaimedOnly = document.getElementById('motorFilterUnclaimed')?.checked;
+            const branch = document.getElementById('motorFilterBranch')?.value || '';
+            const line = document.getElementById('motorFilterLine')?.value || '';
+            const team = document.getElementById('motorFilterTeam')?.value || '';
+            const brand = document.getElementById('motorFilterBrand')?.value || '';
+            const rows = document.querySelectorAll('#motorRegistryModal .motor-row');
+            let shown = 0;
+            rows.forEach(function (row) {
+                let visible = true;
+                if (unclaimedOnly && row.dataset.unclaimed !== '1') visible = false;
+                if (branch && row.dataset.branch !== branch) visible = false;
+                if (line && row.dataset.line !== line) visible = false;
+                if (team && row.dataset.team !== team) visible = false;
+                if (brand && row.dataset.brand !== brand) visible = false;
+                row.style.display = visible ? '' : 'none';
+                if (visible) shown++;
+            });
+            const countEl = document.getElementById('motorFilterCount');
+            if (countEl) countEl.textContent = shown + ' of ' + rows.length + ' shown';
+        }
+        ['motorFilterUnclaimed', 'motorFilterBrand'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', motorApplyFilter);
+        });
+        const motorFilterBranchEl = document.getElementById('motorFilterBranch');
+        const motorFilterLineEl = document.getElementById('motorFilterLine');
+        wireLineCascade(motorFilterBranchEl, motorFilterLineEl, motorApplyFilter, 'All Branches', 'All Lines');
+        const motorFilterTeamEl = document.getElementById('motorFilterTeam');
+        if (motorFilterTeamEl) {
+            motorFilterTeamEl.addEventListener('change', function () {
+                const suggested = teamLines[motorFilterTeamEl.value];
+                if (suggested) setLineCascade(motorFilterBranchEl, motorFilterLineEl, suggested, 'All Branches', 'All Lines');
+                motorApplyFilter();
+            });
+        }
+        const motorRegistryModal = document.getElementById('motorRegistryModal');
+        if (motorRegistryModal) motorRegistryModal.addEventListener('shown.bs.modal', motorApplyFilter);
+
+        // locMap itself is declared earlier, at the top of this page's first
+        // <script> block -- see the comment there for why it can't live here.
+        bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', 'exp-rack', 'exp-row', 'exp-fda', 'exp-rack-list', 'exp-row-list');
+    })();
+</script>

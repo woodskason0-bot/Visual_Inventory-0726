@@ -36,14 +36,6 @@ namespace Visual_Inventory_System.Controllers
         {
             var allItems = _inventoryService.GetAll().ToList();
 
-            // The Branch this session is scoped to, for graying out the other
-            // Quick Filter branch buttons -- a specific Line wins (derive its
-            // Branch), else a whole-Branch assignment, else blank (unscoped,
-            // sees everything, so nothing gets grayed out for them either).
-            ViewBag.MyBranch = !string.IsNullOrWhiteSpace(_currentUser.Line)
-                ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
-                : (_currentUser.Branch ?? "");
-
             // 1. MAP OVERLAY STATS (header cards above the map)
             ViewBag.TotalItems = allItems.Count;
             ViewBag.LowStockCount = allItems.Count(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold && i.Quantity > 0);
@@ -66,7 +58,118 @@ namespace Visual_Inventory_System.Controllers
                 .OrderBy(o => o.CreatedAt)
                 .ToList();
 
-            // 3. AUTOCOMPLETE & DRAFTS
+            // 3. AUTOCOMPLETE, ORG/LOCATION/TEAM DATA -- shared with SearchCenter().
+            PopulateSearchViewBag(allItems);
+
+            // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
+            // -- the one copy of the location vocabulary 7C missed, because it was
+            // an image map rather than a dropdown.
+            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
+                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
+                      z => z.LocationId, l => l.Id,
+                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
+                .ToList()
+                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
+                              X: z.X, Y: z.Y, W: z.W, H: z.H))
+                .ToList();
+
+            var currentDraft = _orderService.GetCurrentDraft();
+            var draftEntries = currentDraft.Entries;
+            ViewBag.DraftItemIds = draftEntries.Select(e => e.ItemId).ToHashSet();
+
+            // LEDGER MODE
+            if (mode == "Ledger")
+            {
+                ViewBag.SearchResult = new SearchResult { Mode = "Ledger", Items = new List<InventoryItem>() };
+                ViewBag.Ledger = new LedgerViewModel { Entries = draftEntries };
+                ViewBag.InventoryService = _inventoryService;
+                return View();
+            }
+
+            // SEARCH MODE
+            var searchResult = new SearchResult { Mode = mode ?? "None" };
+            if (mode != "None")
+            {
+                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
+                searchResult.Items = foundItems;
+
+                if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
+                else if (foundItems.Any() || mode == "Filter") searchResult.Mode = "Filter";
+            }
+
+            ViewBag.SearchResult = searchResult;
+            ViewBag.InventoryService = _inventoryService;
+
+            ViewBag.OmniSearch = omniSearch ?? "";
+            ViewBag.FilterRheem = filterRheem ?? "";
+            ViewBag.FilterType = filterType ?? "";
+            ViewBag.FilterBrand = filterBrand ?? "";
+            ViewBag.FilterNotes = filterNotes ?? "";
+
+            return View();
+        }
+
+        // Pass 28 (2b) -- standalone Search Center: Advanced Filters, Omni Search,
+        // results grid, Export Wizard, Compressor/Motor Registry, Modify Stock.
+        // Same query params and mode branching as Index() on purpose -- until 2d
+        // retires Index's own copy of this content, the two pages need to behave
+        // identically, just at different routes. Left dark-themed/unstyled: the
+        // visual match to the sidebar's new look is Phase 4, not this pass.
+        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode)
+        {
+            var allItems = _inventoryService.GetAll().ToList();
+            PopulateSearchViewBag(allItems);
+
+            var currentDraft = _orderService.GetCurrentDraft();
+            var draftEntries = currentDraft.Entries;
+            ViewBag.DraftItemIds = draftEntries.Select(e => e.ItemId).ToHashSet();
+
+            if (mode == "Ledger")
+            {
+                ViewBag.SearchResult = new SearchResult { Mode = "Ledger", Items = new List<InventoryItem>() };
+                ViewBag.Ledger = new LedgerViewModel { Entries = draftEntries };
+                ViewBag.InventoryService = _inventoryService;
+                return View();
+            }
+
+            var searchResult = new SearchResult { Mode = mode ?? "None" };
+            if (mode != "None")
+            {
+                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
+                searchResult.Items = foundItems;
+
+                if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
+                else if (foundItems.Any() || mode == "Filter") searchResult.Mode = "Filter";
+            }
+
+            ViewBag.SearchResult = searchResult;
+            ViewBag.InventoryService = _inventoryService;
+
+            ViewBag.OmniSearch = omniSearch ?? "";
+            ViewBag.FilterRheem = filterRheem ?? "";
+            ViewBag.FilterType = filterType ?? "";
+            ViewBag.FilterBrand = filterBrand ?? "";
+            ViewBag.FilterNotes = filterNotes ?? "";
+
+            return View();
+        }
+
+        // Server data every Search Center-side view needs regardless of which
+        // page renders it (Advanced Filters, Omni Search, results grid, Export
+        // Wizard, Compressor/Motor Registry, the Modify Stock shared partial) --
+        // shared by Index() and SearchCenter() so this JSON-shaping logic isn't
+        // kept in sync by hand in two places, same reasoning as every other
+        // "eight copies of the same vocabulary" trap this project has hit.
+        private void PopulateSearchViewBag(List<InventoryItem> allItems)
+        {
+            // The Branch this session is scoped to, for graying out the other
+            // Quick Filter branch buttons -- a specific Line wins (derive its
+            // Branch), else a whole-Branch assignment, else blank (unscoped,
+            // sees everything, so nothing gets grayed out for them either).
+            ViewBag.MyBranch = !string.IsNullOrWhiteSpace(_currentUser.Line)
+                ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
+                : (_currentUser.Branch ?? "");
+
             var autocompleteData = allItems.Select(i => new {
                 id = i.ItemId,
                 name = i.ItemName,
@@ -113,17 +216,6 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
             ViewBag.LocationHierarchyCodedJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationHierarchyCoded());
             ViewBag.RackRowJson = System.Text.Json.JsonSerializer.Serialize(BuildRackRowMap());
-            // Pass 8: the clickable map rectangles. Were four hardcoded <area> tags
-            // -- the one copy of the location vocabulary 7C missed, because it was
-            // an image map rather than a dropdown.
-            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
-                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
-                      z => z.LocationId, l => l.Id,
-                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
-                .ToList()
-                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
-                              X: z.X, Y: z.Y, W: z.W, H: z.H))
-                .ToList();
             // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
             // teams are offered; hidden ones stay on the items already using them.
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
@@ -138,41 +230,19 @@ namespace Visual_Inventory_System.Controllers
             // The export filter offers HIDDEN teams too -- you still need to pull a
             // report on a team that was retired last quarter.
             ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
+        }
 
-            var currentDraft = _orderService.GetCurrentDraft();
-            var draftEntries = currentDraft.Entries;
-            ViewBag.DraftItemIds = draftEntries.Select(e => e.ItemId).ToHashSet();
-
-            // LEDGER MODE
-            if (mode == "Ledger")
-            {
-                ViewBag.SearchResult = new SearchResult { Mode = "Ledger", Items = new List<InventoryItem>() };
-                ViewBag.Ledger = new LedgerViewModel { Entries = draftEntries };
-                ViewBag.InventoryService = _inventoryService;
-                return View();
-            }
-
-            // SEARCH MODE
-            var searchResult = new SearchResult { Mode = mode ?? "None" };
-            if (mode != "None")
-            {
-                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
-                searchResult.Items = foundItems;
-
-                if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
-                else if (foundItems.Any() || mode == "Filter") searchResult.Mode = "Filter";
-            }
-
-            ViewBag.SearchResult = searchResult;
-            ViewBag.InventoryService = _inventoryService;
-
-            ViewBag.OmniSearch = omniSearch ?? "";
-            ViewBag.FilterRheem = filterRheem ?? "";
-            ViewBag.FilterType = filterType ?? "";
-            ViewBag.FilterBrand = filterBrand ?? "";
-            ViewBag.FilterNotes = filterNotes ?? "";
-
-            return View();
+        // Pass 28 (2b): now that a second real page (SearchCenter) can trigger
+        // the same cart/stock actions Index always could, a hardcoded "back to
+        // Index" would silently strand a SearchCenter user back on the old
+        // dashboard after every action. Same fix already used by
+        // LogCompressorUnits/LogMotorUnits/CancelPersisted/SetTheme -- go back to
+        // the exact page the request came from, falling back to Index only when
+        // there's no Referer at all (e.g. a bookmarked POST replay).
+        private IActionResult SmartRedirect(string fallbackAction = "Index")
+        {
+            string referer = Request.Headers["Referer"].ToString();
+            return string.IsNullOrEmpty(referer) ? RedirectToAction(fallbackAction) : Redirect(referer);
         }
 
         // ============================
@@ -192,7 +262,7 @@ namespace Visual_Inventory_System.Controllers
             _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount);
             if (Request.Headers["X-Requested-With"] == "XMLHttpRequest") return Json(new { success = true, message = "Added to cart!" });
             TempData["Message"] = "Item added to cart.";
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         [HttpPost]
@@ -202,7 +272,7 @@ namespace Visual_Inventory_System.Controllers
         {
             _orderService.RemoveItem(itemId);
             TempData["Message"] = "Item removed.";
-            return RedirectToAction("Index", new { mode = "Ledger" });
+            return SmartRedirect();
         }
 
         [HttpPost]
@@ -213,7 +283,7 @@ namespace Visual_Inventory_System.Controllers
             if (!_orderService.GetCurrentDraft().Entries.Any())
             {
                 TempData["Error"] = "Your cart is empty.";
-                return RedirectToAction("Index", new { mode = "Ledger" });
+                return SmartRedirect();
             }
 
             try
@@ -222,7 +292,7 @@ namespace Visual_Inventory_System.Controllers
                 TempData["Success"] = "Order submitted successfully.";
             }
             catch (Exception ex) { TempData["Error"] = "Submit failed: " + ex.GetBaseException().Message; }
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         // ============================
@@ -279,7 +349,7 @@ namespace Visual_Inventory_System.Controllers
             string? newRheemPart = null, string? newDescription = null, string? newBrand = null,
             string? newLine = null)
         {
-            if (string.IsNullOrWhiteSpace(itemId)) return RedirectToAction("Index");
+            if (string.IsNullOrWhiteSpace(itemId)) return SmartRedirect();
 
             // "Add" and "Adjustment" are allowed at Standard (runners restock and fix
             // counts on recount); Scrap, Ownership, and identity edits (Edit Details)
@@ -291,7 +361,7 @@ namespace Visual_Inventory_System.Controllers
             {
                 TempData["AuthError"] = $"Sorry, you're not authorized to perform '{actionType}' " +
                     "(requires Engineer access or higher). Please contact your supervisor or manager for assistance.";
-                return RedirectToAction("Index");
+                return SmartRedirect();
             }
 
             // Identity edits never touch quantities/variants -- separate path.
@@ -304,7 +374,7 @@ namespace Visual_Inventory_System.Controllers
                 var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, null);
                 if (ok) TempData["Success"] = $"{itemId}: {message}";
                 else TempData["Error"] = message;
-                return RedirectToAction("Index");
+                return SmartRedirect();
             }
 
             // Compressor serials on an Add, same flat serial_N convention
@@ -340,7 +410,7 @@ namespace Visual_Inventory_System.Controllers
             {
                 TempData["Error"] = $"Transaction failed: {ex.Message}";
             }
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         [HttpPost]
@@ -470,7 +540,7 @@ namespace Visual_Inventory_System.Controllers
             var (ok, message) = _inventoryService.DeleteItem(itemId);
             if (ok) TempData["Success"] = message;
             else TempData["Error"] = message;
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         // Deletes ONE empty stack without touching the rest of the item --
@@ -486,7 +556,7 @@ namespace Visual_Inventory_System.Controllers
             var (ok, message) = _inventoryService.DeleteVariant(itemId, variantId);
             if (ok) TempData["Success"] = message;
             else TempData["Error"] = message;
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         [HttpPost]
@@ -533,7 +603,7 @@ namespace Visual_Inventory_System.Controllers
         {
             _orderService.CancelOrder();
             TempData["Message"] = "Order draft canceled.";
-            return RedirectToAction("Index");
+            return SmartRedirect();
         }
 
         // ============================

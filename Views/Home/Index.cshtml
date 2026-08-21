@@ -1754,6 +1754,17 @@
     // vocabulary: Rack/Row stay free-form, so a key with nothing typed under
     // it yet just yields no suggestions, never a block.
     const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+    // Location hierarchy (friendly names). Same trap as the four above, but
+    // worse: this one used to sit inside the compressor/motor filter IIFE
+    // further down (section 8), which doesn't just render late -- an IIFE-local
+    // const never joins the page's shared global lexical scope at all.
+    // site.js's bindCascadingLocation() reads locMap as a free variable
+    // resolved in ITS OWN lexical scope (where it's defined, in site.js), not
+    // the caller's -- so an IIFE-local locMap was invisible to it no matter
+    // when the IIFE ran: "locMap is not defined" on the very first Parent pick
+    // in Export Wizard, confirmed live (Pass 28 2b). Moved here, top-level,
+    // same as the other four.
+    const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
 </script>
 
 @await Html.PartialAsync("_ModifyStockPartial")
@@ -2505,18 +2516,8 @@
         const motorRegistryModal = document.getElementById('motorRegistryModal');
         if (motorRegistryModal) motorRegistryModal.addEventListener('shown.bs.modal', motorApplyFilter);
 
-        // Location hierarchy (friendly names only). Codes are derived by the
-        // SAME rule the server uses (Services/LocationCodec) via encodeLoc(),
-        // so the live preview always matches what actually gets saved.
-        // Pass 7C: served from the Locations table instead of being typed here.
-        // This object and LocationCodec's name list were two hand-kept copies of
-        // the same vocabulary; they drifted, and 34 variant rows ended up on Sub
-        // codes neither copy knew about. Shape is unchanged:
-        //   { Parent: { Major: [Sub, ...] } }
-        const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
-
-
-
+        // locMap itself is declared earlier, at the top of section 7 -- see the
+        // comment there for why it can't live in this IIFE.
         bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', 'exp-rack', 'exp-row', 'exp-fda', 'exp-rack-list', 'exp-row-list');
     })();
 
