@@ -1,0 +1,971 @@
+@using Visual_Inventory_System.Services
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@{
+    ViewData["Title"] = "Command Center";
+    var headerDraftIds = ViewBag.DraftItemIds as System.Collections.Generic.HashSet<string>;
+
+    var invSvc = ViewBag.InventoryService as Visual_Inventory_System.Services.InventoryService;
+    var allItems = invSvc?.GetAll() ?? new List<Visual_Inventory_System.Models.InventoryItem>();
+
+    var recentActivity = ViewBag.RecentActivity as List<Visual_Inventory_System.Models.TransactionLog> ?? new List<Visual_Inventory_System.Models.TransactionLog>();
+
+    int totalItems = (int)(ViewBag.TotalItems ?? 0);
+    int pnBacklogCount = (int)(ViewBag.PnBacklogCount ?? 0);
+    int compUnitsTotal = (int)(ViewBag.CompUnitsTotal ?? 0);
+    int compUnitsNeedSerial = (int)(ViewBag.CompUnitsNeedSerialCount ?? 0);
+    int pnPct = totalItems > 0 ? (int)System.Math.Round(100.0 * pnBacklogCount / totalItems) : 0;
+    int serialPct = compUnitsTotal > 0 ? (int)System.Math.Round(100.0 * compUnitsNeedSerial / compUnitsTotal) : 0;
+
+    // Same zone() closure Index.cshtml uses to build zoneDataMap -- Parent name
+    // -> {TotalRows, HasAlert, Majors:{...}}. The new Location List renders from
+    // the SAME server-side ViewBag.MapZones (Name+Code), reading counts out of
+    // this same JSON object client-side via resizeMap()/syncLocationList(), so
+    // list and pins can never disagree with each other.
+    Func<string, bool> realSeg = s => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+    Func<string, object> zone = code =>
+    {
+        var items = allItems.Where(i => i.Parent == code
+            || (i.FdaString != null && i.FdaString.StartsWith(code))).ToList();
+        return new
+        {
+            TotalRows = items.Count,
+            HasAlert = items.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold),
+            Majors = items.Where(i => realSeg(i.Major))
+                          .GroupBy(i => i.Major)
+                          .ToDictionary(g => g.Key, g => new {
+                              Rows = g.Count(),
+                              HasAlert = g.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold),
+                              Subs = g.Where(i => realSeg(i.Sub))
+                                      .GroupBy(i => i.Sub)
+                                      .ToDictionary(sg => sg.Key, sg => new {
+                                          Rows = sg.Count(),
+                                          HasAlert = sg.Any(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold)
+                                      })
+                          })
+        };
+    };
+    var mapData = new Dictionary<string, object>();
+    foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+    {
+        mapData[lp.Name] = zone(lp.Code);
+    }
+    var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
+    // Code -> friendly name, for the zone-menu's Major/Sub labels (locDecode()
+    // in site.js). Same source/shape as Index.cshtml's own copy.
+    var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(Visual_Inventory_System.Services.LocationCodec.DecodeMap);
+}
+
+<style>
+    /* Pass 28 (2c): Command Center's own visual language -- unlike Search Center
+       (2b), this page picks up the sidebar's light/shadow-card look now rather
+       than waiting for Phase 4, per Kason's call once he saw the two side by
+       side. Built entirely from the existing --vis-* tokens (same approach the
+       sidebar shell itself uses -- "no new light/dark override rules needed,
+       adapts to both themes for free"), not a one-off. */
+    .cc-page {
+        padding: 28px 32px 48px;
+        max-width: 1440px;
+        margin: 0 auto;
+    }
+
+    .cc-section-title {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        color: var(--vis-text-muted);
+        margin: 0 0 10px 2px;
+    }
+
+    .cc-card {
+        background: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 12px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+
+    /* KPI strip */
+    .cc-kpi-row {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin-bottom: 28px;
+    }
+
+    .cc-kpi {
+        padding: 18px 20px;
+        text-decoration: none;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        cursor: pointer;
+        transition: border-color .15s ease, transform .15s ease;
+    }
+
+        .cc-kpi:hover {
+            border-color: var(--vis-red);
+            transform: translateY(-1px);
+        }
+
+    .cc-kpi-value {
+        font-size: 26px;
+        font-weight: 800;
+        color: var(--vis-text);
+        line-height: 1.1;
+    }
+
+    .cc-kpi-label {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--vis-text-muted);
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    /* Map + Location List row */
+    .cc-main-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 20px;
+        margin-bottom: 28px;
+        align-items: start;
+    }
+
+    .cc-map-card {
+        padding: 16px;
+    }
+
+    .cc-loc-card {
+        padding: 12px;
+        max-height: 528px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .cc-loc-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow-y: auto;
+    }
+
+    .cc-loc-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        text-decoration: none;
+        color: var(--vis-text);
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+        .cc-loc-row:hover, .cc-loc-row.cc-loc-hover {
+            background: rgba(216, 43, 51, 0.08);
+            color: var(--vis-text);
+        }
+
+    .cc-loc-count {
+        color: var(--vis-text-muted);
+        font-weight: 600;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .cc-loc-alert {
+        color: var(--vis-red);
+    }
+
+    /* Donuts */
+    .cc-donut-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 28px;
+    }
+
+    .cc-donut-card {
+        padding: 20px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+    }
+
+    .cc-donut {
+        position: relative;
+        width: 84px;
+        height: 84px;
+        border-radius: 50%;
+        background: conic-gradient(var(--vis-red) calc(var(--pct) * 1%), var(--vis-card-border) 0);
+        flex-shrink: 0;
+    }
+
+    .cc-donut-hole {
+        position: absolute;
+        inset: 9px;
+        border-radius: 50%;
+        background: var(--vis-card);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 15px;
+        color: var(--vis-text);
+    }
+
+    .cc-donut-label {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--vis-text);
+        margin-bottom: 2px;
+    }
+
+    .cc-donut-sub {
+        font-size: 12px;
+        color: var(--vis-text-muted);
+    }
+
+    /* Quick Actions */
+    .cc-quick-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 28px;
+    }
+
+    .cc-quick-btn {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        cursor: pointer;
+        text-align: left;
+        text-decoration: none;
+    }
+
+        .cc-quick-btn:hover {
+            border-color: var(--vis-red);
+        }
+
+        .cc-quick-btn i {
+            font-size: 20px;
+            color: var(--vis-red);
+        }
+
+        .cc-quick-btn span {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--vis-text);
+        }
+
+    /* Bottom row */
+    .cc-bottom-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        margin-bottom: 28px;
+    }
+
+    .cc-bottom-card {
+        padding: 16px 18px;
+        text-decoration: none;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+        .cc-bottom-card:hover {
+            border-color: var(--vis-red);
+        }
+
+    .cc-bottom-value {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--vis-text);
+    }
+
+    .cc-bottom-label {
+        font-size: 12px;
+        color: var(--vis-text-muted);
+        font-weight: 600;
+    }
+
+    .cc-activity-card {
+        padding: 18px;
+    }
+
+    @@media (max-width: 1200px) {
+        .cc-kpi-row {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .cc-quick-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @@media (max-width: 900px) {
+        .cc-main-row, .cc-donut-row, .cc-bottom-row {
+            grid-template-columns: 1fr;
+        }
+
+        .cc-kpi-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    /* ---- Map: pins + popover menus, ported from Index.cshtml, retheme'd onto
+       --vis-* tokens (the original copy hardcoded dark literals -- #14151A etc
+       -- so it never actually adapted to the light theme toggle; this one does). */
+    .map-container {
+        position: relative;
+        min-height: 460px;
+        border-radius: 8px;
+        overflow: visible;
+    }
+
+    .map-zone {
+        position: absolute;
+        z-index: 120;
+        pointer-events: auto;
+        box-sizing: border-box;
+        border: 2px solid var(--vis-yellow);
+        border-radius: 4px;
+        background: rgba(245, 166, 35, 0.10);
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15), 0 0 12px rgba(245,166,35,0.15);
+        transition: background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+        .map-zone:hover {
+            background: rgba(245, 166, 35, 0.22);
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15), 0 0 18px rgba(245,166,35,0.35);
+        }
+
+        .map-zone.alert-zone {
+            border-color: var(--vis-red);
+            background: rgba(216, 43, 51, 0.12);
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15), 0 0 14px rgba(216,43,51,0.30);
+        }
+
+            .map-zone.alert-zone:hover {
+                background: rgba(216, 43, 51, 0.22);
+            }
+
+        .map-zone.active-zone {
+            z-index: 1500 !important;
+        }
+
+        .map-zone.cc-loc-hover {
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15), 0 0 0 3px var(--vis-red);
+        }
+
+    .zone-marker {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: var(--vis-yellow);
+        background: var(--vis-card);
+        border: 1px solid var(--vis-yellow);
+        padding: 4px 8px;
+        border-radius: 6px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+    }
+
+        .zone-marker:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(245, 166, 35, 0.5);
+            z-index: 130;
+        }
+
+    .marker-icon {
+        font-size: 18px;
+        line-height: 1;
+    }
+
+    .marker-count {
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+        margin-top: 2px;
+        display: none;
+    }
+
+    .map-zone:hover .marker-count {
+        display: block;
+    }
+
+    .alert-pulse {
+        border-color: var(--vis-red) !important;
+        color: var(--vis-red) !important;
+        animation: pulse-border 2s infinite;
+    }
+
+    @@keyframes pulse-border {
+        0% { box-shadow: 0 0 0 0 rgba(216, 43, 51, 0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(216, 43, 51, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(216, 43, 51, 0); }
+    }
+
+    .zone-menu {
+        display: none;
+        position: absolute;
+        min-width: 220px;
+        background: var(--vis-card);
+        border: 1px solid var(--vis-card-border);
+        border-radius: 8px;
+        padding: 8px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+        z-index: 1000;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+        .zone-menu.show {
+            display: flex !important;
+        }
+
+    .zone-menu-header {
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--vis-red);
+        text-transform: uppercase;
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--vis-card-border);
+        margin-bottom: 4px;
+        letter-spacing: 0.5px;
+    }
+
+    .zone-menu-btn {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 8px 12px;
+        background: var(--vis-bg);
+        border: 1px solid var(--vis-card-border);
+        color: var(--vis-text);
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        text-align: left;
+        transition: all 0.2s ease;
+    }
+
+        .zone-menu-btn:hover {
+            background: rgba(216, 43, 51, 0.08);
+            border-color: var(--vis-red);
+        }
+
+        .zone-menu-btn .badge {
+            font-size: 10px;
+            background-color: var(--vis-card-border) !important;
+            color: var(--vis-text-muted) !important;
+        }
+
+    .zone-menu.menu-down { top: 100%; margin-top: 8px; }
+    .zone-menu.menu-up { bottom: 100%; margin-bottom: 8px; }
+    .zone-menu.menu-left { right: 0; }
+    .zone-menu.menu-right { left: 0; }
+    .zone-menu.menu-center { left: 50%; transform: translateX(-50%); }
+
+    .zone-major-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .zone-submenu {
+        display: none;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0 0 2px 8px;
+        padding-left: 10px;
+        border-left: 2px solid var(--vis-red);
+    }
+
+        .zone-major-group.open > .zone-submenu {
+            display: flex;
+        }
+
+    .zone-subbtn {
+        background: var(--vis-card);
+        font-weight: 500;
+    }
+
+    .zone-chev {
+        font-size: 10px;
+        transition: transform 0.18s ease;
+        margin-left: 6px;
+    }
+
+        .zone-major-group.open .zone-chev {
+            transform: rotate(180deg);
+        }
+
+    /* Activity Feed timeline, ported verbatim from Index.cshtml (already
+       --vis-* token driven). */
+    .activity-feed {
+        border-left: 2px solid var(--vis-card-border);
+        margin-left: 10px;
+        padding-left: 15px;
+        position: relative;
+    }
+
+    .activity-item {
+        position: relative;
+        margin-bottom: 12px;
+    }
+
+    .activity-dot {
+        position: absolute;
+        left: -21px;
+        top: 4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+</style>
+
+<div class="cc-page">
+
+    <!-- KPI strip -->
+    <div class="cc-kpi-row">
+        <a href="/Home/AllItems" class="cc-card cc-kpi" title="View all items in inventory">
+            <span class="cc-kpi-value">@totalItems</span>
+            <span class="cc-kpi-label">Total Items</span>
+        </a>
+        <a href="/Home/AllItems" class="cc-card cc-kpi" title="View all items in inventory">
+            <span class="cc-kpi-value">@ViewBag.ActiveLocationsCount</span>
+            <span class="cc-kpi-label">Active Locations</span>
+        </a>
+        <a href="/Home/SearchCenter?stockView=LowStock" class="cc-card cc-kpi" title="View low stock items">
+            <span class="cc-kpi-value">@ViewBag.LowStockCount</span>
+            <span class="cc-kpi-label">Low Stock</span>
+        </a>
+        <a href="/Home/SearchCenter?stockView=OutOfStock" class="cc-card cc-kpi" title="View out of stock items">
+            <span class="cc-kpi-value">@ViewBag.OutOfStockCount</span>
+            <span class="cc-kpi-label">Out of Stock</span>
+        </a>
+        <a href="/Home/SearchCenter?stockView=NeedsPN" class="cc-card cc-kpi" title="View items needing a Rheem part number">
+            <span class="cc-kpi-value">@pnBacklogCount</span>
+            <span class="cc-kpi-label">Needs PN</span>
+        </a>
+    </div>
+
+    <!-- Map + Location list -->
+    <div class="cc-main-row">
+        <div class="cc-card cc-map-card">
+            <div class="map-container">
+                <img src="~/images/facility.png" id="facility-map-img" alt="Facility Map" usemap="#labmap" style="width:100%; display:block; border-radius:6px;" />
+                <map name="labmap" id="labmap">
+                    @foreach (var z in (List<(string Name, string Code, double X, double Y, double W, double H)>)(ViewBag.MapZones ?? new List<(string, string, double, double, double, double)>()))
+                    {
+                        <area shape="rect" coords="0,0,0,0"
+                              data-nx="@z.X.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                              data-ny="@z.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                              data-nw="@z.W.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                              data-nh="@z.H.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                              href="/Home/SearchCenter?mode=Omni&omniSearch=@z.Code" title="@z.Name" />
+                    }
+                </map>
+            </div>
+        </div>
+
+        <div class="cc-card cc-loc-card">
+            <div class="cc-section-title">Locations</div>
+            <ul class="cc-loc-list" id="cc-location-list">
+                @foreach (var z in (List<(string Name, string Code, double X, double Y, double W, double H)>)(ViewBag.MapZones ?? new List<(string, string, double, double, double, double)>()))
+                {
+                    <li>
+                        <a class="cc-loc-row" data-zone-title="@z.Name" href="/Home/SearchCenter?mode=Omni&omniSearch=@z.Code">
+                            <span>@z.Name</span>
+                            <span class="cc-loc-count" data-loc-count></span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        </div>
+    </div>
+
+    <!-- Donuts -->
+    <div class="cc-donut-row">
+        <div class="cc-card cc-donut-card">
+            <div class="cc-donut" style="--pct:@pnPct"><div class="cc-donut-hole">@pnPct%</div></div>
+            <div>
+                <div class="cc-donut-label">Need PN</div>
+                <div class="cc-donut-sub">@pnBacklogCount of @totalItems items missing a Rheem part number</div>
+            </div>
+        </div>
+        <div class="cc-card cc-donut-card">
+            <div class="cc-donut" style="--pct:@serialPct"><div class="cc-donut-hole">@serialPct%</div></div>
+            <div>
+                <div class="cc-donut-label">Need Serial</div>
+                <div class="cc-donut-sub">@compUnitsNeedSerial of @compUnitsTotal compressor units missing a serial</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="cc-section-title">Quick Actions</div>
+    <div class="cc-quick-row">
+        @if (CurrentUser.Level >= AccessLevels.Standard)
+        {
+            <button type="button" class="cc-card cc-quick-btn" data-bs-toggle="modal" data-bs-target="#newItemModal">
+                <i class="bi bi-plus-square"></i>
+                <span>New Item</span>
+            </button>
+            <button type="button" class="cc-card cc-quick-btn" onclick="openStockAction('Adjustment')">
+                <i class="bi bi-sliders"></i>
+                <span>Stock Adjustment</span>
+            </button>
+        }
+        else
+        {
+            <div class="cc-card cc-quick-btn" style="opacity:.5;"><i class="bi bi-lock-fill"></i><span>New Item</span></div>
+            <div class="cc-card cc-quick-btn" style="opacity:.5;"><i class="bi bi-lock-fill"></i><span>Stock Adjustment</span></div>
+        }
+        @if (CurrentUser.Level >= AccessLevels.Engineer)
+        {
+            <button type="button" class="cc-card cc-quick-btn" onclick="openStockAction('Ownership')">
+                <i class="bi bi-arrow-left-right"></i>
+                <span>Transfer Items</span>
+            </button>
+        }
+        else
+        {
+            <div class="cc-card cc-quick-btn" style="opacity:.5;"><i class="bi bi-lock-fill"></i><span>Transfer Items</span></div>
+        }
+        @if (CurrentUser.Level >= AccessLevels.Standard)
+        {
+            <a href="/Home/SearchCenter?mode=Ledger" class="cc-card cc-quick-btn">
+                <i class="bi bi-cart3"></i>
+                <span>View Cart</span>
+            </a>
+        }
+        else
+        {
+            <div class="cc-card cc-quick-btn" style="opacity:.5;"><i class="bi bi-lock-fill"></i><span>View Cart</span></div>
+        }
+    </div>
+
+    <!-- Bottom row -->
+    <div class="cc-bottom-row">
+        <a href="/Home/SearchCenter?stockView=LowStock" class="cc-card cc-bottom-card">
+            <span class="cc-bottom-value">@ViewBag.LowStockCount</span>
+            <span class="cc-bottom-label">Stock Alerts</span>
+        </a>
+        <a href="/Home/PickupQueue" class="cc-card cc-bottom-card">
+            <span class="cc-bottom-value">@ViewBag.PendingCount</span>
+            <span class="cc-bottom-label">Pending</span>
+        </a>
+        <a href="/Home/Deliveries" class="cc-card cc-bottom-card">
+            <span class="cc-bottom-value">@ViewBag.IncomingShipmentsCount</span>
+            <span class="cc-bottom-label">Incoming Shipments</span>
+        </a>
+    </div>
+
+    <!-- Activity Feed -->
+    <div class="cc-section-title">Activity Feed</div>
+    <div class="cc-card cc-activity-card">
+        @if (recentActivity.Any())
+        {
+            <div class="activity-feed">
+                @for (int idx = 0; idx < recentActivity.Count; idx++)
+                {
+                    var log = recentActivity[idx];
+                    bool isItemAction = !string.IsNullOrWhiteSpace(log.ItemId);
+                    var item = isItemAction ? invSvc?.GetById(log.ItemId) : null;
+
+                    string actionTitle = !isItemAction ? log.ActionType :
+                        log.ActionType == "Add" || log.ActionType == "Quick Add" ? "Stock Added" :
+                        log.ActionType == "Scrap" ? "Item Scrapped" :
+                        log.ActionType == "Ownership" ? "Item Moved" :
+                        log.ActionType == "Location Transfer" ? "Item Relocated" :
+                        log.ActionType == "New Registry" ? "New Item" :
+                        log.ActionType == "Order Picked Up" ? "Order Picked Up" :
+                        log.ActionType == "Item Deleted" ? "Item Deleted" :
+                        "Stock Adjusted";
+
+                    var localTs = log.Timestamp.ToLocalTime();
+                    string timeDisplay = localTs.Date == DateTime.Today ?
+                                         localTs.ToString("h:mm tt") :
+                                         localTs.ToString("h:mm tt MM/dd/yyyy");
+
+                    string dotColor = !isItemAction ? "#64748B" :
+                        log.ActionType == "Add" || log.ActionType == "Quick Add" ? "#22C55E" :
+                        log.ActionType == "Scrap" ? "#D82B33" :
+                        log.ActionType == "Ownership" ? "#A855F7" :
+                        log.ActionType == "Location Transfer" ? "#0EA5E9" :
+                        log.ActionType == "New Registry" ? "#148A8A" :
+                        log.ActionType == "Order Picked Up" ? "#F59E0B" :
+                        log.ActionType == "Item Deleted" ? "#D82B33" :
+                        "#3B82F6";
+                    string glowStyle = $"background-color: {dotColor} !important;";
+
+                    bool canClick = isItemAction && item != null && CurrentUser.Level >= AccessLevels.Standard;
+                    string clickItemId = canClick ? item!.ItemId : "";
+
+                    <div class="activity-item d-flex justify-content-between align-items-start" style="@(canClick ? "cursor:pointer;" : "")" data-click-item="@clickItemId" onclick="ccActivityClick(this)">
+                        <div class="activity-dot" style="@glowStyle"></div>
+                        <div style="padding-right: 12px; flex-grow: 1;">
+                            <strong class="d-block" style="font-size: 13px; font-weight: 700; color: var(--vis-text);">@actionTitle</strong>
+                            @if (isItemAction)
+                            {
+                                <small class="d-block mt-1" style="font-size: 11px; color: var(--vis-text-muted);">@log.ItemId: @(item?.ItemName ?? (string.IsNullOrWhiteSpace(log.ItemName) ? "Unknown item" : log.ItemName))</small>
+                            }
+                            else
+                            {
+                                <small class="d-block mt-1" style="font-size: 11px; color: var(--vis-text-muted);">@log.Details</small>
+                            }
+                        </div>
+                        <div class="text-end" style="font-size: 11px; white-space: nowrap; color: var(--vis-text-muted);">
+                            <div>@timeDisplay</div>
+                            <div style="font-size: 10px; margin-top: 2px;"><i class="bi bi-person-fill me-1"></i>@log.User</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="text-center p-4" style="color: var(--vis-text-muted);">
+                <i class="bi bi-journal-x d-block mb-2 fs-3"></i>
+                <span>No activity logged yet.</span>
+            </div>
+        }
+    </div>
+</div>
+
+@* Same const-before-partial ordering the Traps section documents (Pass 28 2a/2b):
+   these must render before New Item Registry / Modify Stock, since both
+   partials reference them at their own script's top level. *@
+<script>
+    const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
+    const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
+    const locDecodeMap = @Html.Raw(locDecodeJson);
+</script>
+
+@await Html.PartialAsync("_ModifyStockPartial")
+@await Html.PartialAsync("_NewItemRegistryPartial")
+
+<script>
+    function ccActivityClick(el) {
+        const itemId = el.dataset.clickItem;
+        if (itemId && typeof handleStock === 'function') handleStock(itemId);
+    }
+
+    function openStockAction(actionType) {
+        const sel = document.getElementById('stock-action-type');
+        if (sel) {
+            sel.value = actionType;
+            if (typeof toggleStockUI === 'function') toggleStockUI();
+        }
+        const el = document.getElementById('modifyStockModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    const zoneDataMap = @Html.Raw(mapDataJson);
+
+    function resizeMap() {
+        const img = document.getElementById('facility-map-img');
+        const map = document.getElementById('labmap');
+        const container = document.querySelector('.map-container');
+        if (!img || !map || !container) return;
+
+        const currentWidth = img.clientWidth;
+        const currentHeight = img.clientHeight;
+        if (currentWidth === 0) return;
+
+        const imgRect = img.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const offsetX = imgRect.left - containerRect.left;
+        const offsetY = imgRect.top - containerRect.top;
+
+        document.querySelectorAll('.map-zone').forEach(b => b.remove());
+
+        const areas = map.getElementsByTagName('area');
+
+        for (let a of areas) {
+            const nx = parseFloat(a.dataset.nx), ny = parseFloat(a.dataset.ny);
+            const nw = parseFloat(a.dataset.nw), nh = parseFloat(a.dataset.nh);
+            if (isNaN(nx) || isNaN(ny) || isNaN(nw) || isNaN(nh)) continue;
+            const px = Math.round(nx * currentWidth), py = Math.round(ny * currentHeight);
+            const pw = Math.round(nw * currentWidth), ph = Math.round(nh * currentHeight);
+            const scaledCoords = [px, py, px + pw, py + ph];
+            a.coords = scaledCoords.join(',');
+
+            const x1 = scaledCoords[0];
+            const y1 = scaledCoords[1];
+            const w = scaledCoords[2] - x1;
+            const h = scaledCoords[3] - y1;
+            const title = a.title;
+            const data = zoneDataMap[title];
+
+            const centerX = x1 + (w / 2);
+            const centerY = y1 + (h / 2);
+
+            let vClass = (centerY > currentHeight * 0.6) ? 'menu-up' : 'menu-down';
+            let hClass = 'menu-center';
+            if (centerX < currentWidth * 0.3) hClass = 'menu-right';
+            else if (centerX > currentWidth * 0.7) hClass = 'menu-left';
+
+            const zoneDiv = document.createElement('div');
+            zoneDiv.className = 'map-zone';
+            zoneDiv.dataset.zoneTitle = title;
+
+            zoneDiv.style.left = (x1 + offsetX) + 'px';
+            zoneDiv.style.top = (y1 + offsetY) + 'px';
+            zoneDiv.style.width = w + 'px';
+            zoneDiv.style.height = h + 'px';
+
+            if (data && data.TotalRows > 0) {
+                let pulseClass = data.HasAlert ? 'alert-pulse' : '';
+                if (data.HasAlert) zoneDiv.classList.add('alert-zone');
+                let warningIcon = data.HasAlert ? `<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark" style="font-size:10px; padding:4px;"><i class="bi bi-exclamation-triangle-fill"></i></span>` : '';
+
+                let innerHTML = `
+                    <div class="zone-marker ${pulseClass}" title="${title}" style="position:relative;">
+                        <i class="bi bi-geo-alt-fill marker-icon"></i>
+                        <span class="marker-count">${data.TotalRows} Rows</span>
+                        ${warningIcon}
+                    </div>
+                `;
+
+                innerHTML += `
+                    <div class="zone-menu ${vClass} ${hClass}">
+                        <div class="zone-menu-header">${title} Locations</div>
+                        <button type="button" class="zone-menu-btn" onclick="window.location.href='${a.href}'">
+                            <span><i class="bi bi-globe me-2"></i>View All</span>
+                            <span class="badge">${data.TotalRows}</span>
+                        </button>
+                `;
+
+                for (let major in data.Majors) {
+                    let mData = data.Majors[major];
+                    let mAlert = mData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
+                    let majorLink = `/Home/SearchCenter?mode=Filter&filterNotes=${encodeURIComponent(major)}`;
+                    let subKeys = mData.Subs ? Object.keys(mData.Subs) : [];
+
+                    if (subKeys.length > 0) {
+                        let subsHTML = `
+                            <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='${majorLink}'">
+                                <span><i class="bi bi-grid-3x3-gap me-2"></i>View all ${locDecode(major)}</span>
+                                <span class="badge">${mData.Rows}</span>
+                            </button>`;
+                        for (let sub in mData.Subs) {
+                            let sData = mData.Subs[sub];
+                            let sAlert = sData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
+                            subsHTML += `
+                                <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='/Home/SearchCenter?mode=Filter&filterNotes=${encodeURIComponent(sub)}'">
+                                    <span><i class="bi bi-box me-2"></i>${locDecode(sub)} ${sAlert}</span>
+                                    <span class="badge">${sData.Rows}</span>
+                                </button>`;
+                        }
+
+                        innerHTML += `
+                            <div class="zone-major-group">
+                                <button type="button" class="zone-menu-btn zone-major-toggle"
+                                        onclick="event.stopPropagation(); this.closest('.zone-major-group').classList.toggle('open');">
+                                    <span><i class="bi bi-diagram-3 me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                    <span class="badge">${mData.Rows}<i class="bi bi-chevron-down zone-chev"></i></span>
+                                </button>
+                                <div class="zone-submenu">${subsHTML}</div>
+                            </div>`;
+                    } else {
+                        innerHTML += `
+                            <button type="button" class="zone-menu-btn" onclick="window.location.href='${majorLink}'">
+                                <span><i class="bi bi-box-seam me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                <span class="badge">${mData.Rows}</span>
+                            </button>`;
+                    }
+                }
+                innerHTML += `</div>`;
+                zoneDiv.innerHTML = innerHTML;
+
+                zoneDiv.onclick = (e) => {
+                    e.stopPropagation();
+                    const menu = zoneDiv.querySelector('.zone-menu');
+                    const isShowing = menu.classList.contains('show');
+                    document.querySelectorAll('.zone-menu.show').forEach(m => m.classList.remove('show'));
+                    document.querySelectorAll('.map-zone.active-zone').forEach(z => z.classList.remove('active-zone'));
+                    if (!isShowing) {
+                        menu.classList.add('show');
+                        zoneDiv.classList.add('active-zone');
+                    }
+                };
+            } else {
+                zoneDiv.title = `${title} — no stock recorded yet`;
+                zoneDiv.innerHTML = `
+                    <div class="zone-marker" title="${title}" style="position:relative; opacity:.45;">
+                        <i class="bi bi-geo-alt marker-icon"></i>
+                        <span class="marker-count">0 Rows</span>
+                    </div>`;
+                zoneDiv.onclick = () => window.location.href = a.href;
+            }
+
+            // Hover cross-highlight with the matching Location List row.
+            zoneDiv.addEventListener('mouseenter', () => setLocHover(title, true));
+            zoneDiv.addEventListener('mouseleave', () => setLocHover(title, false));
+
+            container.appendChild(zoneDiv);
+        }
+
+        syncLocationList();
+    }
+
+    // Fills each Location List row's count/alert badge from the SAME
+    // zoneDataMap object the pins read, so list and map can never disagree.
+    function syncLocationList() {
+        document.querySelectorAll('#cc-location-list .cc-loc-row').forEach(row => {
+            const title = row.dataset.zoneTitle;
+            const data = zoneDataMap[title];
+            const countEl = row.querySelector('[data-loc-count]');
+            if (!countEl) return;
+            if (data && data.TotalRows > 0) {
+                countEl.innerHTML = (data.HasAlert ? '<i class="bi bi-exclamation-triangle-fill cc-loc-alert"></i>' : '') + data.TotalRows + ' rows';
+            } else {
+                countEl.textContent = '0 rows';
+            }
+        });
+    }
+
+    function setLocHover(title, on) {
+        const row = document.querySelector(`#cc-location-list .cc-loc-row[data-zone-title="${CSS.escape(title)}"]`);
+        if (row) row.classList.toggle('cc-loc-hover', on);
+        const pin = document.querySelector(`.map-zone[data-zone-title="${CSS.escape(title)}"]`);
+        if (pin) pin.classList.toggle('cc-loc-hover', on);
+    }
+
+    document.querySelectorAll('#cc-location-list .cc-loc-row').forEach(row => {
+        const title = row.dataset.zoneTitle;
+        row.addEventListener('mouseenter', () => setLocHover(title, true));
+        row.addEventListener('mouseleave', () => setLocHover(title, false));
+    });
+
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.zone-menu.show').forEach(m => m.classList.remove('show'));
+        document.querySelectorAll('.map-zone.active-zone').forEach(z => z.classList.remove('active-zone'));
+    });
+
+    window.addEventListener('load', () => { resizeMap(); });
+    window.addEventListener('resize', resizeMap);
+    const facilityImg = document.getElementById('facility-map-img');
+    if (facilityImg) facilityImg.addEventListener('load', resizeMap);
+
+    const mapFrame = document.querySelector('.map-container');
+    if (mapFrame && typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(() => resizeMap()).observe(mapFrame);
+    }
+</script>

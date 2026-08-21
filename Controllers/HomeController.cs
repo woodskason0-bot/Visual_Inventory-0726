@@ -115,7 +115,7 @@ namespace Visual_Inventory_System.Controllers
         // retires Index's own copy of this content, the two pages need to behave
         // identically, just at different routes. Left dark-themed/unstyled: the
         // visual match to the sidebar's new look is Phase 4, not this pass.
-        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode)
+        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode, string? stockView)
         {
             var allItems = _inventoryService.GetAll().ToList();
             PopulateSearchViewBag(allItems);
@@ -133,7 +133,24 @@ namespace Visual_Inventory_System.Controllers
             }
 
             var searchResult = new SearchResult { Mode = mode ?? "None" };
-            if (mode != "None")
+            if (!string.IsNullOrEmpty(stockView))
+            {
+                // Pass 28 (2c): Command Center's KPI strip links here. None of these
+                // three are expressible through the existing Rheem/Type/Brand/Notes
+                // filters (no quantity-comparison dimension), so this is a fixed
+                // named view over the item list instead of a Search() call -- same
+                // predicates GetLowStockItems/GetOutOfStockItems/GetPnBacklogItems
+                // use everywhere else, not a fourth redefinition.
+                searchResult.Items = stockView switch
+                {
+                    "LowStock" => GetLowStockItems(allItems),
+                    "OutOfStock" => GetOutOfStockItems(allItems),
+                    "NeedsPN" => GetPnBacklogItems(allItems),
+                    _ => new List<InventoryItem>()
+                };
+                searchResult.Mode = "Filter";
+            }
+            else if (mode != "None")
             {
                 var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
                 searchResult.Items = foundItems;
@@ -153,6 +170,91 @@ namespace Visual_Inventory_System.Controllers
 
             return View();
         }
+
+        // Pass 28 (2c) -- standalone Command Center: KPI strip, map + location
+        // list, Activity Feed, Need PN / Need Serial donuts, Quick Actions, and a
+        // Stock Alerts / Pending / Incoming Shipments bottom row. Built standalone
+        // (not yet what "/" renders -- that's 2d), referencing 2a's Modify Stock
+        // and New Item Registry partials. Unlike SearchCenter, this one DOES pick
+        // up the sidebar's light/shadow-card visual language rather than staying
+        // dark/unstyled -- Kason's call once he saw the sidebar next to the old
+        // dashboard look, ahead of Phase 4's originally-planned broader visual pass.
+        public IActionResult CommandCenter()
+        {
+            var allItems = _inventoryService.GetAll().ToList();
+            PopulateSearchViewBag(allItems);
+            // The view recomputes its own zoneDataMap from a fresh GetAll() (same
+            // pattern Index.cshtml uses) rather than serializing allItems through
+            // ViewBag -- needs the service reference for that.
+            ViewBag.InventoryService = _inventoryService;
+
+            // KPI strip -- same math Index() has always used, verbatim.
+            ViewBag.TotalItems = allItems.Count;
+            ViewBag.LowStockCount = allItems.Count(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold && i.Quantity > 0);
+            ViewBag.OutOfStockCount = allItems.Count(i => i.Quantity == 0);
+            ViewBag.ActiveLocationsCount = allItems.Select(i => i.Parent).Where(p => !string.IsNullOrEmpty(p)).Distinct().Count();
+            ViewBag.PnBacklogCount = GetPnBacklogItems(allItems).Count;
+
+            // Activity Feed, same as Index().
+            ViewBag.RecentActivity = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
+                .AsNoTracking())
+                .OrderByDescending(t => t.Timestamp)
+                .Take(5)
+                .ToList();
+
+            // Map zones, same as Index() -- the view builds zoneDataMap client-side
+            // from this plus LocationParents (already in PopulateSearchViewBag),
+            // and now also renders a location list from that same object.
+            ViewBag.MapZones = _db.LocationZones.AsNoTracking()
+                .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
+                      z => z.LocationId, l => l.Id,
+                      (z, l) => new { l.Name, z.X, z.Y, z.W, z.H })
+                .ToList()
+                .Select(z => (Name: z.Name, Code: LocationCodec.Encode(z.Name),
+                              X: z.X, Y: z.Y, W: z.W, H: z.H))
+                .ToList();
+
+            // Need Serial donut: CompressorUnits with a blank serial, out of the
+            // total roster -- units only, not item quantity (a model can show
+            // Qty 12 with only a few units actually logged yet, same caveat the
+            // Compressor Registry modal's own intro text already carries).
+            var compUnits = _db.CompressorUnits.AsNoTracking().ToList();
+            ViewBag.CompUnitsTotal = compUnits.Count;
+            ViewBag.CompUnitsNeedSerialCount = compUnits.Count(u => string.IsNullOrWhiteSpace(u.SerialNumber));
+
+            // Bottom row: Pending combines an Order in flight with a held (not yet
+            // approved/rejected) Intake batch -- two different tables, one number,
+            // same combination the original dashboard's "Pending Orders" widget
+            // description already implied. Incoming Shipments is anything not yet
+            // marked Done on the Deliveries board.
+            ViewBag.PendingCount = _db.Orders.AsNoTracking().Count(o => o.Status == "Pending")
+                + _db.IntakeBatches.AsNoTracking().Count(b => b.Status == IntakeStatus.Pending);
+            ViewBag.IncomingShipmentsCount = _db.Deliveries.AsNoTracking().Count(d => d.Status != "Done");
+
+            return View();
+        }
+
+        // Shared "what counts as low stock / out of stock / needs a PN" --
+        // reused by Search Center's stockView filter and Command Center's
+        // Stock Alerts card / Need PN donut, so the definition can't drift into
+        // a third hand-typed copy the way Rack/Row and Locations already did
+        // before Pass 7C/23. GetLowStockItems deliberately does NOT exclude
+        // zero-quantity items -- same "includes zero-stock-with-threshold items"
+        // definition the dashboard's Stock Alerts widget has always used; the KPI
+        // strip's separate "Low Stock" COUNT (which does exclude zero, so it
+        // doesn't double-count with "Out of Stock") stays its own inline
+        // expression in Index()/CommandCenter(), not routed through this.
+        private static bool NeedsRheemPn(string? pn) =>
+            string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
+
+        private static List<InventoryItem> GetLowStockItems(List<InventoryItem> allItems) =>
+            allItems.Where(i => i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold).OrderBy(i => i.Quantity).ToList();
+
+        private static List<InventoryItem> GetOutOfStockItems(List<InventoryItem> allItems) =>
+            allItems.Where(i => i.Quantity == 0).OrderBy(i => i.ItemName).ToList();
+
+        private static List<InventoryItem> GetPnBacklogItems(List<InventoryItem> allItems) =>
+            allItems.Where(i => NeedsRheemPn(i.RheemPartNumber)).OrderBy(i => i.ItemName).ToList();
 
         // Server data every Search Center-side view needs regardless of which
         // page renders it (Advanced Filters, Omni Search, results grid, Export
