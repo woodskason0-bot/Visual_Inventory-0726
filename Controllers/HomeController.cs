@@ -214,13 +214,32 @@ namespace Visual_Inventory_System.Controllers
                               X: z.X, Y: z.Y, W: z.W, H: z.H))
                 .ToList();
 
-            // Need Serial donut: CompressorUnits with a blank serial, out of the
-            // total roster -- units only, not item quantity (a model can show
-            // Qty 12 with only a few units actually logged yet, same caveat the
-            // Compressor Registry modal's own intro text already carries).
-            var compUnits = _db.CompressorUnits.AsNoTracking().ToList();
-            ViewBag.CompUnitsTotal = compUnits.Count;
-            ViewBag.CompUnitsNeedSerialCount = compUnits.Count(u => string.IsNullOrWhiteSpace(u.SerialNumber));
+            // Need Serial donut: real on-hand compressor STOCK (by quantity) that
+            // has no serial recorded, same "physical gap" framing Need PN already
+            // uses -- not blank-serial rows within the CompressorUnits table
+            // alone. That first version (still what the original scope doc says
+            // literally) read as "0% need serial" next to "100% need PN", which
+            // is misleading rather than just an unrelated pair of true numbers:
+            // only 184 of the 849 real on-hand compressor units have EVER been
+            // logged into CompressorUnits at all (the roster only grows as
+            // someone opens Log Units and types something in -- see its own
+            // "may only have a few units listed below for a while" caveat), and
+            // whoever creates a row tends to fill the serial in at the same
+            // time, so "blank among rows that exist" was trivially near-zero by
+            // construction. Found live (Kason: the two donuts should mean the
+            // same thing, they don't) -- verified against the real db: 849
+            // total on-hand compressor quantity, 184 CompressorUnits rows, all
+            // 184 already On Hand with a real serial, so the true gap is
+            // 849 - 184 = 665 (78%), not 0.
+            var compressorItems = allItems.Where(i => InventoryService.IsCompressorType(i.Type)).ToList();
+            var compItemIds = compressorItems.Select(i => i.ItemId).ToHashSet();
+            var onHandCompUnits = _db.CompressorUnits.AsNoTracking()
+                .Where(u => u.Status == UnitStatus.OnHand).ToList();
+            int compQtyTotal = compressorItems.Sum(i => i.Quantity);
+            int compSerialsRecorded = onHandCompUnits.Count(u =>
+                compItemIds.Contains(u.ItemId) && !string.IsNullOrWhiteSpace(u.SerialNumber));
+            ViewBag.CompUnitsTotal = compQtyTotal;
+            ViewBag.CompUnitsNeedSerialCount = Math.Max(0, compQtyTotal - compSerialsRecorded);
 
             // Bottom row: Pending combines an Order in flight with a held (not yet
             // approved/rejected) Intake batch -- two different tables, one number,
