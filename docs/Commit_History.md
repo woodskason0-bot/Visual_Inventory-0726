@@ -9,6 +9,111 @@ landed, when."
 
 ---
 
+## 2026-08-21
+
+### `c7cec21` — Pass 28 (2d.1): light/dark legibility pass, plus Alert Rules was unreachable
+Went through Command Center and Search Center in both themes with a real contrast
+checker (computed fg vs. effective bg), not eyeballing. Fixed four real bugs, all
+pre-existing or introduced earlier in this Pass 28 arc: `.text-light-gray` had no
+real base color anywhere (inherited from `.modal-content`'s hardcoded white, went
+invisible on any light-theme white ancestor); `.modal-content label` hardcoded
+`#E2E8F0` with no light-mode override (Command Center never even had the rule,
+missed in 2c — its labels rendered pure white); `text-info`/`text-warning` read
+~1.6-2.0:1 on white throughout the shared partials; `.btn-outline-danger/warning/
+info` read ~2:1 sitewide (MyOrders, PickupQueue, Intake, AllItems too, not just the
+new pages). Each fix needed a matching exclusion for `.comp-row`/`.motor-row`/
+`.filter-bar-dark`, which stay dark-background-always-on regardless of theme by
+design. Also fixed MyOrders' loan "Outstanding" count (inline `color:#F59E0B`, same
+bug shape). Separately: found while opening Alert Rules to check its own contrast
+that nothing had triggered `#modifyAlertsModal` since `Index.cshtml` was retired in
+2d — Command Center never included `_AlertRulesPartial` or a trigger for it at all
+(a 2c gap). Added the partial + a gear-icon trigger on the Stock Alerts card.
+**Two items flagged, not resolved, for a fresh session with a real browser** — see
+"Open from 2d.1" in `VIS_Handoff_State.md`: Alert Rules needs an actual click-through
+(only verified through this session's Browser-pane tool so far); an unexplained
+dark-mode contrast anomaly on Search Center's outline buttons that couldn't be
+traced to any real CSS rule despite an exhaustive stylesheet walk.
+**Touched:** `wwwroot/css/site.css`, `Views/Home/CommandCenter.cshtml`,
+`Views/Home/SearchCenter.cshtml`, `Views/Home/MyOrders.cshtml`.
+
+### `3fa3c79` — Pass 28 (2d): the swap — / now renders Command Center, Search Center gets a real nav link
+`Index()` no longer takes query params or serves a holo-viewer — its body is now
+Command Center's, returning `View("CommandCenter")`. The separate
+`/Home/CommandCenter` route from 2c is gone (one canonical home route now; that URL
+404s on purpose). `Views/Home/Index.cshtml` (2551 lines) deleted outright, not left
+as dead weight. `_Layout.cshtml`: "Dashboard" nav label renamed "Command Center";
+added the real "Search Center" link Pass 27 deliberately left out. `AllItems.cshtml`'s
+per-row "Handle Stock" deep-link moved from Index to Search Center (the one other
+place that jumped into the old holo-viewer from outside it). Verified live: real
+numbers on "/", nav active-state highlighting, the AllItems deep-link opening a real
+item, a Quick Action still working from the new home route, full sign-out/sign-in
+cycle landing on "/" with real (not stale) data.
+**Touched:** `Controllers/HomeController.cs`, `Views/Home/AllItems.cshtml`,
+`Views/Shared/_Layout.cshtml`; deleted `Views/Home/Index.cshtml`.
+
+### `1cc26d9` — Fix Need Serial donut: measure real stock, not CompressorUnits rows
+Kason caught it live: Need PN read 100%, Need Serial read 0% right next to it — same
+"Need X" framing, different meaning underneath. Original definition (blank
+`SerialNumber` among existing `CompressorUnits` rows) was literally what the 2c scope
+doc said, but misleading: only 184 of the real 849 on-hand compressor units have ever
+been logged into that table at all, and whoever creates a row tends to fill the
+serial in at the same time, so "blank among rows that exist" was trivially near-zero
+by construction. Redefined to match Need PN's framing (real total vs. how much is
+actually identified): 849 total on-hand quantity, 184 rows all with a real serial,
+true gap 665 (78%). Verified against the live db before and after.
+**Touched:** `Controllers/HomeController.cs`.
+
+### `6054b51` — Pass 28 (2c): standalone Command Center content, styled to match the sidebar
+New `/Home/CommandCenter` action + view: KPI strip, map + a new synced Location List
+(hover/click cross-highlights the matching pin), two donuts (Need PN, Need Serial),
+Quick Actions (New Item/Stock Adjustment/Transfer Items/View Cart), bottom row (Stock
+Alerts/Pending/Incoming Shipments). Built standalone — `/` still untouched, same as
+2b. Unlike Search Center, picked up the sidebar's light/shadow-card visual language
+now instead of staying dark/unstyled — Kason's call once he saw the sidebar next to
+the old dashboard look, ahead of Phase 4's originally-planned broader visual pass.
+New `.cc-*` CSS system built entirely from the existing `--vis-*` tokens. The copied
+map pin/popover CSS was retheme'd onto the same tokens too (the original never
+actually adapted to light mode — hardcoded dark literals). Three new shared
+predicates (`GetLowStockItems`/`GetOutOfStockItems`/`GetPnBacklogItems`,
+`NeedsRheemPn`) so "what counts as low stock" doesn't drift into a third hand-typed
+copy — reused by the KPI, the donut, and a new `stockView` param on `SearchCenter()`.
+Two real bugs found and fixed while testing live: `CommandCenter()` never set
+`ViewBag.InventoryService`, so the view's own `GetAll()` silently returned an empty
+list — every map zone and the Location List read "0 rows" despite the KPI's own
+(separately-populated) item count being correct; and the copied `resizeMap()` code
+calls `locDecode()`, which needs a `locDecodeMap` const that was missed when the map
+logic was copied over. Verified live: Location List counts matched Index.cshtml's
+live `zoneDataMap` exactly, Quick Actions confirmed against the real DOM, Activity
+Feed row click opens Modify Stock with the right item, Pending/Incoming Shipments
+cross-checked directly against the live db.
+**Touched:** `Controllers/HomeController.cs`, `Views/Home/CommandCenter.cshtml` (new).
+
+### `543c7a8` — Pass 28 (2b): standalone Search Center route, plus a real locMap scope bug fix
+New `/Home/SearchCenter` action + view: Advanced Filters, Omni Search, results grid
+(holo-viewer, all three modes), Export Wizard, Compressor/Motor Registry, and the
+Modify Stock shared partial — built standalone, referencing 2a's partials, with `/`
+left completely untouched throughout. `PopulateSearchViewBag()` factors the
+autocomplete/org/location/team JSON-shaping logic out of `Index()` so
+`SearchCenter()` doesn't duplicate it by hand. New `SmartRedirect()` (referer-based,
+same pattern `LogCompressorUnits`/`SetTheme` already use) applied to
+`AddToCart`/`RemoveFromLedger`/`SubmitLedger`/`ModifyStock`/`DeleteItem`/
+`DeleteVariant`/`CancelOrder` — all hardcoded `RedirectToAction("Index")`, which
+would've silently bounced a Search Center user back to the old dashboard after every
+action now that a second real page can trigger them. Found and fixed a real
+pre-existing bug on both pages while testing: Export Wizard's location cascade
+(`locMap`) was declared inside the compressor/motor filter IIFE, not at true
+script-tag top level — `site.js`'s `bindCascadingLocation()` reads it from its own
+lexical scope, not the caller's, so an IIFE-local `locMap` was invisible to it no
+matter what (`ReferenceError` on the first Parent pick), reproduced live on the
+running dashboard before touching anything. Moved to the same top-level const block
+as `itemsList`/`orgStructure`/etc. in both files. Verified live against the real db:
+results grid, Handle Stock → Modify Stock, Compressor Registry filter (249→158 on
+Unclaimed), Motor Registry modal, Export Wizard cascade (confirmed fixed on both
+pages), and a full Add to Cart → Start Order → real fetch POST → item landed in
+cart → Remove → cart empty again, zero console errors throughout.
+**Touched:** `Controllers/HomeController.cs`, `Views/Home/Index.cshtml` (the
+`locMap` fix only), `Views/Home/SearchCenter.cshtml` (new).
+
 ## 2026-08-19
 
 ### `15822b4` — Pass 28 (2a) verification pass: fix three live regressions

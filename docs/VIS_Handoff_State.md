@@ -241,7 +241,9 @@ Team-set/Line-blank, zero fully blank), so the checkbox silently showed "0 of 24
 Motors were worse: all 124 motor-type items have Team set and 100% have Line blank
 (never touched by Line reconciliation at all), so they were *entirely* invisible under
 the old AND logic despite being the biggest gap in the system. Fixed at both call
-sites (`Views/Home/Index.cshtml`'s `isUnclaimed`/`isUnclaimedMotor`).
+sites (`isUnclaimed`/`isUnclaimedMotor` — lived in `Views/Home/Index.cshtml`
+at the time; the Compressor/Motor Registry modals these gate moved to
+`Views/Home/SearchCenter.cshtml` in Pass 28 2b, same logic, new file).
 
 **All 242 non-compressor items reconciled onto `Line = "Commercial Packaged/Splits"`
 (Pass 16, data-only).** Every Motor/EEV/Coil/Control/etc. item was already Team-tagged
@@ -1435,6 +1437,148 @@ existing rows — `CCR-0106` `YA154KIE-TF5-XXX` and `CCR-0225` `YGH17R` —
 folded into the list on request, not otherwise touched), exported to xlsx
 and handed off. No inventory quantities changed by the pull itself.
 
+**Pass 28 (2b) (2026-08-21) — standalone `/Home/SearchCenter` route.**
+Advanced Filters, Omni Search, results grid (the holo-viewer), Export
+Wizard, Compressor/Motor Registry, and the Modify Stock shared partial all
+moved into a new action/view, referencing 2a's partials. `/Home/Index`
+was left completely untouched throughout — this was purely additive so
+the live dashboard couldn't regress while it was being built. Left
+dark-themed/unstyled on purpose (still true — the visual match to the
+sidebar's look is Phase 4, not this pass). Two real bugs found and fixed
+along the way, neither caught by a clean build:
+- Every cart/stock/item action in `HomeController.cs` hardcoded
+  `RedirectToAction("Index")` — harmless while Index was the only page
+  that could call them, but would've silently stranded a Search Center
+  user back on the old dashboard after every action once a second real
+  page existed. Fixed with the same "smart redirect to whatever page you
+  came from" pattern `LogCompressorUnits`/`SetTheme` already used —
+  `SmartRedirect()`, applied to `AddToCart`/`RemoveFromLedger`/
+  `SubmitLedger`/`ModifyStock`/`DeleteItem`/`DeleteVariant`/`CancelOrder`.
+- Export Wizard's location cascade (`locMap`) was declared *inside* the
+  compressor/motor filter IIFE rather than at true `<script>`-tag top
+  level. `site.js`'s `bindCascadingLocation()` reads `locMap` as a free
+  variable resolved in *its own* lexical scope (where it's defined, in
+  site.js), not the caller's — an IIFE-local `locMap` was invisible to it
+  regardless of load order: `ReferenceError` on the first Parent pick.
+  This was pre-existing on `Index.cshtml` too, not introduced by this
+  pass — confirmed live by reproducing it on the running dashboard before
+  touching anything. Fixed in both places by moving `locMap` to the same
+  top-level const block as `itemsList`/`orgStructure`/etc.
+
+**Pass 28 (2c) (2026-08-21) — standalone Command Center content.** KPI
+strip, map + a new synced Location List (hover/click cross-highlights the
+matching pin), two donuts (Need PN, Need Serial), Quick Actions, and a
+Stock Alerts/Pending/Incoming Shipments bottom row, at (then) a separate
+`/Home/CommandCenter` route. Unlike Search Center, this one picked up the
+sidebar's light/shadow-card visual language immediately rather than
+waiting for Phase 4 — my call once I saw the sidebar next to the old
+dashboard look. New `.cc-*` CSS system built entirely from the existing
+`--vis-*` tokens, same approach the sidebar shell itself uses. Two real
+bugs found live, neither a build error:
+- `CommandCenter()` never set `ViewBag.InventoryService`, so the view's
+  own `GetAll()` call (same pattern `Index.cshtml` uses to build
+  `zoneDataMap`) fell back to an empty list — every map zone and the new
+  Location List read "0 rows" everywhere despite the KPI strip's own item
+  count being correct (that one came from a separate, correctly-populated
+  controller variable). No console error, no exception — just silently
+  wrong data, caught only by comparing the live `zoneDataMap` JSON against
+  `Index.cshtml`'s.
+- The copied map/zone-menu code calls `site.js`'s `locDecode()`, which
+  reads a `locDecodeMap` free variable — a sixth required page-level
+  const (alongside `itemsList`/`orgStructure`/`teamLines`/`rackRowMap`/
+  `locMap`) that got missed when the map logic was copied over.
+Also: the **Need Serial donut's original definition was misleading, not
+wrong** — I caught it live, comparing it next to Need PN (100%) reading
+0% right beside it. `CompressorUnits` rows with a blank serial, out of
+total `CompressorUnits` rows, is genuinely what the original 2c scope
+doc said — but only 184 of the real 849 on-hand compressor units have
+ever been logged into that table at all, and whoever creates a row tends
+to fill the serial in at the same time, so "blank among rows that exist"
+reads as a near-zero gap by construction. Redefined to match Need PN's
+own framing (real total vs. how much of it is actually identified):
+849 total on-hand compressor quantity, 184 rows all with a real serial,
+true gap 849 − 184 = 665 (78%). Fixed same day, separate commit.
+
+**Pass 28 (2d) (2026-08-21) — the swap.** `Index()` no longer takes any
+query params or serves a holo-viewer — its body is now exactly what
+Command Center's separate action used to be, returning
+`View("CommandCenter")`. The separate `/Home/CommandCenter` route from 2c
+is gone (consolidated so there's one canonical home route, not two
+serving identical content) — that URL now 404s on purpose. `Index.cshtml`
+itself (2551 lines, the old combined dashboard+search page) is deleted,
+not left as dead weight. `_Layout.cshtml`'s "Dashboard" nav label renamed
+"Command Center"; added the real "Search Center" nav link Pass 27
+deliberately left out while the route didn't exist yet. `AllItems.cshtml`'s
+per-row "Handle Stock" deep-link (the one place left in the app that
+jumped into the old holo-viewer from outside it) moved from Index to
+Search Center. Verified live end-to-end: real numbers on "/", nav
+highlighting, the AllItems deep-link opening a real item, a Quick Action
+still working from the new home route, and a full sign-out → sign-in
+cycle landing back on "/" with real (not stale-cached) data.
+
+**Pass 28 (2d.1) (2026-08-21) — light/dark legibility pass, plus Alert
+Rules turned out to be unreachable.** Went through Command Center and
+Search Center in both themes with a real contrast checker (computed
+foreground vs. effective background, not eyeballing) instead of assuming
+the existing theme system covered everything it needed to. Found and
+fixed four real contrast bugs, all pre-existing or introduced earlier in
+this same Pass 28 arc, none of them new to this specific pass:
+- `.text-light-gray` never had a real base color anywhere in the app — it
+  inherited from whatever ancestor set `color` (usually `.modal-content`'s
+  hardcoded white), which read as "white" in dark mode and went fully
+  invisible wherever an ancestor's background flips to white in light
+  theme. Given a real base rule now (`var(--vis-text-muted)`, themed for
+  free).
+- `.modal-content label` (Modify Stock/New Item Registry/Alert Rules/
+  Export Wizard/Add to Cart) hardcoded `#E2E8F0` with no light-mode
+  override — ~1.17:1 on a white modal. Command Center never even had the
+  rule at all (missed when 2c was built), so its labels rendered pure
+  white. Globalized into `site.css` (was duplicated per-page) with a real
+  light-mode override.
+- `text-info`/`text-warning` (section headers and field labels throughout
+  the same partials) read ~1.6–2.0:1 on white — same fix shape.
+- `.btn-outline-danger`/`warning`/`info` sitewide (not just the new pages
+  — also MyOrders, PickupQueue, Intake, AllItems) read ~2:1 on white.
+  Fixed globally since it's a simple color/border-color swap, not scoped
+  like the three above.
+The Compressor/Motor Registry rows and their filter bar keep an
+intentionally always-dark background (Search Center's dark styling,
+Phase 4 still pending) — each fix above needed a matching exclusion
+(`.comp-row`/`.motor-row`/`.filter-bar-dark`) so text there didn't flip to
+a theme-relative color that would go dark-on-dark against a background
+that never changes. Also fixed one more single-instance case while
+checking nearby: MyOrders' loan "Outstanding" count hardcoded
+`color:#F59E0B` inline, same class of bug, ~2.15:1 in light mode.
+Separately — found only because I happened to open Alert Rules to check
+its own contrast — **nothing had triggered `#modifyAlertsModal` since
+`Index.cshtml` was retired in 2d.** Command Center never included
+`_AlertRulesPartial` or a trigger for it at all (a 2c gap, not something
+2d broke). Per-item and bulk (Management+) alert threshold editing were
+unreachable in the live app. Added the partial and a gear-icon trigger on
+the Stock Alerts bottom-row card, structured so it doesn't also fire the
+card's own stretched-link navigation.
+
+**Open from 2d.1 — needs a fresh session with a real browser, not just
+this one's Browser-pane tool (see the Traps entry on that tool's limits):**
+1. **Re-verify Alert Rules actually works end to end.** The gear-icon fix
+   was only exercised through this session's Browser-pane tool — click it
+   for real: per-item threshold set/save, and (as Management+/Admin) the
+   bulk "Apply to all" confirm flow. It read correctly through the tool,
+   but that tool has known gaps (see Traps), so this hasn't had a real
+   click-through yet.
+2. **An unexplained dark-mode contrast anomaly.** In *forced* dark mode
+   (both via the real toggle and a manual `data-theme` override), Search
+   Center's Clear/Commercial/Residential/Sustaining buttons
+   (`.btn-outline-secondary`) rendered dark-on-dark (`#1A1D23` text on a
+   `#1C1E24`-ish background) instead of the expected white-on-dark. Traced
+   exhaustively — full stylesheet + `@@media`-query walk found no CSS rule
+   that would produce that color, `--bs-white-rgb` computed correctly as
+   white, no inline style, and the one selector that looked suspicious
+   (`:root[data-theme="light"] .btn-outline-secondary`) provably didn't
+   match (`el.matches(...)` returned `false`). Did not "fix" this since I
+   couldn't attribute it to any real rule — worth a look in an actual
+   browser before assuming it's real (vs. a tooling/emulation artifact).
+
 ---
 
 ## Backlog
@@ -1785,9 +1929,24 @@ session's light-mode/sidebar-collapse fix (`75d1949`) carried the same caveat. B
 got their real live verification on 2026-08-19 (`15822b4`), which found and fixed
 three regressions — two silent script-killing bugs from the extraction itself, one
 unrelated map-pin resize bug found along the way — all detailed in the Pass 28 (2a)
-entry above and the Traps section. **2a is now actually done and verified; 2b
-(the new `SearchCenter` route) has not been started.**
+entry above and the Traps section.
 The same 2026-08-19 session deleted one test item that had made it into the live db
 and pulled the compressor catalog against a part list from Sean — see the Pass 28
 (2a) entry above for exactly what changed; the db was backed up first, and nothing
 else in the live data was touched.
+**2b/2c/2d all landed the same day (2026-08-21): Search Center and Command Center
+both exist as real pages, `/` now renders Command Center directly (the old combined
+`Index.cshtml` is deleted), and the sidebar nav has real links to both.** A same-day
+follow-up (2d.1) went through both new pages in light and dark mode with a real
+contrast checker and found four genuine legibility bugs (all pre-existing or from
+earlier in this same 2b–2d arc, not new) plus a real functional gap — Alert Rules
+had been completely unreachable since `Index.cshtml` was retired, not wired into
+either new page at all. All of that is fixed and committed. **Two things from that
+pass still need a fresh session with an actual browser, not just this session's
+Browser-pane tool, to close out — see "Open from 2d.1" in the Pass 28 (2d.1) entry
+above: a real click-through confirmation that Alert Rules truly works end to end,
+and an unexplained dark-mode contrast anomaly on Search Center's outline buttons
+that couldn't be traced to any real CSS rule.** Phase 4 (the broader visual pass —
+Search Center is still deliberately dark/unstyled, and a first pass surfaced that
+the SAME contrast gaps likely exist on pages never touched by any of this, e.g.
+PickupQueue) has not been started.
