@@ -1558,26 +1558,63 @@ unreachable in the live app. Added the partial and a gear-icon trigger on
 the Stock Alerts bottom-row card, structured so it doesn't also fire the
 card's own stretched-link navigation.
 
-**Open from 2d.1 — needs a fresh session with a real browser, not just
-this one's Browser-pane tool (see the Traps entry on that tool's limits):**
-1. **Re-verify Alert Rules actually works end to end.** The gear-icon fix
-   was only exercised through this session's Browser-pane tool — click it
-   for real: per-item threshold set/save, and (as Management+/Admin) the
-   bulk "Apply to all" confirm flow. It read correctly through the tool,
-   but that tool has known gaps (see Traps), so this hasn't had a real
-   click-through yet.
-2. **An unexplained dark-mode contrast anomaly.** In *forced* dark mode
-   (both via the real toggle and a manual `data-theme` override), Search
-   Center's Clear/Commercial/Residential/Sustaining buttons
-   (`.btn-outline-secondary`) rendered dark-on-dark (`#1A1D23` text on a
-   `#1C1E24`-ish background) instead of the expected white-on-dark. Traced
-   exhaustively — full stylesheet + `@@media`-query walk found no CSS rule
-   that would produce that color, `--bs-white-rgb` computed correctly as
-   white, no inline style, and the one selector that looked suspicious
-   (`:root[data-theme="light"] .btn-outline-secondary`) provably didn't
-   match (`el.matches(...)` returned `false`). Did not "fix" this since I
-   couldn't attribute it to any real rule — worth a look in an actual
-   browser before assuming it's real (vs. a tooling/emulation artifact).
+**Pass 28 (2d.2) (2026-08-21) — closed out both items 2d.1 left open, plus
+a cosmetic breadcrumb simplification.** Same-day follow-up, still using
+this session's Browser-pane tool (not a real device) but with real UI
+clicks throughout — not JS-triggered — and DB state checked directly via
+`sqlite3`/Python against `C:\VIS_Inventory\inventory.db` before and after
+every write, not just through the app's own re-fetch.
+
+- **Alert Rules re-verified end to end, both flows, against real data.**
+  Snapshotted `AlertThreshold` for all 491 items first (all 0 — confirms
+  the "0 on all compressors" known issue is actually 0 app-wide, not just
+  compressors). **Per-item:** searched CCR-0001, set threshold 5, Save —
+  `UPDATE InventoryItems SET AlertThreshold = 5` fired, reopening the
+  modal read back 5 correctly. Reset to 0, confirmed via a second real
+  click-through, not just Cancel. **Bulk "Apply to all":** entered 3,
+  clicked Apply to all, the confirm dialog correctly read "Set the alert
+  threshold to 3 for all items you oversee? This overwrites every current
+  threshold," confirmed — all 491 rows flipped to 3 in one write, and it
+  correctly fed the Low Stock count/notification live ("254 items low on
+  stock"). Reset to 0 the same way, confirmed all 491 rows back to 0 —
+  original state fully restored, zero net change to real data. **Side
+  observation, not fixed, not asked for:** neither `UpdateAlertThreshold`
+  nor `SetDefaultThreshold` writes a `TransactionLog` entry, unlike every
+  other Settings/admin action — threshold changes don't show up in the
+  Activity Feed or View Logs. Worth a look if that audit trail gap ever
+  matters.
+- **Dark-mode contrast anomaly: still could not reproduce, now from a
+  second independent session.** Tried three ways — the real theme toggle,
+  a fresh page load while already in dark mode (server-side cookie, not
+  runtime JS), and a manual `data-theme` override — all three showed the
+  Clear/Commercial/Residential/Sustaining buttons correctly at
+  white-on-dark. Went further than 2d.1 did: pulled the actual matching
+  CSS rule this time (`2d.1`'s `el.matches()` check apparently ran at a
+  moment the attribute genuinely was absent/dark, so it just didn't find
+  it) — `:root[data-theme="light"] .btn-outline-secondary { color:
+  rgb(26, 29, 35) !important; }`, which is exactly the `#1A1D23` color
+  2d.1 saw, but correctly scoped to light mode only, and it genuinely
+  doesn't match in dark mode in this session. Two independent
+  Browser-pane sessions now both getting correct results, on a tool
+  already known (Pass 26) to not visually composite real frames, points
+  at this having been a one-off rendering artifact rather than a
+  persistent code defect — but this still isn't a real-device
+  confirmation. **Downgraded from "open defect" to "closed on inspection,
+  worth a 10-second real-browser glance if it ever recurs"** rather than
+  fully closed, since absence of reproduction isn't proof of absence.
+- **Identity breadcrumb simplified, Kason's ask.** Was "Branch → Line →
+  tier name" (e.g. "Commercial Air → Commercial Packaged/Splits →
+  Admin"); now "Line | L<level>" (e.g. "Commercial Packaged/Splits |
+  L5") — Branch dropped entirely, tier collapsed from the word
+  (`AccessLevels.Name`) to `L` + the raw numeric `AccessLevel` (1–5).
+  Purely cosmetic, `_Layout.cshtml` only, `myBranchLabel`/`OrgStructure.
+  BranchFor` computation removed since nothing else used it. Blank Line
+  (whole-Branch users) still drops that part cleanly, same as before —
+  a user with no Line just shows `L4` alone. Verified live on both
+  Command Center and Search Center after a real rebuild (had to stop the
+  running dev server first — the locked `.exe` blocked `dotnet build`,
+  same class of issue as the Stale Debug Build entry below, just from a
+  live process instead of a stale one).
 
 ---
 
@@ -1941,12 +1978,14 @@ follow-up (2d.1) went through both new pages in light and dark mode with a real
 contrast checker and found four genuine legibility bugs (all pre-existing or from
 earlier in this same 2b–2d arc, not new) plus a real functional gap — Alert Rules
 had been completely unreachable since `Index.cshtml` was retired, not wired into
-either new page at all. All of that is fixed and committed. **Two things from that
-pass still need a fresh session with an actual browser, not just this session's
-Browser-pane tool, to close out — see "Open from 2d.1" in the Pass 28 (2d.1) entry
-above: a real click-through confirmation that Alert Rules truly works end to end,
-and an unexplained dark-mode contrast anomaly on Search Center's outline buttons
-that couldn't be traced to any real CSS rule.** Phase 4 (the broader visual pass —
+either new page at all. All of that is fixed and committed. **A same-day follow-up
+(2d.2) closed both items 2d.1 left open** — see that entry above: Alert Rules
+re-verified end to end (per-item and bulk "Apply to all") with real UI clicks and
+direct DB checks against the live db, and the dark-mode contrast anomaly still
+couldn't be reproduced from a second independent session, downgraded from "open
+defect" to "closed on inspection, worth a glance in a real browser if it recurs."
+2d.2 also shipped a cosmetic ask: the identity breadcrumb is now "Line | L<level>"
+instead of "Branch → Line → tier name." Phase 4 (the broader visual pass —
 Search Center is still deliberately dark/unstyled, and a first pass surfaced that
 the SAME contrast gaps likely exist on pages never touched by any of this, e.g.
 PickupQueue) has not been started.
