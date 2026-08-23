@@ -110,7 +110,7 @@ namespace Visual_Inventory_System.Controllers
         // dark-themed/unstyled on purpose -- the visual match to the sidebar's
         // new look is Phase 4, not this pass (Command Center picked that up
         // early in 2c/2d; this page is still waiting on it).
-        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? mode, string? stockView)
+        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? filterBranch, string? mode, string? stockView)
         {
             var allItems = _inventoryService.GetAll().ToList();
             PopulateSearchViewBag(allItems);
@@ -147,7 +147,7 @@ namespace Visual_Inventory_System.Controllers
             }
             else if (mode != "None")
             {
-                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes);
+                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes, filterBranch);
                 searchResult.Items = foundItems;
 
                 if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
@@ -162,6 +162,7 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.FilterType = filterType ?? "";
             ViewBag.FilterBrand = filterBrand ?? "";
             ViewBag.FilterNotes = filterNotes ?? "";
+            ViewBag.FilterBranch = filterBranch ?? "";
 
             return View();
         }

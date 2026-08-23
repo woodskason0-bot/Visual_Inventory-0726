@@ -685,11 +685,20 @@ body {
 
 /* Start-Order modal: its header/body sit on var(--vis-card) (white in light mode),
    but the title + body carry .text-white, so they vanished in light mode.
-   Scoped to #startOrderModal so colored-header modals (blue/green/dark) are untouched. */
+   Compressor/Motor Registry modals share the identical white-card structure and
+   had the same bug (title + close button invisible in light mode) -- same fix,
+   same selector list. Scoped to these three IDs so colored-header modals
+   (blue/green/dark) are untouched. */
 :root[data-theme="light"] #startOrderModal .modal-title,
 :root[data-theme="light"] #startOrderModal .modal-body,
-:root[data-theme="light"] #startOrderModal .modal-body .text-white { color: #1A1D23 !important; }
-:root[data-theme="light"] #startOrderModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }
+:root[data-theme="light"] #startOrderModal .modal-body .text-white,
+:root[data-theme="light"] #compressorRegistryModal .modal-title,
+:root[data-theme="light"] #compressorRegistryModal .modal-body .text-white,
+:root[data-theme="light"] #motorRegistryModal .modal-title,
+:root[data-theme="light"] #motorRegistryModal .modal-body .text-white { color: #1A1D23 !important; }
+:root[data-theme="light"] #startOrderModal .btn-close-white,
+:root[data-theme="light"] #compressorRegistryModal .btn-close-white,
+:root[data-theme="light"] #motorRegistryModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }
 
 /* Sidebar brand text ("Visual Inventory System") and the top bar's signed-in
    user name both carry Bootstrap's .text-white, inherited from when the

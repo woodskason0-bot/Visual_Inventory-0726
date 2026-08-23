@@ -216,7 +216,7 @@ namespace Visual_Inventory_System.Services
         // NOTE: the old "name" filter slot is now the Rheem Part # filter
         // (leadership: PN is a primary identifier). Item NAME is still
         // reachable through omni-search.
-        public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand, string? notes)
+        public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand, string? notes, string? branch = null)
         {
             // Include variants: results feed the holoviewer, which reads the
             // Quantity/location pass-throughs -- without variants loaded those
@@ -248,6 +248,14 @@ namespace Visual_Inventory_System.Services
                 // and cannot be used in an EF query) -- match any active variant.
                 query = query.Where(i => i.Description.ToLower().Contains(notes.ToLower()) ||
                                          i.Variants.Any(v => !v.IsRetired && v.FdaString.ToLower().Contains(notes.ToLower())));
+                isFilterActive = true;
+            }
+            if (!string.IsNullOrWhiteSpace(branch) && OrgStructure.BranchLines.TryGetValue(branch, out var branchLines))
+            {
+                // Branch isn't a column on InventoryItem -- only Line is -- so
+                // resolve the Branch's member Lines here and match on those
+                // (translates to a SQL IN, same as any other array.Contains).
+                query = query.Where(i => branchLines.Contains(i.Line));
                 isFilterActive = true;
             }
 

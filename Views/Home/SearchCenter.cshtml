@@ -232,9 +232,9 @@
             <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
             <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
             <span class="mx-1"></span>
-            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Commercial" class="@branchBtnClass("Commercial Air")">Commercial</a>
-            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Residential" class="@branchBtnClass("Residential Air")">Residential</a>
-            <a href="/Home/SearchCenter?mode=Omni&omniSearch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
+            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Commercial%20Air" class="@branchBtnClass("Commercial Air")">Commercial</a>
+            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Residential%20Air" class="@branchBtnClass("Residential Air")">Residential</a>
+            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
             @if (CurrentUser.Level >= AccessLevels.Standard)
             {
                 <a href="/Home/SearchCenter?mode=Ledger" class="btn btn-sm btn-info text-white py-2 ms-auto">
