@@ -1616,6 +1616,21 @@ every write, not just through the app's own re-fetch.
   same class of issue as the Stale Debug Build entry below, just from a
   live process instead of a stale one).
 
+**2026-08-21/22 — same-day follow-up, not a numbered pass (commit `6014f74`).**
+Quick Filters' Commercial/Residential/Sustaining buttons were still doing a plain
+Omni Search text match for the literal word — the omni search doesn't even read
+`Line`, so this only "worked" when that word happened to appear in some unrelated
+text field. `InventoryService.Search` gained an optional `branch` param that
+resolves to the real member Lines via `OrgStructure.BranchLines` and filters on
+those (translates to a SQL `IN`, same as any other `array.Contains`). Verified
+live: Commercial and Residential now return genuinely different real subsets (388
+vs. 63 of 491 items), not the same near-everything match both times. Separately,
+`compressorRegistryModal` and `motorRegistryModal` shared `startOrderModal`'s exact
+white-card structure and had the same white-on-white close-button/title bug in
+light mode that 2d.1 had already fixed for `startOrderModal` specifically — the
+fix just never got extended to the other two. Extended the same selector list in
+`site.css`; dark mode confirmed unaffected by direct computed-style comparison.
+
 ---
 
 ## Backlog

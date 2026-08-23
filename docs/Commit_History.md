@@ -9,6 +9,26 @@ landed, when."
 
 ---
 
+## 2026-08-22
+
+### `6014f74` — Quick Filters now match real Branch membership; fix invisible close button on Compressor/Motor modals in light mode
+Commercial/Residential/Sustaining quick filters were firing an Omni Search text
+match for the literal word — the omni search doesn't even read `Line`, so this
+only "worked" when that word happened to appear in some unrelated text field.
+`InventoryService.Search` gained an optional `branch` param resolving to the real
+member Lines via `OrgStructure.BranchLines` (translates to a SQL `IN`). Verified
+live: Commercial and Residential now return genuinely different real subsets (388
+vs. 63 of 491 items), not the same near-everything match both times.
+`compressorRegistryModal`/`motorRegistryModal` shared `startOrderModal`'s exact
+white-card structure and had the same white-on-white close-button/title bug in
+light mode that had already been fixed for `startOrderModal` specifically — the
+fix just never got extended to the other two; extended the same selector list.
+Dark mode confirmed unaffected by direct computed-style comparison.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/SearchCenter.cshtml`, `wwwroot/css/site.css`.
+
+---
+
 ## 2026-08-21
 
 ### `c7cec21` — Pass 28 (2d.1): light/dark legibility pass, plus Alert Rules was unreachable

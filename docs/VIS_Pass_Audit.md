@@ -436,7 +436,7 @@ admin action does.
 
 ---
 
-## Same-day follow-up, not its own pass (2026-08-21/22)
+## Same-day follow-up, not its own pass (2026-08-21/22, commit `6014f74`)
 
 Quick Filters' Commercial/Residential/Sustaining buttons were still doing a plain
 Omni-Search text match for the literal word — reliable only by accident, and not
