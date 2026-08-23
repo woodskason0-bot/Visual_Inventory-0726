@@ -23,6 +23,11 @@ These three `docs/` files are kept current at the end of every working session. 
 something in the live code or git history contradicts them, trust what's actually
 there and flag the discrepancy — don't silently assume the docs are right.
 
+For a synthesis of the whole project organized by Pass number instead of by date
+or subsystem, see `docs/VIS_Pass_Audit.md`. Unlike the three files above, it's a
+point-in-time audit, not a running doc — it won't self-update as new passes ship
+unless asked.
+
 ## Project
 
 Visual Inventory System (VIS) — ASP.NET Core MVC (`net10.0`) inventory app built for
