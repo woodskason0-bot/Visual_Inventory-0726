@@ -30,9 +30,27 @@
     }
 }
 
+@{
+    var splitTo = ViewBag.SplitTo as System.Collections.Generic.List<int> ?? new System.Collections.Generic.List<int>();
+}
 <h2>Order @Model.Id</h2>
 <p>Created: @Model.CreatedAt.ToLocalTime() @(string.IsNullOrEmpty(Model.RequestedBy) ? "" : $"by {Model.RequestedBy}")</p>
 <p>Status: @Model.Status</p>
+@if (Model.SplitFromOrderId.HasValue)
+{
+    <p class="text-muted">Split from <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@Model.SplitFromOrderId">Order #@Model.SplitFromOrderId</a> -- the rest of that line's original request.</p>
+}
+@if (splitTo.Any())
+{
+    <p class="text-muted">
+        Part of this order's demand was split off to
+        @for (int i = 0; i < splitTo.Count; i++)
+        {
+            <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@splitTo[i]">Order #@splitTo[i]</a>@(i < splitTo.Count - 1 ? ", " : "")
+        }
+        -- a picker took what was on hand and deferred the rest.
+    </p>
+}
 @if (Model.FulfilledAt.HasValue || !string.IsNullOrEmpty(Model.FulfilledBy))
 {
     <p>Received: @(Model.FulfilledAt.HasValue ? Model.FulfilledAt.Value.ToLocalTime().ToString() : "—") @(string.IsNullOrEmpty(Model.FulfilledBy) ? "" : $"by {Model.FulfilledBy}")</p>
@@ -71,6 +89,10 @@
                 @if (wasShort)
                 {
                     <span class="badge bg-warning text-dark" title="Came up short on the shelf; stock was corrected and the real quantity was reissued and picked up on a separate order.">Short — reissued separately</span>
+                }
+                @if (it.Status == "Split")
+                {
+                    <span class="badge bg-info text-dark" title="Picker took what was on hand here; the remainder was deliberately deferred to a new order.">Split — remainder deferred</span>
                 }
             </td>
         </tr>

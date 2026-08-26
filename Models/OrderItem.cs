@@ -11,15 +11,20 @@ namespace Visual_Inventory_System.Models
         public int Quantity { get; set; }
 
         /// <summary>
-        /// "Pending" | "Completed" | "Cancelled" | "Corrected". Line-level state
-        /// so one short line on a multi-item order can be pulled aside for a
+        /// "Pending" | "Completed" | "Cancelled" | "Corrected" | "Split". Line-level
+        /// state so one short line on a multi-item order can be pulled aside for a
         /// stock correction while its sibling lines pick up normally. A line
         /// that comes up short at pickup is set to "Cancelled" here (its real
         /// fulfillment happens on a freshly issued order against the corrected
         /// count) rather than letting the order close short. OrderService.
         /// ReportShortPull immediately flips a "Cancelled" line to "Corrected"
         /// once it starts acting on it, so a double-submit can't apply the same
-        /// stock correction (and reissue a duplicate order) twice.
+        /// stock correction (and reissue a duplicate order) twice. "Split" is a
+        /// different situation, deliberately kept separate from "Corrected": the
+        /// shelf had enough (or at least the picker never found out otherwise) --
+        /// the picker chose to grab what was at hand and defer the rest, which
+        /// spins off as a real Pending order (Order.SplitFromOrderId) instead of
+        /// leaving the remainder unaccounted for.
         /// </summary>
         public string Status { get; set; } = "Pending";
 

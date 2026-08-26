@@ -1159,7 +1159,7 @@ namespace Visual_Inventory_System.Controllers
         {
             var orders = _db.Orders.Where(o => o.Status == "Pending").Include(o => o.Items).AsNoTracking().OrderBy(o => o.CreatedAt).ToList();
             var result = orders.Select(order => {
-                var vm = new PendingOrderViewModel { OrderId = order.Id, CreatedAt = order.CreatedAt, Status = order.Status, RequestedBy = order.RequestedBy };
+                var vm = new PendingOrderViewModel { OrderId = order.Id, CreatedAt = order.CreatedAt, Status = order.Status, RequestedBy = order.RequestedBy, SplitFromOrderId = order.SplitFromOrderId };
                 var canFulfill = true;
                 var blockedByPriority = false;
 
@@ -1191,6 +1191,18 @@ namespace Visual_Inventory_System.Controllers
                     var activeVars = (itemEntity?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .OrderBy(v => v.VariantNumber).ToList();
 
+                    // Real on-hand units per location -- feeds the serial picker
+                    // on Pickup Queue. Fetched once per line, grouped by variant,
+                    // so choosing a location client-side can swap in exactly
+                    // what's actually on that shelf instead of a blind text box.
+                    var onHandByVariant = InventoryService.IsCompressorType(itemEntity?.Type)
+                        ? _db.CompressorUnits.AsNoTracking()
+                              .Where(c => c.ItemId == it.ItemId && c.Status == Visual_Inventory_System.Models.UnitStatus.OnHand && c.ItemVariantId != null)
+                              .OrderBy(c => c.RecordedAt)
+                              .GroupBy(c => c.ItemVariantId!.Value)
+                              .ToDictionary(g => g.Key, g => g.Select(c => new OnHandUnitViewModel { SerialNumber = c.SerialNumber, LabNumber = c.LabNumber }).ToList())
+                        : new Dictionary<int, List<OnHandUnitViewModel>>();
+
                     var itemVm = new PendingOrderItemViewModel
                     {
                         OrderItemId = it.Id,
@@ -1205,7 +1217,13 @@ namespace Visual_Inventory_System.Controllers
                             ? activeVars.Where(v => v.Id == it.RequestedVariantId.Value).Select(VLabel).FirstOrDefault()
                             : null,
                         LocationChoices = activeVars
-                            .Select(v => new VariantChoiceViewModel { VariantId = v.Id, Label = VLabel(v) })
+                            .Select(v => new VariantChoiceViewModel
+                            {
+                                VariantId = v.Id,
+                                Label = VLabel(v),
+                                Quantity = v.Quantity,
+                                OnHandUnits = onHandByVariant.TryGetValue(v.Id, out var units) ? units : new List<OnHandUnitViewModel>()
+                            })
                             .ToList()
                     };
 
@@ -1486,7 +1504,12 @@ namespace Visual_Inventory_System.Controllers
                 }
 
                 // Compressor mini-variants: compLab_{orderItemId}_{n} / compSerial_{orderItemId}_{n},
-                // n = 0-based unit index on that line. Both soft -- blank posts through as null.
+                // n = 0-based unit index on that line. compSerial is the serial picker's
+                // selected value -- a real on-hand serial, "__NONE__" (picker explicitly
+                // said this unit has none), or "__ADD__" (picker is naming a serial the
+                // roster doesn't know about yet, typed into compSerialManual_{oi}_{n}
+                // instead). Both Lab# and the resolved serial are soft -- blank/"__NONE__"
+                // posts through as null.
                 var compressorUnits = new Dictionary<int, List<(string? Lab, string? Serial)>>();
                 foreach (var key in Request.Form.Keys)
                 {
@@ -1498,6 +1521,10 @@ namespace Visual_Inventory_System.Controllers
 
                     string? lab = Request.Form[key].ToString();
                     string? serial = Request.Form[$"compSerial_{oiId}_{unitIdx}"].ToString();
+                    if (serial == "__ADD__")
+                        serial = Request.Form[$"compSerialManual_{oiId}_{unitIdx}"].ToString();
+                    else if (serial == "__NONE__")
+                        serial = null;
 
                     if (!compressorUnits.TryGetValue(oiId, out var list))
                     {
@@ -1531,6 +1558,41 @@ namespace Visual_Inventory_System.Controllers
             catch (Exception ex) { TempData["Error"] = ex.Message; }
 
             // SMART REDIRECT: Go back to the exact page you came from (Logs OR Orders)
+            string referer = Request.Headers["Referer"].ToString();
+            return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
+        }
+
+        // Deliberate partial pickup (see OrderService.PickUpPartialAndSplit) --
+        // the picker saw, before submitting, that the chosen location can't
+        // cover the full line and chose to take what's there and defer the
+        // rest. compLab_{u}/compSerial_{u}/compSerialManual_{u} are posted
+        // per-unit for just the pickupQty units actually leaving (u = 0-based,
+        // no orderItemId prefix needed since this action only ever resolves
+        // one line at a time).
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult PickUpPartialAndSplit(int orderId, int orderItemId, int variantId, int pickupQty)
+        {
+            try
+            {
+                var unitChoices = new Dictionary<int, (string? Lab, string? Serial)>();
+                for (int u = 0; u < pickupQty; u++)
+                {
+                    string? lab = Request.Form[$"compLab_{u}"].ToString();
+                    string? serial = Request.Form[$"compSerial_{u}"].ToString();
+                    if (serial == "__ADD__")
+                        serial = Request.Form[$"compSerialManual_{u}"].ToString();
+                    else if (serial == "__NONE__")
+                        serial = null;
+                    unitChoices[u] = (lab, serial);
+                }
+
+                _orderService.PickUpPartialAndSplit(orderId, orderItemId, variantId, pickupQty, unitChoices);
+                TempData["Success"] = $"Picked up {pickupQty}; the rest was split into a new order.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
         }
@@ -1717,6 +1779,13 @@ namespace Visual_Inventory_System.Controllers
             var order = _db.Orders.Include(o => o.Items).AsNoTracking().FirstOrDefault(o => o.Id == id);
             if (order == null) return NotFound();
             ViewBag.InventoryLookup = _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToDictionary(i => i.ItemId);
+            // Reverse lineage -- did anything split OFF of this order? (Forward
+            // lineage, "this order split from #N," is just order.SplitFromOrderId
+            // itself, no query needed.)
+            ViewBag.SplitTo = _db.Orders.AsNoTracking()
+                .Where(o => o.SplitFromOrderId == id)
+                .Select(o => o.Id)
+                .ToList();
             return View(order);
         }
 

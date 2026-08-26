@@ -25,7 +25,13 @@
                 @foreach (var order in Model)
                 {
                     <tr>
-                        <td class="fw-bold">@order.Id</td>
+                        <td class="fw-bold">
+                            @order.Id
+                            @if (order.SplitFromOrderId.HasValue)
+                            {
+                                <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.SplitFromOrderId" class="d-block text-muted" style="font-size:11px; font-weight:normal;">split from #@order.SplitFromOrderId</a>
+                            }
+                        </td>
                         <td class="text-muted small">@order.CreatedAt.ToLocalTime()</td>
                         <td class="small">@(string.IsNullOrEmpty(order.RequestedBy) ? "—" : order.RequestedBy)</td>
                         <td>

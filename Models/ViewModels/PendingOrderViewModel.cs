@@ -9,6 +9,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         public DateTime CreatedAt { get; set; }
         public string Status { get; set; } = string.Empty;
         public string? RequestedBy { get; set; }
+        public int? SplitFromOrderId { get; set; }
         public List<PendingOrderItemViewModel> Items { get; set; } = new();
         public bool CanFulfill { get; set; }
         public bool IsBlockedByPriority { get; set; }

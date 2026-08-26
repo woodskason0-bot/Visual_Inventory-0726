@@ -67,6 +67,10 @@ namespace Visual_Inventory_System.Data
                 b.HasKey(o => o.Id);
                 b.Property(o => o.CreatedAt).IsRequired();
                 b.Property(o => o.Status).HasMaxLength(50);
+
+                // Reverse lookup ("what split off of this order?") is the common
+                // direction -- OrderDetails renders it on every page view.
+                b.HasIndex(o => o.SplitFromOrderId);
             });
 
             modelBuilder.Entity<OrderItem>(b =>

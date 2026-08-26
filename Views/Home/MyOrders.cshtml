@@ -237,7 +237,13 @@
                     @foreach (var o in Model.Orders)
                     {
                         <tr>
-                            <td class="fw-bold">#@o.Id</td>
+                            <td class="fw-bold">
+                                #@o.Id
+                                @if (o.SplitFromOrderId.HasValue)
+                                {
+                                    <span class="mo-sub d-block" style="font-size:11px;">split from #@o.SplitFromOrderId</span>
+                                }
+                            </td>
                             <td class="mo-sub">@o.CreatedAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</td>
                             <td>
                                 @if (o.Status == "Completed")

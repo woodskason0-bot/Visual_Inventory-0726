@@ -130,6 +130,26 @@
         </div>
     }
 
+    <!-- Deliberate partial pickup (see OrderService.PickUpPartialAndSplit) -- hidden
+         until "Take these, short-pull the rest" is clicked on a shortfall banner
+         below. JS fills in the hidden fields, item description, and serial rows,
+         then reveals this card. Same shape as the Short-pull correction card
+         above: one shared form, populated per-click rather than one per line. -->
+    <div class="queue-card p-3 mb-4 d-none" id="partial-pickup-card" style="border-left: 4px solid var(--vis-red);">
+        <h6 class="fw-bold mb-2"><i class="bi bi-box-seam me-1" style="color: var(--vis-red);"></i>Take Partial Pickup</h6>
+        <p class="text-dim small mb-2" id="partial-pickup-desc"></p>
+        <form asp-controller="Home" asp-action="PickUpPartialAndSplit" method="post">
+            @Html.AntiForgeryToken()
+            <input type="hidden" name="orderId" id="partial-orderId" />
+            <input type="hidden" name="orderItemId" id="partial-orderItemId" />
+            <input type="hidden" name="variantId" id="partial-variantId" />
+            <input type="hidden" name="pickupQty" id="partial-pickupQty" />
+            <div id="partial-serial-rows" class="mb-2"></div>
+            <button type="submit" class="btn btn-sm btn-danger fw-bold">Confirm Partial Pickup</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="partial-pickup-cancel">Cancel</button>
+        </form>
+    </div>
+
     <!-- ============ GO GET THESE (pending-order pickup queue) ============ -->
     <h4 class="section-h mb-2"><i class="bi bi-box-seam me-2 text-success"></i>Go Get These</h4>
     <div class="mb-2 d-flex gap-3">
@@ -158,7 +178,13 @@
                 @foreach (var order in ready)
                 {
                     <tr>
-                        <td class="fw-bold">#@order.OrderId</td>
+                        <td class="fw-bold">
+                            #@order.OrderId
+                            @if (order.SplitFromOrderId.HasValue)
+                            {
+                                <span class="d-block text-dim" style="font-size:11px; font-weight:normal;">split from #@order.SplitFromOrderId</span>
+                            }
+                        </td>
                         <td>@Requester(order.RequestedBy)</td>
                         <td class="text-dim small">@order.CreatedAt.ToLocalTime()</td>
                         <td>@(order.Items?.Count ?? 0)</td>
@@ -183,33 +209,57 @@
                                             {
                                                 <span class="d-block mt-1" style="font-size:11px;">
                                                     <i class="bi bi-geo-alt me-1 text-warning"></i>Pull from:
-                                                    <select name="variantChoice_@it.OrderItemId" class="form-select form-select-sm d-inline-block ms-1"
+                                                    <select name="variantChoice_@it.OrderItemId" class="form-select form-select-sm d-inline-block ms-1 variant-choice-select"
+                                                            data-oi="@it.OrderItemId" data-order-id="@order.OrderId" data-ordered-qty="@it.Quantity"
                                                             style="width:auto; max-width:300px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;">
                                                         <option value="">Any location (auto)</option>
                                                         @foreach (var c in it.LocationChoices)
                                                         {
-                                                            <option value="@c.VariantId">@c.Label</option>
+                                                            <option value="@c.VariantId" data-qty="@c.Quantity">@c.Label</option>
                                                         }
                                                     </select>
                                                 </span>
+                                                @if (Visual_Inventory_System.Services.InventoryService.IsCompressorType(it.Type))
+                                                {
+                                                    <div class="mt-1 p-2 shortfall-banner d-none" data-oi="@it.OrderItemId"
+                                                         style="background:#2A1515; border:1px solid #6B2B2B; border-radius:6px;">
+                                                        <span class="d-block mb-1 text-warning shortfall-text" style="font-size:11px;"></span>
+                                                        <button type="button" class="btn btn-sm btn-outline-warning shortfall-continue" style="font-size:11px;">Continue from another location</button>
+                                                        <button type="button" class="btn btn-sm btn-outline-danger shortfall-split ms-1" style="font-size:11px;">Take these, short-pull the rest</button>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary shortfall-skip ms-1" style="font-size:11px;">Skip for now</button>
+                                                    </div>
+                                                }
                                             }
                                             @if (Visual_Inventory_System.Services.InventoryService.IsCompressorType(it.Type))
                                             {
-                                                <div class="mt-2 p-2" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
+                                                int? initialVariantId = it.RequestedVariantId
+                                                    ?? (it.LocationChoices.Count == 1 ? it.LocationChoices[0].VariantId : (int?)null);
+                                                var onHandJson = System.Text.Json.JsonSerializer.Serialize(
+                                                    it.LocationChoices.ToDictionary(
+                                                        c => c.VariantId.ToString(),
+                                                        c => c.OnHandUnits.Select(u => new { serial = u.SerialNumber, lab = u.LabNumber }).ToList()));
+                                                <div class="mt-2 p-2 comp-block" data-oi="@it.OrderItemId" data-order-id="@order.OrderId" data-item-id="@it.ItemId"
+                                                     data-item-name="@it.ItemName" data-initial-variant="@(initialVariantId?.ToString() ?? "")"
+                                                     style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
                                                     <span class="d-block mb-1" style="font-size:11px; color:#94A3B8;">
-                                                        <i class="bi bi-upc-scan me-1"></i>Lab # / Serial # (optional -- leave blank if not known)
+                                                        <i class="bi bi-upc-scan me-1"></i>Serial # -- pick from what's on hand at the pull location, or add one
                                                     </span>
                                                     @for (int u = 0; u < it.Quantity; u++)
                                                     {
                                                         <div class="d-flex gap-1 mb-1">
                                                             <input type="text" name="compLab_@(it.OrderItemId)_@(u)" class="form-control form-control-sm"
                                                                    placeholder="Lab # (unit @(u + 1))"
-                                                                   style="max-width:140px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;" />
-                                                            <input type="text" name="compSerial_@(it.OrderItemId)_@(u)" class="form-control form-control-sm"
-                                                                   placeholder="Serial # (unit @(u + 1))"
+                                                                   style="max-width:100px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;" />
+                                                            <select name="compSerial_@(it.OrderItemId)_@(u)" class="form-select form-select-sm comp-serial-select" data-oi="@it.OrderItemId"
+                                                                    style="max-width:170px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;">
+                                                                <option value="">Choose a location above</option>
+                                                            </select>
+                                                            <input type="text" name="compSerialManual_@(it.OrderItemId)_@(u)" class="form-control form-control-sm comp-serial-manual d-none"
+                                                                   placeholder="Type serial (unit @(u + 1))"
                                                                    style="max-width:140px; background-color: var(--vis-card); color: var(--vis-text); border-color: var(--vis-card-border); font-size:11px;" />
                                                         </div>
                                                     }
+                                                    <script type="application/json" class="comp-onhand-data" data-oi="@it.OrderItemId">@Html.Raw(onHandJson)</script>
                                                 </div>
                                             }
                                         </li>
@@ -369,3 +419,182 @@
 
     <p class="mt-4"><a asp-controller="Home" asp-action="Index" class="btn btn-sm btn-secondary">&larr; Back to Dashboard</a></p>
 </div>
+
+<script>
+(function () {
+    "use strict";
+
+    function optionsFor(units) {
+        var html = "";
+        (units || []).forEach(function (u) {
+            var label = "SN: " + u.serial + (u.lab ? " (Lab: " + u.lab + ")" : "");
+            var val = String(u.serial).replace(/"/g, "&quot;");
+            html += '<option value="' + val + '">' + label + "</option>";
+        });
+        html += '<option value="__NONE__">No serial</option>';
+        html += '<option value="__ADD__">Serial not in list -- add serial</option>';
+        return html;
+    }
+
+    // A picker choosing the same on-hand serial for two different units on the
+    // same line is caught server-side now (see AssignOneCompressorUnit), but
+    // catching it before Confirm is friendlier -- disable a known serial in
+    // every sibling select on the same line once another select has claimed
+    // it, and free it back up the moment that select moves off it.
+    function enforceSerialExclusivity(container) {
+        if (!container) return;
+        var selects = Array.prototype.slice.call(container.querySelectorAll(".comp-serial-select"));
+        selects.forEach(function (sel) {
+            Array.prototype.forEach.call(sel.options, function (opt) {
+                if (!opt.value || opt.value === "__NONE__" || opt.value === "__ADD__") return;
+                opt.disabled = selects.some(function (other) {
+                    return other !== sel && other.value === opt.value;
+                });
+            });
+        });
+    }
+
+    function serialContainerFor(sel) {
+        return sel.closest(".comp-block") || sel.closest("#partial-pickup-card");
+    }
+
+    function populate(oi, variantId) {
+        var dataEl = document.querySelector('.comp-onhand-data[data-oi="' + oi + '"]');
+        if (!dataEl) return;
+        var data = {};
+        try { data = JSON.parse(dataEl.textContent || "{}"); } catch (e) { data = {}; }
+        var units = variantId ? data[variantId] : null;
+
+        document.querySelectorAll('.comp-serial-select[data-oi="' + oi + '"]').forEach(function (sel, idx) {
+            var manual = sel.parentElement.querySelector(".comp-serial-manual");
+            if (!variantId) {
+                sel.innerHTML = '<option value="">Choose a location above</option>';
+                sel.disabled = true;
+                if (manual) manual.classList.add("d-none");
+                return;
+            }
+            sel.disabled = false;
+            sel.innerHTML = optionsFor(units);
+            // Stagger the default across units so a multi-unit line doesn't
+            // open with every dropdown already aimed at the same physical
+            // serial -- one real serial per unit while they last, "No serial"
+            // once they run out, rather than everyone defaulting to option 0.
+            sel.value = (units && idx < units.length) ? units[idx].serial : "__NONE__";
+            if (manual) manual.classList.add("d-none");
+        });
+        enforceSerialExclusivity(document.querySelector('.comp-block[data-oi="' + oi + '"]'));
+    }
+
+    document.querySelectorAll(".comp-block").forEach(function (block) {
+        var oi = block.getAttribute("data-oi");
+        var initial = block.getAttribute("data-initial-variant") || "";
+        populate(oi, initial || null);
+    });
+
+    function checkShortfall(locSel) {
+        var oi = locSel.getAttribute("data-oi");
+        var banner = document.querySelector('.shortfall-banner[data-oi="' + oi + '"]');
+        if (!banner) return;
+
+        var ordered = parseInt(locSel.getAttribute("data-ordered-qty") || "0", 10);
+        var opt = locSel.options[locSel.selectedIndex];
+        var here = opt ? parseInt(opt.getAttribute("data-qty") || "0", 10) : 0;
+
+        if (!locSel.value || here >= ordered) {
+            banner.classList.add("d-none");
+            return;
+        }
+
+        banner.dataset.variantId = locSel.value;
+        banner.dataset.pickupQty = here;
+        banner.querySelector(".shortfall-text").textContent =
+            "Only " + here + " of " + ordered + " on hand here.";
+        banner.classList.remove("d-none");
+    }
+
+    document.querySelectorAll('select[name^="variantChoice_"]').forEach(function (locSel) {
+        locSel.addEventListener("change", function () {
+            var parts = locSel.getAttribute("name").split("_");
+            populate(parts[1], locSel.value || null);
+            checkShortfall(locSel);
+        });
+    });
+
+    document.addEventListener("change", function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains("comp-serial-select")) {
+            var manual = t.parentElement.querySelector(".comp-serial-manual");
+            if (manual) manual.classList.toggle("d-none", t.value !== "__ADD__");
+            enforceSerialExclusivity(serialContainerFor(t));
+        }
+    });
+
+    document.addEventListener("click", function (e) {
+        var t = e.target;
+        if (!t || !t.classList) return;
+
+        if (t.classList.contains("shortfall-continue") || t.classList.contains("shortfall-skip")) {
+            var banner = t.closest(".shortfall-banner");
+            if (!banner) return;
+            if (t.classList.contains("shortfall-continue")) {
+                var oi = banner.getAttribute("data-oi");
+                var locSel = document.querySelector('.variant-choice-select[data-oi="' + oi + '"]');
+                if (locSel) { locSel.value = ""; populate(oi, null); }
+            }
+            banner.classList.add("d-none");
+            return;
+        }
+
+        if (t.classList.contains("shortfall-split")) {
+            var sBanner = t.closest(".shortfall-banner");
+            if (!sBanner) return;
+            var sOi = sBanner.getAttribute("data-oi");
+            var variantId = sBanner.dataset.variantId;
+            var pickupQty = parseInt(sBanner.dataset.pickupQty || "0", 10);
+            var block = document.querySelector('.comp-block[data-oi="' + sOi + '"]');
+            if (!block || pickupQty <= 0) return;
+
+            var dataEl = block.querySelector(".comp-onhand-data");
+            var data = {};
+            try { data = JSON.parse(dataEl.textContent || "{}"); } catch (err) { data = {}; }
+            var units = data[variantId] || [];
+
+            document.getElementById("partial-orderId").value = block.getAttribute("data-order-id");
+            document.getElementById("partial-orderItemId").value = sOi;
+            document.getElementById("partial-variantId").value = variantId;
+            document.getElementById("partial-pickupQty").value = pickupQty;
+            document.getElementById("partial-pickup-desc").textContent =
+                block.getAttribute("data-item-id") + " (" + block.getAttribute("data-item-name") + ") -- picking up " +
+                pickupQty + " now; the rest splits into a new order for later.";
+
+            var rows = document.getElementById("partial-serial-rows");
+            var html = "";
+            for (var u = 0; u < pickupQty; u++) {
+                html += '<div class="d-flex gap-1 mb-1">' +
+                    '<input type="text" name="compLab_' + u + '" class="form-control form-control-sm" placeholder="Lab # (unit ' + (u + 1) + ')" style="max-width:100px;" />' +
+                    '<select name="compSerial_' + u + '" class="form-select form-select-sm comp-serial-select" data-u="' + u + '" style="max-width:170px;">' +
+                    optionsFor(units) +
+                    '</select>' +
+                    '<input type="text" name="compSerialManual_' + u + '" class="form-control form-control-sm comp-serial-manual d-none" placeholder="Type serial (unit ' + (u + 1) + ')" style="max-width:140px;" />' +
+                    '</div>';
+            }
+            rows.innerHTML = html;
+            // Same stagger as populate() -- one real serial per unit while
+            // they last, instead of every row opening on the same default.
+            rows.querySelectorAll(".comp-serial-select").forEach(function (sel, idx) {
+                sel.value = (units && idx < units.length) ? units[idx].serial : "__NONE__";
+            });
+            enforceSerialExclusivity(document.getElementById("partial-pickup-card"));
+
+            sBanner.classList.add("d-none");
+            document.getElementById("partial-pickup-card").classList.remove("d-none");
+            document.getElementById("partial-pickup-card").scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+        }
+
+        if (t.id === "partial-pickup-cancel") {
+            document.getElementById("partial-pickup-card").classList.add("d-none");
+        }
+    });
+})();
+</script>

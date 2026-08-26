@@ -30,5 +30,23 @@ namespace Visual_Inventory_System.Models.ViewModels
     {
         public int VariantId { get; set; }
         public string Label { get; set; } = string.Empty;
+
+        // Raw count at this location, separate from Label (which folds it into
+        // a display string) -- feeds the live shortfall check client-side:
+        // does this location actually cover the line's full ordered qty?
+        public int Quantity { get; set; }
+
+        // Real on-hand compressor units AT THIS LOCATION -- what the serial
+        // picker on Pickup Queue actually offers once this location is
+        // chosen. Empty for non-compressor lines and for a location with
+        // nothing tracked yet (the untracked-unit case is the norm, not the
+        // exception -- see CompressorUnit's own doc comment).
+        public List<OnHandUnitViewModel> OnHandUnits { get; set; } = new();
+    }
+
+    public class OnHandUnitViewModel
+    {
+        public string? SerialNumber { get; set; }
+        public string? LabNumber { get; set; }
     }
 }
