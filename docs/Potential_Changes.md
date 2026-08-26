@@ -78,3 +78,86 @@ decide the three questions above — Branch-scoped vs. app-wide visibility, who
 counts as "the owner," and whether approval touches real stock. Those change
 the schema, not just the UI, so they're not something to leave open once code
 starts getting written.
+
+---
+
+## Per-team quantity ownership on a single item (scoped 2026-08-26, not started)
+
+**The idea:** one `InventoryItem` today carries a single `Team` value for its
+whole stock. Some items — Commercial Packaged/Splits was the real example
+that surfaced this — actually belong to more than one team at once, each with
+a real claim on a specific slice of the quantity, not just "whoever gets
+there first." Team A can order up to what Team A owns; Team B up to what Team
+B owns; neither eats into the other's share even though it's the same
+`ItemId`. Needs to degrade cleanly to today's behavior when an item only has
+one team on it.
+
+**Why this is bigger than it sounds:** `Team` plays zero role today in how
+much of an item someone can actually order — `GetAvailableQuantity`/
+`GetAvailableForOrder` sum every active `ItemVariant` for the item with no
+team-awareness at all, and `FulfillOrderItem`'s pull loop spills across every
+one of those variants the same way. That's the exact same shape of gap Pass
+29 just closed for location — a pickup used to silently cross a location
+boundary it shouldn't have, entirely because the matching/spill logic had no
+concept of "which one am I actually allowed to touch." Adding team-scoped
+quantity without also teaching that same spill loop to stay inside the
+ordering team's own variants just reopens the identical bug on a different
+axis.
+
+**What's actually cheap here:** `ItemVariant` already is "a distinguishable
+pile of this item's stock" — the exact pattern already used for the 18
+models split across two shelf locations. Team ownership fits the same shape:
+give `ItemVariant` its own `Team` (defaulting to the parent item's `Team` at
+creation, so every existing single-team item keeps behaving exactly as it
+does today with zero migration risk) and a second team's claim becomes a
+second variant, not a new table. Two variants don't even have to sit at
+different physical locations — nothing today enforces that — so Team A's and
+Team B's piles can share the same shelf if that's the real-world case.
+
+**What isn't cheap — real open questions, not implementation details:**
+
+- **Ordering-team resolution — decided 2026-08-26.** An order is arranged to
+  whoever's ordering and their own Team by default. If that user belongs to
+  more than one Team (`UserTeams` is already many-to-many) and the specific
+  item actually has more than one team's claim on it, they get asked which
+  team they're ordering for — per item, only when it's genuinely ambiguous.
+  No prompt when the item has only one team on it, or the user only belongs
+  to one team.
+- **Pull-loop team boundary.** `FulfillOrderItem`'s spill has to stay inside
+  the resolved team's own variants once this exists — Pass 29's
+  location-scoping fix, mirrored onto a Team axis. Not optional; this is the
+  part that makes the whole feature actually hold instead of just moving the
+  same silent-crossing bug somewhere new.
+- **What "no Team on either side" means.** An item with no team-split at all,
+  or a user with no team assigned, needs a defined fallback — probably
+  "everything's visible/orderable, same as today," the fails-open convention
+  `Line` already uses — rather than being left as an undefined edge case.
+- **Compressor pickup's serial cascade (Pass 29) intersects with this.** If a
+  variant carries a Team as well as a location, the serial picker built this
+  session needs to also respect team boundaries when it decides which on-hand
+  units to actually offer. Worth re-checking once this lands — not
+  re-scoping now, just flagging the dependency.
+
+**Rough DB shape, not final:** add `Team` to `ItemVariant` (defaulting to the
+parent `InventoryItem.Team` at creation time). `InventoryItem.Team` itself
+stays exactly as it is — still the family-level default/legacy field feeding
+ID generation and email routing, per its existing doc comment — it just stops
+being the last word on ownership the moment a variant diverges from it.
+
+**Rough build order, if I move on this:**
+1. `ItemVariant.Team` + migration, backfilled from each item's current
+   `Team` — no visible behavior change yet.
+2. Team-scoped availability: `GetAvailableQuantity`/`GetAvailableForOrder`
+   filter to the ordering user's resolved team's variants.
+3. The "which team are you ordering for" resolution step — only surfaces
+   when a user's teams and an item's variant-teams both have more than one
+   option.
+4. Close the pull-loop gap: scope `FulfillOrderItem`'s spill to the resolved
+   team's variants only, mirroring Pass 29's location fix exactly.
+5. Re-check the compressor serial cascade against team boundaries.
+
+**Before this becomes a real plan, not just a scope:** the ordering-team
+resolution is decided, so that part doesn't need to be revisited. What's
+still open is the DB-shape call (variant-level `Team` vs. something else) and
+whether the pull-loop fix ships in the same pass as the availability change
+or right behind it — neither blocks writing this down, only building it.
