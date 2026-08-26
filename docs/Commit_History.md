@@ -9,6 +9,58 @@ landed, when."
 
 ---
 
+## 2026-08-25
+
+### `8c60955` — Pass 29: compressor pickup now location-scoped, with proactive shortfall handling and order splitting
+Started from a real live incident: 9 compressors got intake-logged against the
+wrong item (CCR-0213 instead of CCR-0059, two model names one character apart)
+and, once discovered, couldn't be cleanly picked up and moved because
+`FulfillOrderItem`'s serial matching searched on-hand rows for the whole item,
+not the specific location a unit was actually being pulled from — a typed
+serial could silently flip a different location's row, and a blank/unmatched
+slot always spawned a new orphan `PickedUp` row instead of touching the real
+one. Matching is now scoped to the exact `ItemVariantId`, with a same-item-
+different-location conflict rejected outright (`AssignOneCompressorUnit`,
+shared by the normal pull and the new partial-pickup path) instead of either
+crashing on the unique index or silently grabbing the wrong physical unit.
+Pickup Queue's serial box is a real picklist per unit now — on-hand serials
+for the chosen location, then "No serial" (compressors' first real FIFO
+fallback, mirroring the motor TC fallback that already existed), then "add
+serial" last on purpose — populated from a per-location on-hand dataset
+embedded as a JSON island per line. Picking a location live-checks it against
+the ordered qty before submit; a short location surfaces three inline
+choices — continue (the existing auto-spill, now correctly location-scoped),
+take-what's-here-and-split-the-rest, or skip — instead of only finding out
+after a failed attempt. The split path (`Order.SplitFromOrderId`,
+`OrderItem.Status = "Split"`, migration `AddOrderSplitLineage`) is shared with
+`ReportShortPull`'s existing reissue, so that older path finally shows its own
+lineage too; both directions surface on Order History, My Orders,
+OrderDetails, and Pickup Queue. A same-submission duplicate-serial pick (two
+units on one line claiming the same known serial) is rejected with an
+accurate message instead of the generic cross-location one, and the serial
+dropdowns disable an already-claimed option live and default each unit to a
+different real serial instead of every unit opening on the same one.
+Verified live end-to-end against a dedicated dev-only db copy
+(`inventory.dev.db`), never the real `C:\VIS_Inventory\inventory.db`: the
+wrong-location-serial rejection, a clean location-scoped pickup, and the full
+shortfall → split → both-halves-picked-up-clean chain (an 8-unit order
+against a 6-unit location split into a 6/2 pair, both completed, lineage
+confirmed both directions via direct DB check). The duplicate-serial guard's
+server-side rejection is code-reviewed and build-verified only — the
+client-side fix blocked the browser from ever posting a real duplicate, so
+that exact server branch was never actually hit by a live test. Compressor-
+only on purpose; TC motors have the identical `ItemId`-only location-
+blindness in `onHandMotors` (same file), left untouched for this pass.
+**Touched:** `Controllers/HomeController.cs`, `Data/AppDbContext.cs`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Models/Order.cs`,
+`Models/OrderItem.cs`, `Models/ViewModels/PendingOrderItemViewModel.cs`,
+`Models/ViewModels/PendingOrderViewModel.cs`, `Services/OrderService.cs`,
+`Views/Home/MyOrders.cshtml`, `Views/Home/OrderDetails.cshtml`,
+`Views/Home/Orders.cshtml`, `Views/Home/PickupQueue.cshtml`, migration
+`AddOrderSplitLineage`.
+
+---
+
 ## 2026-08-22
 
 ### `6014f74` — Quick Filters now match real Branch membership; fix invisible close button on Compressor/Motor modals in light mode

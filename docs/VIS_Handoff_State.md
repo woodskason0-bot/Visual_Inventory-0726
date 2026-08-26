@@ -38,7 +38,7 @@ only confirmed by static reading and a clean build, and the difference is spelle
 ## Deployed state
 
 ```
-Migrations       36   (latest: 20260814153905_AddDeliveries)
+Migrations       37   (latest: 20260826023152_AddOrderSplitLineage)
 Items           487   (compressor ownership reconciled against real claim sheets;
                  leftover test-fixture rows removed; one exact duplicate merged;
                  63 Residential OD compressors re-minted with an RCR- prefix and
@@ -1121,6 +1121,20 @@ that used this tool as DOM/CSS-correctness only, not proof of real-device
 behavior — say so explicitly rather than letting it read as a stronger claim than
 it is.
 
+**EF Core cannot translate `string.Equals(a, b, StringComparison.X)` against a
+live `IQueryable` (Pass 29).** It works fine against an already-materialized
+`List<T>` (plain LINQ-to-Objects), but the identical expression run directly
+against a `DbSet<T>`/`IQueryable<T>` throws at query-execution time — not
+compile time — with "Translation of the 'string.Equals' overload with a
+'StringComparison' parameter is not supported." Only surfaces the first time
+that exact code path actually runs, which in this case was a brand-new
+existence check (`_db.CompressorUnits.Any(...)`) added straight after an
+in-memory-list version of the same match that had been working fine for passes.
+If a case-insensitive match genuinely needs to run server-side, materialize
+first (`.ToList()`/`.AsEnumerable()`); if it's really about matching what a
+unique index enforces, plain `==` is usually the more correct comparison anyway
+(SQLite's default TEXT collation is case-sensitive, same as the index).
+
 ---
 
 ## Known issues — accepted as-is
@@ -2004,3 +2018,48 @@ instead of "Branch → Line → tier name." Phase 4 (the broader visual pass —
 Search Center is still deliberately dark/unstyled, and a first pass surfaced that
 the SAME contrast gaps likely exist on pages never touched by any of this, e.g.
 PickupQueue) has not been started.
+
+**Pass 29 (2026-08-25/26) rebuilt compressor pickup around the CCR-0213 mis-key
+incident.** `FulfillOrderItem`'s serial matching was scoped by `ItemId` only —
+a serial typed against one location could silently flip a completely different
+location's on-hand row, and a blank or unmatched slot always spawned a new
+orphan `PickedUp` row instead of touching the real one. That's exactly the
+mechanism that left CCR-0213 showing 9 tracked serials that never actually left
+the shelf (that live-db cleanup is still separate and still pending — this pass
+is the mechanism fix, not the data fix). Matching is now scoped to the exact
+`ItemVariantId` a unit is actually pulled from, with a same-item-different-
+location conflict rejected outright — an actionable error, not a crash or a
+silent wrong-shelf match — instead of the old item-wide search. Pickup Queue's
+serial box is now a real picklist per unit: on-hand serials for the chosen
+location first, then "No serial" (a genuine FIFO fallback for compressors,
+which never had one before — mirrors the motor TC fallback that already
+existed), then "Serial not in list — add serial" last, on purpose. Picking a
+location now live-checks it against the line's ordered qty before submission
+and offers three explicit choices when it's short: continue (falls back to the
+existing auto-spill, now correctly location-scoped), take-what's-here-and-
+split-the-rest, or skip. The split path is new machinery — `Order.
+SplitFromOrderId` + `OrderItem.Status = "Split"` (migration
+`AddOrderSplitLineage`) — reused by `ReportShortPull`'s existing reissue so
+that older path finally shows its own lineage too; both directions surface on
+Order History, My Orders, OrderDetails, and Pickup Queue. A same-submission
+duplicate-serial pick (two units on one line both claiming the same known
+serial) is now rejected with an accurate message instead of the generic
+cross-location one, and the serial dropdowns disable an already-claimed option
+live and default each unit to a different real serial instead of all
+collapsing onto the same one.
+Verified live end-to-end on a dedicated dev-only db copy (`inventory.dev.db`,
+wired through `appsettings.Development.json` locally — never the real
+`C:\VIS_Inventory\inventory.db`): the wrong-location-serial rejection, a clean
+location-scoped pickup, and the full shortfall → split → both-halves-picked-
+up-clean chain (an 8-unit order against a 6-unit location split into a 6/2
+pair, both completed, lineage confirmed both directions via direct DB check).
+The same-submission duplicate-serial guard's *server-side* rejection is
+code-reviewed and build-verified only — the client-side fix turned out to
+block the browser from ever posting the duplicate in the first place, so that
+exact server code path was never actually exercised by a real duplicate. TC
+motors have the identical `ItemId`-only location-blindness in `onHandMotors`
+(same file, same fix would apply) — left untouched on purpose, this pass is
+compressor-only; whatever transfers to motors gets flagged once this has run
+for real. Order-time pre-resolution (letting the orderer pick a location/
+serial preference before pickup, the same way `RequestedVariantId` already
+lets them pin a location) is scoped but not built.
