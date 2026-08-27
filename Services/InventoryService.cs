@@ -55,6 +55,84 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
+        /// Same rule as ApplyLineVisibility, evaluated in memory against one
+        /// already-materialized item instead of as a SQL predicate. Search Center
+        /// needs this: since Search() below stopped filtering results to the
+        /// viewer's own Line (Request Transfer feature -- other Lines' items now
+        /// show up too), the card rendering loop needs to know per item whether
+        /// to offer the normal Order/Handle Stock buttons or just Request
+        /// Transfer. Deliberately NOT shared code with ApplyLineVisibility --
+        /// that one has to stay a
+        /// SQL-translatable expression tree, this one only ever runs against
+        /// plain C# objects, so folding them into one method would either break
+        /// EF's translator or force an extra round-trip.
+        /// </summary>
+        public bool IsOwnLine(string? itemLine)
+        {
+            if (_currentUser.Level >= AccessLevels.Admin) return true;
+
+            var line = (itemLine ?? "").Trim();
+            var myLine = (_currentUser.Line ?? "").Trim();
+            if (myLine.Length > 0)
+                return line.Length == 0 || string.Equals(line, myLine, System.StringComparison.OrdinalIgnoreCase);
+
+            var myBranch = (_currentUser.Branch ?? "").Trim();
+            if (myBranch.Length > 0 && OrgStructure.BranchLines.TryGetValue(myBranch, out var branchLines))
+                return line.Length == 0 || branchLines.Any(l => string.Equals(l, line, System.StringComparison.OrdinalIgnoreCase));
+
+            // Not yet assigned a Line or a Branch -- fails open, same as ApplyLineVisibility.
+            return true;
+        }
+
+        /// <summary>
+        /// This user's team memberships (per-team quantity ownership, scoped
+        /// 2026-08-26) -- consolidates what used to be a copy-pasted inline
+        /// join (HomeController.SetDefaultThreshold had its own). Used by
+        /// OrderService's team-ordering resolution and Transfer approval
+        /// routing, both of which need "which teams is this person actually on."
+        /// </summary>
+        public List<string> GetUserTeamNames(string userName)
+        {
+            if (string.IsNullOrWhiteSpace(userName)) return new List<string>();
+            return (from u in _db.Users.AsNoTracking()
+                    join ut in _db.UserTeams.AsNoTracking() on u.Id equals ut.UserId
+                    where u.UserName == userName
+                    select ut.TeamName).ToList();
+        }
+
+        /// <summary>
+        /// Can THIS user approve/deny a Transfer request against this item
+        /// (per-team quantity ownership, scoped 2026-08-26)? Two gates, not one:
+        /// Line (unchanged -- IsOwnLine, same as every other Transfer check) AND,
+        /// only once the item is actually split across more than one team, Team
+        /// membership too -- an Engineer on the right Line but the wrong team
+        /// can't approve away a slice that isn't theirs. Used both to build the
+        /// "Awaiting My Approval" queue (so a non-matching Engineer never even
+        /// sees a request they can't act on) and to enforce it server-side in
+        /// ApproveTransfer/DenyTransfer.
+        /// </summary>
+        public bool CanApproveTransfer(InventoryItem item, int? requestedVariantId)
+        {
+            if (_currentUser.Level >= AccessLevels.Admin) return true;
+            if (!IsOwnLine(item.Line)) return false;
+
+            var variantTeams = item.ActiveVariants
+                .Select(v => (v.Team ?? "").Trim())
+                .Where(t => t.Length > 0)
+                .Distinct(System.StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (variantTeams.Count <= 1) return true;   // not split -- Line is the whole gate, same as before this existed
+
+            string? targetTeam = requestedVariantId.HasValue
+                ? item.ActiveVariants.FirstOrDefault(v => v.Id == requestedVariantId.Value)?.Team
+                : null;
+            if (string.IsNullOrWhiteSpace(targetTeam)) return true;   // no resolved team -- fails open, same convention as everywhere else
+
+            var myTeams = GetUserTeamNames(_currentUser.Name);
+            return myTeams.Any(t => string.Equals(t, targetTeam, System.StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
         /// Same visibility rule as browsing (Pass 15), applied to TransactionLogs --
         /// View Logs and the Activity Feed used to show every action for every item
         /// regardless of the viewer's Line, which is a wider audience than can even
@@ -221,9 +299,18 @@ namespace Visual_Inventory_System.Services
             // Include variants: results feed the holoviewer, which reads the
             // Quantity/location pass-throughs -- without variants loaded those
             // silently read 0/blank.
-            var query = ApplyLineVisibility(_db.InventoryItems.AsNoTracking()
+            //
+            // Deliberately NOT ApplyLineVisibility here (Request Transfer feature,
+            // scoped 2026-08-26): Search is the one surface where another Line's
+            // items are meant to show up, so someone can find and request a
+            // transfer. GetAll and ExportToCsv keep the Line-scoped filter
+            // untouched -- this is a Search-only carve-out, not a change to
+            // visibility generally. The card rendering loop uses IsOwnLine() per
+            // item to decide whether to offer the normal action buttons or just
+            // Request Transfer.
+            var query = _db.InventoryItems.AsNoTracking()
                 .Include(i => i.Variants)
-                .AsQueryable());
+                .AsQueryable();
 
             bool isFilterActive = false;
 
@@ -292,7 +379,14 @@ namespace Visual_Inventory_System.Services
 
             // 1. STRICT AND LOGIC (The Top Half of the Wizard)
             if (!string.IsNullOrWhiteSpace(group)) query = query.Where(i => i.Group.ToLower() == group.ToLower());
-            if (!string.IsNullOrWhiteSpace(team)) query = query.Where(i => i.Team.ToLower() == team.ToLower());
+            // Per-team quantity ownership (2026-08-26): a team filter has to
+            // catch a team that only owns a SLICE of the item too, not just an
+            // item whose family-level Team field happens to match -- otherwise
+            // filtering by "Ninja" would silently miss an item family-tagged
+            // "Samurai" that Ninja was later given a variant-level claim on.
+            if (!string.IsNullOrWhiteSpace(team))
+                query = query.Where(i => i.Team.ToLower() == team.ToLower()
+                    || i.Variants.Any(v => !v.IsRetired && v.Team.ToLower() == team.ToLower()));
             if (!string.IsNullOrWhiteSpace(type)) query = query.Where(i => i.Type.ToLower().Contains(type.ToLower()));
             if (!string.IsNullOrWhiteSpace(brand)) query = query.Where(i => i.Brand.ToLower().Contains(brand.ToLower()));
             if (!string.IsNullOrWhiteSpace(fdaString)) query = query.Where(i => i.Variants.Any(v => !v.IsRetired && v.FdaString.StartsWith(fdaString)));
@@ -313,8 +407,10 @@ namespace Visual_Inventory_System.Services
 
             var builder = new StringBuilder();
 
-            // CSV HEADER: Added Status, Scrapped, and Ownership columns
-            builder.AppendLine("ItemID,RheemPartNumber,ItemName,Type,Brand,Location,CurrentQuantity,Group,Team,ProjectCode,StatusTags,ScrappedQty,OwnershipChanges");
+            // CSV HEADER: Added Status, Scrapped, and Ownership columns. Line
+            // added 2026-08-26 (per-team quantity ownership) -- it never had a
+            // column here before, despite gating visibility everywhere else.
+            builder.AppendLine("ItemID,RheemPartNumber,ItemName,Type,Brand,Location,CurrentQuantity,Group,Line,Team,ProjectCode,StatusTags,ScrappedQty,OwnershipChanges");
 
             foreach (var i in items)
             {
@@ -352,8 +448,19 @@ namespace Visual_Inventory_System.Services
                 string safeName = i.ItemName?.Replace(",", ";") ?? "";
                 string safeBrand = i.Brand?.Replace(",", ";") ?? "";
                 string safeRpn = i.RheemPartNumber?.Replace(",", ";") ?? "";
+                string safeLine = string.IsNullOrWhiteSpace(i.Line) ? "" : i.Line.Replace(",", ";");
 
-                builder.AppendLine($"{i.ItemId},{safeRpn},{safeName},{i.Type},{safeBrand},{i.FdaString},{i.Quantity},{i.Group},{i.Team},{i.ProjectCode},{tagString},{scrapQty},{ownCount}");
+                // Per-team quantity ownership (2026-08-26): distinct teams across
+                // this item's active variants, semicolon-joined -- a split item
+                // shows every team with a real claim, not just the family-level
+                // default. Unsplit items (the overwhelming majority) fall back to
+                // that same family-level Team, identical to what this column
+                // always showed before today.
+                var activeTeams = i.ActiveVariants.Select(v => v.Team).Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                string safeTeam = (activeTeams.Count > 0 ? string.Join("; ", activeTeams) : (i.Team ?? "")).Replace(",", ";");
+
+                builder.AppendLine($"{i.ItemId},{safeRpn},{safeName},{i.Type},{safeBrand},{i.FdaString},{i.Quantity},{i.Group},{safeLine},{safeTeam},{i.ProjectCode},{tagString},{scrapQty},{ownCount}");
             }
 
             return Encoding.UTF8.GetBytes(builder.ToString());
@@ -369,6 +476,30 @@ namespace Visual_Inventory_System.Services
             return System.Math.Max(0, total - pendingAlloc);
         }
 
+        /// <summary>
+        /// Team-scoped sibling of GetAvailableQuantity (per-team quantity
+        /// ownership, scoped 2026-08-26) -- used at the two points that actually
+        /// gate how much a TEAM can order: AddToCart's cap and Submit()'s stock
+        /// check. Every other caller (CSV export, DeleteItem's zero-stock check,
+        /// threshold summaries) stays on the item-total overload above, which
+        /// this delegates to when team is blank -- same fails-open convention
+        /// Line already uses, and the only case for an item that's never been
+        /// split.
+        /// </summary>
+        public int GetAvailableQuantity(string itemId, string? team)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return 0;
+            if (string.IsNullOrWhiteSpace(team)) return GetAvailableQuantity(itemId);
+
+            var total = _db.ItemVariants.AsNoTracking()
+                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
+                .Sum(v => (int?)v.Quantity) ?? 0;
+            var pendingAlloc = _db.OrderItems.AsNoTracking()
+                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Team == team)
+                .Sum(oi => (int?)oi.Quantity) ?? 0;
+            return System.Math.Max(0, total - pendingAlloc);
+        }
+
         public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
@@ -376,6 +507,21 @@ namespace Visual_Inventory_System.Services
                 .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId)
                 .Sum(v => (int?)v.Quantity) ?? 0;
             var earlierAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt).Sum(oi => (int?)oi.Quantity) ?? 0;
+            return System.Math.Max(0, total - earlierAlloc);
+        }
+
+        /// <summary>Team-scoped sibling, same reasoning as GetAvailableQuantity's overload above -- Pickup Queue's "can this line actually fulfill" display needs to agree with what FulfillOrderItem's team-scoped pull loop will really do, or a picker sees "available" for a line that's about to short-pull.</summary>
+        public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt, string? team)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return 0;
+            if (string.IsNullOrWhiteSpace(team)) return GetAvailableForOrder(itemId, orderCreatedAt);
+
+            var total = _db.ItemVariants.AsNoTracking()
+                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
+                .Sum(v => (int?)v.Quantity) ?? 0;
+            var earlierAlloc = _db.OrderItems.AsNoTracking()
+                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt && oi.Team == team)
+                .Sum(oi => (int?)oi.Quantity) ?? 0;
             return System.Math.Max(0, total - earlierAlloc);
         }
 
@@ -1254,7 +1400,7 @@ namespace Visual_Inventory_System.Services
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
-            string? newLine = null, List<string>? serials = null)
+            string? newLine = null, List<string>? serials = null, string? variantTeam = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -1305,12 +1451,20 @@ namespace Visual_Inventory_System.Services
                 if (wantsNewLocation)
                 {
                     // New physical spot for this family: mint the next free
-                    // variant number at the posted (coded) location.
+                    // variant number at the posted (coded) location. Team
+                    // (per-team quantity ownership, 2026-08-26): a second team's
+                    // slice is exactly this same "new variant" mechanism, just
+                    // with a different Team instead of (or alongside) a
+                    // different location -- blank posted team falls back to the
+                    // item's own family-level Team, same default the migration
+                    // backfill used for every pre-existing variant.
+                    string team = string.IsNullOrWhiteSpace(variantTeam) ? (item.Team ?? "") : variantTeam.Trim();
                     var nv = new ItemVariant
                     {
                         VariantNumber = NextFreeVariantNumber(item),
                         Quantity = quantity,
                         ThermocoupledQty = tcAdd,
+                        Team = team,
                         Parent = Seg(newParent),
                         Major = Seg(newMajor),
                         Sub = Seg(newSub),
@@ -1321,7 +1475,8 @@ namespace Visual_Inventory_System.Services
                     };
                     nv.FdaString = FiveSeg(nv.Parent, nv.Major, nv.Sub, nv.Rack, nv.Row);
                     item.Variants.Add(nv);
-                    details = $"Added {quantity} unit(s){tcNote} at NEW location {nv.FdaString} (Variant {nv.VariantNumber}).";
+                    string teamNote = string.IsNullOrWhiteSpace(team) ? "" : $" for {team}";
+                    details = $"Added {quantity} unit(s){tcNote} at NEW location {nv.FdaString}{teamNote} (Variant {nv.VariantNumber}).";
                     addedVariant = nv;
                 }
                 else

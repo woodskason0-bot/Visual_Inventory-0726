@@ -53,5 +53,12 @@ namespace Visual_Inventory_System.Models
 
         [MaxLength(100)]
         public string? PickedUpBy { get; set; }
+
+        /// <summary>
+        /// Set instead of OrderId/OrderItemId when this unit left the shelf via
+        /// an internal Transfer approval rather than a real order pickup --
+        /// never both. Loose reference, same convention as OrderId.
+        /// </summary>
+        public int? TransferRequestId { get; set; }
     }
 }

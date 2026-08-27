@@ -4,13 +4,16 @@ using Visual_Inventory_System.Models;
 
 namespace Visual_Inventory_System.Models.ViewModels
 {
-    // Backs the self-scoped "My Orders" page. Section 1 = this user's order
-    // history; Section 2 = their items still out on loan.
-    public class MyOrdersViewModel
+    // Backs the self-scoped "My Activity" page (renamed 2026-08-26 from "My
+    // Orders" once it grew past orders -- loans and internal transfers live
+    // here too now). Section 1 = this user's order history; Section 2 = their
+    // items still out on loan; Section 3 = internal transfer requests.
+    public class MyActivityViewModel
     {
         public string UserName { get; set; } = string.Empty;
         public List<Order> Orders { get; set; } = new();
         public List<LoanLineViewModel> Loans { get; set; } = new();
+        public TransferSectionViewModel Transfer { get; set; } = new();
     }
 
     // One still-outstanding loan line. Carries order context (id + when + what)

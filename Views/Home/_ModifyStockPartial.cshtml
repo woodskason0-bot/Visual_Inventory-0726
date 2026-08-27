@@ -84,6 +84,22 @@
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
                     </div>
 
+                    <!-- TEAM (per-team quantity ownership, 2026-08-26): only meaningful
+                         for Add's "New location..." branch -- an existing stack keeps
+                         whatever team it already has, same as it keeps its location.
+                         Blank = falls back to the item's own family-level Team. -->
+                    <div id="stock-variant-team-div" class="mb-3" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Team</label>
+                        <select name="variantTeam" id="stock-variant-team-sel" class="form-select fw-bold">
+                            <option value="">Same as item's default team</option>
+                            @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
+                            {
+                                <option value="@t.Name">@t.Name</option>
+                            }
+                        </select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">Which team's slice this new stack belongs to -- set this to give a second team its own claim on the item.</small>
+                    </div>
+
                     <div id="stock-qty-div" class="mb-3">
                         <label class="form-label small fw-bold text-light-gray">Quantity</label>
                         <input type="number" name="quantity" id="stock-qty-input" class="form-control" value="1" required />
@@ -332,7 +348,8 @@
         vars.forEach(function (v) {
             const o = document.createElement('option');
             o.value = String(v.vid);
-            o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+            const teamTag = v.team ? ' [' + v.team + ']' : '';
+            o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + teamTag + ' (Qty ' + v.qty + ')';
             sel.appendChild(o);
         });
         if (action === 'Add') {
@@ -498,6 +515,8 @@
             // Add-to-NEW-location reuses the transfer cascade for the address,
             // but hides the move-qty row (the main Quantity box is the amount).
             if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+            const teamDiv = document.getElementById('stock-variant-team-div');
+            if (teamDiv) teamDiv.style.display = addingNew ? 'block' : 'none';
             if (moveQtyDiv) moveQtyDiv.style.display = 'none';
             qtyInput.required = true;
             if (addingNew) {
@@ -760,10 +779,12 @@
                 refreshMergeNote();
                 if (typeof refreshTcFields === 'function') refreshTcFields(action);
             } else if (action === 'Add') {
-                // Only the loc-div visibility depends on NEW vs existing.
+                // Only the loc-div/team-div visibility depends on NEW vs existing.
                 const locDiv = document.getElementById('stock-loc-div');
                 const addingNew = (sel.value === 'NEW');
                 if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
+                const teamDiv = document.getElementById('stock-variant-team-div');
+                if (teamDiv) teamDiv.style.display = addingNew ? 'block' : 'none';
                 const helpText = document.getElementById('stock-qty-help');
                 if (helpText) helpText.innerText = addingNew
                     ? "Amount to place at the NEW location."

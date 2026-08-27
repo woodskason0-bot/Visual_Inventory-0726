@@ -297,6 +297,11 @@
                     {
                         bool inDraft = headerDraftIds != null && headerDraftIds.Contains(item.ItemId);
                         var actVars = item.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
+                        // Pass 30 (Request Transfer - Internal): Search stopped filtering
+                        // to the viewer's own Line, so another Line's item shows up here
+                        // too -- it just gets a Request Transfer button instead of the
+                        // normal order/handle actions.
+                        bool isOwnLine = invSvc == null || invSvc.IsOwnLine(item.Line);
                         Func<string, bool> needsRheemPn = pn => string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
                         <div class="holo-row" data-item-id="@item.ItemId" tabindex="0">
                             <div class="d-flex justify-content-between align-items-center">
@@ -312,15 +317,27 @@
                                         </span>
                                     }
                                     <strong class="text-white fs-5">@item.ItemName</strong> <span class="text-light-gray ms-2">(ID: @item.ItemId)</span><br />
-                                    @{ bool itemIsMotor = Visual_Inventory_System.Services.InventoryService.IsMotorType(item.Type); }
+                                    @{
+                                        bool itemIsMotor = Visual_Inventory_System.Services.InventoryService.IsMotorType(item.Type);
+                                        // Per-team quantity ownership (2026-08-26): distinct teams
+                                        // across this item's active variants. >1 means it's actually
+                                        // split -- that's when the per-variant tags below earn their
+                                        // keep; otherwise one team (or none) covers the whole stack.
+                                        var itemTeams = actVars.Select(v => v.Team).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+                                        string teamSummary = itemTeams.Count == 0 ? "No team" : string.Join(", ", itemTeams);
+                                    }
                                     <small class="text-light-gray">@item.Type | Stock: @item.Quantity@(itemIsMotor ? $" | TC Qty: {item.TotalThermocoupled}" : "")</small>
+                                    <small class="d-block" style="color: var(--vis-text-muted);">
+                                        <i class="bi bi-signpost-2 me-1"></i>Line: @(string.IsNullOrWhiteSpace(item.Line) ? "Unassigned" : item.Line)
+                                        &nbsp;·&nbsp; Team: @teamSummary
+                                    </small>
                                     <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableQuantity(item.ItemId) : item.Quantity)</span>
                                     @if (actVars.Count > 1)
                                     {
                                         foreach (var v in actVars)
                                         {
                                             <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted);">
-                                                <i class="bi bi-geo-alt me-1"></i>Variant @v.VariantNumber — @FriendlyVarLoc(v) · Qty @v.Quantity@(itemIsMotor ? $" · TC {v.ThermocoupledQty}" : "")
+                                                <i class="bi bi-geo-alt me-1"></i>Variant @v.VariantNumber — @FriendlyVarLoc(v)@(itemTeams.Count > 1 && !string.IsNullOrWhiteSpace(v.Team) ? $" [{v.Team}]" : "") · Qty @v.Quantity@(itemIsMotor ? $" · TC {v.ThermocoupledQty}" : "")
                                             </small>
                                         }
                                     }
@@ -330,30 +347,43 @@
                                     }
                                 </div>
                                 <div class="d-flex flex-column align-items-end gap-2">
-                                    @if (CurrentUser.Level >= AccessLevels.Standard)
+                                    @if (!isOwnLine)
                                     {
-                                        @if (!inDraft)
+                                        @if (CurrentUser.Level >= AccessLevels.Standard)
                                         {
-                                            <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openAddToCart('@item.ItemId')">
-                                                <i class="bi bi-cart-plus me-1"></i> Add to Cart
+                                            <button type="button" class="btn btn-warning px-3 py-2 fw-bold" onclick="openTransfer('@item.ItemId')">
+                                                <i class="bi bi-arrow-left-right me-1"></i> Request Transfer
                                             </button>
                                         }
-                                        else
+                                        <small class="text-light-gray" style="font-size:10px;">Not your Line — request only</small>
+                                    }
+                                    else
+                                    {
+                                        @if (CurrentUser.Level >= AccessLevels.Standard)
                                         {
-                                            <span class="badge bg-secondary p-2 fs-6 fw-bold">In Cart</span>
+                                            @if (!inDraft)
+                                            {
+                                                <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openAddToCart('@item.ItemId')">
+                                                    <i class="bi bi-cart-plus me-1"></i> Add to Cart
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary p-2 fs-6 fw-bold">In Cart</span>
+                                            }
                                         }
-                                    }
-                                    @if (CurrentUser.Level >= AccessLevels.Standard)
-                                    {
-                                        <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
-                                            <i class="bi bi-box-seam me-1"></i> Handle Stock
-                                        </button>
-                                    }
-                                    @if (item.Quantity == 0 && CurrentUser.Level >= AccessLevels.Admin)
-                                    {
-                                        <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3" onclick="openDeleteItem('@item.ItemId', '@item.ItemName')">
-                                            <i class="bi bi-trash me-1"></i> Delete Item
-                                        </button>
+                                        @if (CurrentUser.Level >= AccessLevels.Standard)
+                                        {
+                                            <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
+                                                <i class="bi bi-box-seam me-1"></i> Handle Stock
+                                            </button>
+                                        }
+                                        @if (item.Quantity == 0 && CurrentUser.Level >= AccessLevels.Admin)
+                                        {
+                                            <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3" onclick="openDeleteItem('@item.ItemId', '@item.ItemName')">
+                                                <i class="bi bi-trash me-1"></i> Delete Item
+                                            </button>
+                                        }
                                     }
                                 </div>
                             </div>
@@ -755,8 +785,15 @@
    page and Index.cshtml (pre-existing there too, not introduced by this pass). *@
 <script>
     const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
+    // Pass 30: NOT itemsList -- see the comment on ViewBag.TransferItemsJson in
+    // SearchCenter() for why Request Transfer needs its own, wider-than-Line
+    // data source.
+    const transferItemsList = @Html.Raw(ViewBag.TransferItemsJson ?? "[]");
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
     const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    // This signed-in user's own team memberships (per-team quantity ownership,
+    // 2026-08-26) -- drives whether Add to Cart's team picker shows at all.
+    const myTeams = @Html.Raw(ViewBag.MyTeamsJson ?? "[]");
     const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
     const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
 </script>
@@ -788,6 +825,16 @@
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;">Which location the runner pulls from — or Either.</small>
                     </div>
 
+                    <!-- TEAM (per-team quantity ownership, 2026-08-26): only shown when
+                         it's genuinely ambiguous -- this item is split across more than
+                         one of YOUR OWN teams. Everyone else never sees this field. -->
+                    <div class="mb-3" id="atc-team-div" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Ordering for which team?</label>
+                        <select name="requestedTeam" id="atc-team-sel" class="form-select fw-bold text-warning"
+                                style="background-color:#14151A; border-color:#3D4351;"></select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">This item is split across more than one of your teams -- pick which claim you're ordering against.</small>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label small fw-bold text-light-gray">Add Quantity</label>
                         <input type="number" name="quantity" id="atc-qty" class="form-control fw-bold" value="1" min="1" required
@@ -807,6 +854,67 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-primary fw-bold"><i class="bi bi-cart-plus me-1"></i>Add to Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- REQUEST TRANSFER - INTERNAL modal (Pass 30) -- offered instead of Add to
+     Cart when the item belongs to another Line/Team. One-way: once approved,
+     the stock is simply gone from this item's shelf, same as a normal
+     compressor pickup already stays "Picked Up" forever with no return
+     expected -- no due date, no return flow. Serial selection for compressors
+     happens later, at the owning Line's approval step, not here -- mirrors how
+     a normal order never asks the requester to pick serials either. -->
+<div class="modal fade" id="transferModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form asp-controller="Home" asp-action="RequestTransfer" method="post" id="transfer-frm">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="itemId" id="trf-item-id" />
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-arrow-left-right me-2"></i>Request Transfer - Internal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-white">
+                    <div class="mb-3">
+                        <div class="fw-bold fs-5 text-white" id="trf-item-name">--</div>
+                        <small class="text-light-gray" id="trf-item-sub">ID: --</small>
+                        <!-- Per-team quantity ownership (2026-08-26): who actually
+                             owns this, so the requester isn't guessing before they ask. -->
+                        <small class="text-warning d-block mt-1 fw-bold" id="trf-owner-div">--</small>
+                    </div>
+
+                    <div class="mb-3" id="trf-loc-div" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray">Pull location</label>
+                        <select name="requestedVariantId" id="trf-loc-sel" class="form-select fw-bold text-info"
+                                style="background-color:#14151A; border-color:#3D4351;"></select>
+                        <small class="text-light-gray d-block mt-1" style="font-size:10px;">A preference -- the owning Line can still pull from elsewhere if this shelf runs short.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-light-gray">Quantity</label>
+                        <input type="number" name="quantity" id="trf-qty" class="form-control fw-bold" value="1" min="1" required />
+                    </div>
+
+                    <div class="mb-3" id="trf-tc-div" style="display:none;">
+                        <label class="form-label small fw-bold" style="color:#F59E0B;">
+                            <i class="bi bi-thermometer-half me-1"></i>Thermocoupled count
+                        </label>
+                        <input type="number" name="thermocoupledCount" id="trf-tc" class="form-control fw-bold" value="0" min="0"
+                               style="border-color:#F59E0B;" />
+                    </div>
+
+                    <div class="mb-1">
+                        <label class="form-label small fw-bold text-light-gray">Note (optional)</label>
+                        <input type="text" name="note" maxlength="100" class="form-control" placeholder="What it's for" />
+                    </div>
+                    <small class="text-light-gray d-block mt-2" style="font-size:10px;">This sends a request -- the owning Line approves it before anything leaves their shelf. Once approved, it's a permanent transfer, not a loan.</small>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning fw-bold"><i class="bi bi-arrow-left-right me-1"></i>Send Request</button>
                 </div>
             </form>
         </div>
@@ -982,7 +1090,8 @@
             vars.forEach(function (v) {
                 const o = document.createElement('option');
                 o.value = String(v.vid);
-                o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + ' (Qty ' + v.qty + ')';
+                const teamTag = v.team ? ' [' + v.team + ']' : '';
+                o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + teamTag + ' (Qty ' + v.qty + ')';
                 locSel.appendChild(o);
             });
             locDiv.style.display = 'block';
@@ -990,6 +1099,26 @@
             locDiv.style.display = 'none';
         }
         locSel.onchange = atcRecomputeTcCap;
+
+        // TEAM (per-team quantity ownership, 2026-08-26): only asked when this
+        // item's variants span more than one team AND this user belongs to
+        // more than one of those specific teams -- everyone else never sees it.
+        const teamDiv = document.getElementById('atc-team-div');
+        const teamSel = document.getElementById('atc-team-sel');
+        const itemTeams = Array.from(new Set(vars.map(function (v) { return v.team; }).filter(Boolean)));
+        const applicableTeams = itemTeams.filter(function (t) { return myTeams.indexOf(t) !== -1; });
+        teamSel.innerHTML = '';
+        if (applicableTeams.length > 1) {
+            applicableTeams.forEach(function (t) {
+                const o = document.createElement('option');
+                o.value = t;
+                o.textContent = t;
+                teamSel.appendChild(o);
+            });
+            teamDiv.style.display = 'block';
+        } else {
+            teamDiv.style.display = 'none';
+        }
 
         const tcDiv = document.getElementById('atc-tc-div');
         const tc = document.getElementById('atc-tc');
@@ -1005,6 +1134,60 @@
         atcRecomputeTcCap();
 
         const el = document.getElementById('addToCartModal');
+        if (el) { new bootstrap.Modal(el).show(); }
+    }
+
+    // Pass 30: same shape as openAddToCart above, for the other Line's item
+    // Search stopped hiding -- location list and TC gate both read the same
+    // transferItemsList data, just posted to RequestTransfer instead of AddToCart.
+    function openTransfer(itemId) {
+        const item = transferItemsList.find(function (i) { return i.id === itemId; });
+        if (!item) return;
+
+        const vars = (item.variants || []);
+
+        document.getElementById('trf-item-id').value = itemId;
+        document.getElementById('trf-item-name').textContent = item.name || itemId;
+        document.getElementById('trf-item-sub').textContent =
+            'ID: ' + itemId + (item.type ? '  ·  ' + item.type : '');
+
+        document.getElementById('trf-qty').value = 1;
+
+        const locDiv = document.getElementById('trf-loc-div');
+        const locSel = document.getElementById('trf-loc-sel');
+        locSel.innerHTML = '';
+        if (vars.length > 1) {
+            vars.forEach(function (v) {
+                const o = document.createElement('option');
+                o.value = String(v.vid);
+                // Per-team quantity ownership (2026-08-26): this dropdown was
+                // already effectively required whenever it's shown (no "Either"
+                // option here, unlike Add to Cart) -- once a variant carries a
+                // Team, that same required pick doubles as which team's slice
+                // is being requested, so it needs to actually be visible here.
+                const teamTag = v.team ? ' [' + v.team + ']' : '';
+                o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + teamTag + ' (Qty ' + v.qty + ')';
+                locSel.appendChild(o);
+            });
+            locDiv.style.display = 'block';
+        } else {
+            locDiv.style.display = 'none';
+        }
+
+        const ownerDiv = document.getElementById('trf-owner-div');
+        if (ownerDiv) {
+            const lineText = item.line ? item.line : 'Unassigned';
+            const teams = Array.from(new Set(vars.map(function (v) { return v.team; }).filter(Boolean)));
+            const teamText = teams.length ? teams.join(', ') : 'No team';
+            ownerDiv.textContent = 'Line: ' + lineText + '  ·  Team: ' + teamText;
+        }
+
+        const tcDiv = document.getElementById('trf-tc-div');
+        const tc = document.getElementById('trf-tc');
+        tc.value = 0;
+        tcDiv.style.display = (typeof isMotorType === 'function' && isMotorType(item.type)) ? 'block' : 'none';
+
+        const el = document.getElementById('transferModal');
         if (el) { new bootstrap.Modal(el).show(); }
     }
 

@@ -32,6 +32,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<OrgLine> OrgLines { get; set; } = null!;
         public DbSet<UserTeam> UserTeams { get; set; } = null!;
         public DbSet<Delivery> Deliveries { get; set; } = null!;
+        public DbSet<TransferRequest> TransferRequests { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -212,6 +213,16 @@ namespace Visual_Inventory_System.Data
                 // recipient (or the Unknown bucket)" -- both carry an index.
                 b.HasIndex(x => x.Status);
                 b.HasIndex(x => x.RecipientUserName);
+            });
+
+            modelBuilder.Entity<TransferRequest>(b =>
+            {
+                // My Orders' MyRequests subsection queries "everything I requested";
+                // AwaitingApproval queries "everything against this ItemId" (then
+                // filters to the viewer's Line in memory, same as the compressor
+                // roster does).
+                b.HasIndex(x => x.RequesterUserName);
+                b.HasIndex(x => x.ItemId);
             });
         }
     }

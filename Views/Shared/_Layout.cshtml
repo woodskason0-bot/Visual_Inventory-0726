@@ -278,8 +278,8 @@
                 <a class="sidebar-link @(isActiveAction("Logs") ? "active" : "")" asp-controller="Home" asp-action="Logs">
                     <i class="bi bi-journal-text"></i><span class="sidebar-link-text">View Logs</span>
                 </a>
-                <a class="sidebar-link @(isActiveAction("MyOrders") ? "active" : "")" asp-controller="Home" asp-action="MyOrders">
-                    <i class="bi bi-cart-fill"></i><span class="sidebar-link-text">My Orders</span>
+                <a class="sidebar-link @(isActiveAction("MyActivity") ? "active" : "")" asp-controller="Home" asp-action="MyActivity">
+                    <i class="bi bi-activity"></i><span class="sidebar-link-text">My Activity</span>
                 </a>
                 @* Pass 9: bulk intake, Standard+ -- interns can log stock without
                    being able to invent a location. *@

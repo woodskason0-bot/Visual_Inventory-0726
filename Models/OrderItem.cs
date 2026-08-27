@@ -51,6 +51,17 @@ namespace Visual_Inventory_System.Models
         // retired rather than deleted, so old orders always resolve.
         public int? RequestedVariantId { get; set; }
 
+        /// <summary>
+        /// The team this line is ordering against (scoped 2026-08-26, "per-team
+        /// quantity ownership") -- resolved at Submit() time, not chosen freely:
+        /// defaults to the requester's own team, or asked for only when genuinely
+        /// ambiguous (requester belongs to &gt;1 team AND the item's variants span
+        /// &gt;1 team). "" when the item has no team split or the requester has no
+        /// team -- fails open, same convention Line already uses. Gates
+        /// FulfillOrderItem's pull loop to this team's own variants.
+        /// </summary>
+        public string Team { get; set; } = "";
+
         public virtual Order Order { get; set; } = null!;
     }
 }

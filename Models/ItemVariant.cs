@@ -29,6 +29,19 @@ namespace Visual_Inventory_System.Models
         public int Quantity { get; set; }
 
         /// <summary>
+        /// Which team's claim this pile represents (scoped 2026-08-26, "per-team
+        /// quantity ownership"). Defaults to the parent InventoryItem.Team at
+        /// creation, so every pre-existing single-team item keeps behaving
+        /// exactly as it always has -- "full stack," one team, zero migration
+        /// risk. A second team's slice of the same item is a second variant with
+        /// a different Team, not a new table; nothing requires it to sit at a
+        /// different physical location than the first. Plain string, same
+        /// vocabulary-table convention as InventoryItem.Team/Line everywhere
+        /// else -- no FK, must be one of the active Teams.
+        /// </summary>
+        public string Team { get; set; } = "";
+
+        /// <summary>
         /// How many of this variant's Quantity are thermocoupled (a marked
         /// subset, not a separate pile). INVARIANT: 0 &lt;= ThermocoupledQty
         /// &lt;= Quantity, always. Motors only in practice; non-motor variants

@@ -101,17 +101,20 @@ namespace Visual_Inventory_System.Services
             SaveDraftToSession(new LedgerDraft());
         }
 
-        public void AddItem(string itemId, int qty, int? requestedVariantId = null, int thermocoupledCount = 0)
+        public void AddItem(string itemId, int qty, int? requestedVariantId = null, int thermocoupledCount = 0, string? requestedTeam = null)
         {
             if (string.IsNullOrWhiteSpace(itemId) || qty <= 0) return;
             if (thermocoupledCount < 0) thermocoupledCount = 0;
             int tc = System.Math.Min(thermocoupledCount, qty);   // can't request more TC than units
+            string? team = string.IsNullOrWhiteSpace(requestedTeam) ? null : requestedTeam.Trim();
 
             var draft = GetDraftFromSession();
-            // Same item + same location request stack together; a different
-            // requested location gets its own line so both requests survive.
+            // Same item + same location + same requested team stack together; a
+            // different request on any of the three gets its own line so all
+            // three survive independently.
             var existing = draft.Entries.FirstOrDefault(e => e.ItemId == itemId
-                && e.RequestedVariantId == requestedVariantId);
+                && e.RequestedVariantId == requestedVariantId
+                && e.RequestedTeam == team);
 
             if (existing != null)
             {
@@ -127,11 +130,50 @@ namespace Visual_Inventory_System.Services
                     Quantity = qty,
                     Action = "ADD_TO_CART",
                     RequestedVariantId = requestedVariantId,
-                    ThermocoupledCount = tc
+                    ThermocoupledCount = tc,
+                    RequestedTeam = team
                 });
             }
 
             SaveDraftToSession(draft);
+        }
+
+        /// <summary>
+        /// Which team an order line resolves against (per-team quantity
+        /// ownership, scoped 2026-08-26). Defaults to the requester's own team;
+        /// asks (via requestedTeam, captured at Add to Cart time) only when
+        /// genuinely ambiguous -- the requester belongs to more than one of the
+        /// item's actual claimant teams. "" covers every non-split item AND the
+        /// fails-open cases (no team on either side, or none of the requester's
+        /// teams claim this item) -- same convention Line already uses.
+        /// </summary>
+        private string ResolveOrderingTeam(InventoryItem item, string? requestedTeam)
+        {
+            var variantTeams = item.ActiveVariants
+                .Select(v => (v.Team ?? "").Trim())
+                .Where(t => t.Length > 0)
+                .Distinct(System.StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (variantTeams.Count <= 1)
+                return variantTeams.FirstOrDefault() ?? "";
+
+            var inv = new InventoryService(_db, _currentUser);
+            var myTeams = inv.GetUserTeamNames(_currentUser.Name);
+            var applicable = variantTeams
+                .Where(vt => myTeams.Any(mt => string.Equals(mt, vt, System.StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            if (applicable.Count == 0) return "";              // none of my teams claim this item -- fails open
+            if (applicable.Count == 1) return applicable[0];   // exactly one applies -- no need to ask
+
+            // Genuinely ambiguous: more than one of my teams has a real claim here.
+            if (!string.IsNullOrWhiteSpace(requestedTeam)
+                && applicable.Any(t => string.Equals(t, requestedTeam, System.StringComparison.OrdinalIgnoreCase)))
+                return requestedTeam!.Trim();
+
+            throw new System.InvalidOperationException(
+                $"'{item.ItemId}' is split across your teams ({string.Join(", ", applicable)}) -- pick which team you're ordering for.");
         }
 
         public void RemoveItem(string itemId)
@@ -170,16 +212,26 @@ namespace Visual_Inventory_System.Services
                 // 2. Attach the Items
                 foreach (var entry in draft.Entries)
                 {
+                    var invItem = invService.GetById(entry.ItemId);
+                    if (invItem == null)
+                        throw new InvalidOperationException($"Failed: ID {entry.ItemId} no longer exists.");
+
+                    // Per-team quantity ownership (2026-08-26): resolves to "" for
+                    // every item that's never been split -- same behavior as before
+                    // this existed. Throws only in the genuinely ambiguous case
+                    // (requester's own teams collide on a split item), same spirit
+                    // as the stock check right below it.
+                    string team = ResolveOrderingTeam(invItem, entry.RequestedTeam);
+
                     // Verify Stock (Clean error message without quotes to protect Toast JS)
-                    var avail = invService.GetAvailableQuantity(entry.ItemId);
+                    var avail = invService.GetAvailableQuantity(entry.ItemId, team);
                     if (avail < entry.Quantity)
                     {
                         throw new InvalidOperationException($"Failed: ID {entry.ItemId} only has {avail} available in stock.");
                     }
 
                     // TC request only sticks for motors, and never exceeds the line qty.
-                    var invItem = invService.GetById(entry.ItemId);
-                    int tcCount = InventoryService.IsMotorType(invItem?.Type)
+                    int tcCount = InventoryService.IsMotorType(invItem.Type)
                         ? System.Math.Min(entry.ThermocoupledCount, entry.Quantity)
                         : 0;
 
@@ -190,7 +242,8 @@ namespace Visual_Inventory_System.Services
                         ItemId = entry.ItemId,
                         Quantity = entry.Quantity,
                         RequestedVariantId = entry.RequestedVariantId,
-                        ThermocoupledCount = tcCount
+                        ThermocoupledCount = tcCount,
+                        Team = team
                     });
                 }
 
@@ -394,7 +447,7 @@ namespace Visual_Inventory_System.Services
                 {
                     (string? Lab, string? Serial) pair = (null, null);
                     unitChoices?.TryGetValue(u, out pair);
-                    AssignOneCompressorUnit(it.ItemId, onHandHere, pair.Lab, pair.Serial, orderId, it.Id, now,
+                    AssignOneCompressorUnit(it.ItemId, onHandHere, pair.Lab, pair.Serial, orderId, it.Id, null, now,
                         claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
                 }
 
@@ -459,7 +512,16 @@ namespace Visual_Inventory_System.Services
                 return null;
             }
 
-            var activeVariants = inv.Variants.Where(v => !v.IsRetired).ToList();
+            // Per-team quantity ownership (2026-08-26): a resolved team scopes
+            // this line to ONLY that team's own variants, same shape as Pass
+            // 29's location-scoping fix -- without this, the pull loop below
+            // would silently spill across a team boundary it isn't allowed to
+            // cross, reopening the identical bug on a new axis. "" (no team
+            // resolved -- item was never split, or fails open) sees every
+            // active variant, exactly like today.
+            var activeVariants = inv.Variants
+                .Where(v => !v.IsRetired && (string.IsNullOrEmpty(it.Team) || v.Team == it.Team))
+                .ToList();
             int totalAvailable = activeVariants.Sum(v => v.Quantity);
 
             if (it.Quantity > totalAvailable)
@@ -600,7 +662,7 @@ namespace Visual_Inventory_System.Services
                 {
                     string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
                     string? serial = (pairs != null && u < pairs.Count) ? pairs[u].Serial : null;
-                    AssignOneCompressorUnit(it.ItemId, OnHandAt(unitVariant[u]), lab, serial, orderId, it.Id, now,
+                    AssignOneCompressorUnit(it.ItemId, OnHandAt(unitVariant[u]), lab, serial, orderId, it.Id, null, now,
                         claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
                 }
             }
@@ -683,14 +745,17 @@ namespace Visual_Inventory_System.Services
 
         /// <summary>
         /// Match-or-create for one physical compressor unit leaving one specific
-        /// shelf (Pass 29). Shared by FulfillOrderItem's normal pull and by
-        /// PickUpPartialAndSplit's deliberate partial pull -- both need the exact
-        /// same location-scoped matching and the same guard against silently
-        /// grabbing a serial that lives somewhere else for this item.
+        /// shelf (Pass 29). Shared by FulfillOrderItem's normal pull,
+        /// PickUpPartialAndSplit's deliberate partial pull, and ApproveTransfer's
+        /// serial capture -- all three need the exact same location-scoped
+        /// matching and the same guard against silently grabbing a serial that
+        /// lives somewhere else for this item. orderId/orderItemId vs.
+        /// transferRequestId are mutually exclusive -- a real pickup passes the
+        /// former with null transferRequestId, a Transfer approval the reverse.
         /// </summary>
         private void AssignOneCompressorUnit(
             string itemId, List<CompressorUnit> onHandHere, string? lab, string? serial,
-            int orderId, int orderItemId, System.DateTime now,
+            int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now,
             HashSet<string> claimedThisCall,
             ref int missingLab, ref int missingSerial, ref int matchedUnits)
         {
@@ -736,6 +801,7 @@ namespace Visual_Inventory_System.Services
                 known.Status = UnitStatus.PickedUp;
                 known.OrderId = orderId;
                 known.OrderItemId = orderItemId;
+                known.TransferRequestId = transferRequestId;
                 known.PickedUpAt = now;
                 known.PickedUpBy = _currentUser.Name;
                 known.ItemVariantId = null;   // off the shelf; 6B sets it again on return
@@ -772,6 +838,7 @@ namespace Visual_Inventory_System.Services
                     RecordedBy = _currentUser.Name,
                     OrderId = orderId,
                     OrderItemId = orderItemId,
+                    TransferRequestId = transferRequestId,
                     PickedUpAt = now,
                     PickedUpBy = _currentUser.Name
                 });
@@ -1151,6 +1218,221 @@ namespace Visual_Inventory_System.Services
         public void CancelOrder()
         {
             StartOrder();
+        }
+
+        // ============================
+        // INTERNAL TRANSFER (Pass 30 -- scoped 2026-08-26, corrected same day
+        // after live testing: originally built as a Borrow with a due date and
+        // a Return flow, but a transferred unit never actually comes back in
+        // practice -- same as how a picked-up compressor already stays
+        // "Picked Up" forever with no return expected. One-way, one approval.)
+        // ============================
+        // Deliberately parallel to the cart/Order pipeline, not built on it: a
+        // transfer never creates an Order/OrderItem row, so an item can be
+        // ordered by its own Line and transferred to another Line at the same
+        // time without either path needing to know about the other beyond the
+        // ItemVariant rows both actually decrement. Only the initial request
+        // needs the lending side's approval (Engineer+, same Line/Team as the
+        // item -- enforced here via IsOwnLine, not just hidden in the UI).
+
+        public void RequestTransfer(string itemId, int qty,
+            int? requestedVariantId = null, int thermocoupledCount = 0, string? note = null)
+        {
+            if (string.IsNullOrWhiteSpace(itemId) || qty <= 0) return;
+
+            var inv = new InventoryService(_db, _currentUser);
+            var item = inv.GetById(itemId);
+            if (item == null) throw new System.InvalidOperationException("Item not found.");
+
+            // A transfer request is for items outside your own Line/Team --
+            // your own Line's stock is ordered normally, through the cart.
+            if (inv.IsOwnLine(item.Line))
+                throw new System.InvalidOperationException("This item belongs to your own Line -- use Add to Cart instead of Request Transfer.");
+
+            int tc = InventoryService.IsMotorType(item.Type) ? System.Math.Min(System.Math.Max(0, thermocoupledCount), qty) : 0;
+
+            _db.TransferRequests.Add(new TransferRequest
+            {
+                ItemId = itemId,
+                Quantity = qty,
+                ThermocoupledCount = tc,
+                RequestedVariantId = requestedVariantId,
+                RequesterUserName = _currentUser.Name,
+                Status = TransferStatus.Requested,
+                RequestedAt = System.DateTime.UtcNow,
+                Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim()
+            });
+            _db.SaveChanges();
+        }
+
+        // compressorUnits mirrors PickUpOrderConfirmed's shape exactly (Lab#/Serial#
+        // pairs posted per physical unit, both soft) -- the approver is standing in
+        // for the fulfiller role a normal pickup already has, so the same serial
+        // capture UI and the same AssignOneCompressorUnit matching applies.
+        public void ApproveTransfer(int transferRequestId, List<(string? Lab, string? Serial)>? compressorUnits = null)
+        {
+            using var tx = _db.Database.BeginTransaction();
+            try
+            {
+                var req = _db.TransferRequests.FirstOrDefault(b => b.Id == transferRequestId);
+                if (req == null) throw new System.InvalidOperationException("Transfer request not found.");
+                if (req.Status != TransferStatus.Requested) throw new System.InvalidOperationException("This request has already been decided.");
+
+                var inv = new InventoryService(_db, _currentUser);
+                var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == req.ItemId);
+                if (item == null) throw new System.InvalidOperationException("That item no longer exists in inventory.");
+                if (!inv.CanApproveTransfer(item, req.RequestedVariantId))
+                    throw new System.InvalidOperationException("You can only approve transfers against your own Line's items -- and, once an item is split across teams, only the owning team's own Engineers can approve that slice.");
+
+                var activeVariants = item.Variants.Where(v => !v.IsRetired).ToList();
+                int totalAvailable = activeVariants.Sum(v => v.Quantity);
+                if (req.Quantity > totalAvailable)
+                    throw new System.InvalidOperationException($"Not enough on the shelf -- {req.Quantity} requested, {totalAvailable} on hand across active locations.");
+
+                var pullOrder = activeVariants
+                    .OrderBy(v => req.RequestedVariantId.HasValue && v.Id == req.RequestedVariantId.Value ? 0 : 1)
+                    .ThenBy(v => v.VariantNumber)
+                    .ToList();
+
+                int remaining = req.Quantity;
+                int remainingTc = req.ThermocoupledCount;
+                var pulls = new List<string>();
+                var variantPulls = new List<(int VariantId, int Take)>();
+                foreach (var v in pullOrder)
+                {
+                    if (remaining <= 0) break;
+                    int take = System.Math.Min(v.Quantity, remaining);
+                    if (take <= 0) continue;
+
+                    int nonTc = v.Quantity - v.ThermocoupledQty;
+                    int forcedTc = System.Math.Max(0, take - nonTc);
+                    int maxTc = System.Math.Min(take, v.ThermocoupledQty);
+                    int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
+
+                    v.Quantity -= take;
+                    v.ThermocoupledQty -= tcTake;
+                    remaining -= take;
+                    remainingTc = System.Math.Max(0, remainingTc - tcTake);
+                    pulls.Add($"{take}{(tcTake > 0 ? $" [{tcTake} TC]" : "")} from V{v.VariantNumber} ({v.FdaString})");
+                    variantPulls.Add((v.Id, take));
+                }
+
+                var now = System.DateTime.UtcNow;
+                int pulledQty = req.Quantity - remaining;
+                int pulledTc = req.ThermocoupledCount - remainingTc;
+
+                int missingLab = 0, missingSerial = 0, matchedUnits = 0;
+                if (InventoryService.IsCompressorType(item.Type) && pulledQty > 0)
+                {
+                    var unitVariant = new List<int>();
+                    foreach (var (variantId, take) in variantPulls)
+                        for (int i = 0; i < take; i++) unitVariant.Add(variantId);
+
+                    var onHandByVariant = new Dictionary<int, List<CompressorUnit>>();
+                    List<CompressorUnit> OnHandAt(int variantId)
+                    {
+                        if (!onHandByVariant.TryGetValue(variantId, out var list))
+                        {
+                            list = _db.CompressorUnits
+                                .Where(c => c.ItemId == req.ItemId && c.ItemVariantId == variantId && c.Status == UnitStatus.OnHand)
+                                .OrderBy(c => c.RecordedAt)
+                                .ToList();
+                            onHandByVariant[variantId] = list;
+                        }
+                        return list;
+                    }
+
+                    var claimedThisCall = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                    for (int u = 0; u < pulledQty; u++)
+                    {
+                        string? lab = (compressorUnits != null && u < compressorUnits.Count) ? compressorUnits[u].Lab : null;
+                        string? serial = (compressorUnits != null && u < compressorUnits.Count) ? compressorUnits[u].Serial : null;
+                        AssignOneCompressorUnit(req.ItemId, OnHandAt(unitVariant[u]), lab, serial, null, null, req.Id, now,
+                            claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
+                    }
+                }
+
+                if (InventoryService.IsMotorType(item.Type) && pulledTc > 0)
+                {
+                    var onHandMotors = _db.MotorUnits
+                        .Where(c => c.ItemId == req.ItemId && c.Status == UnitStatus.OnHand)
+                        .OrderBy(c => c.RecordedAt)
+                        .Take(pulledTc)
+                        .ToList();
+                    foreach (var known in onHandMotors)
+                    {
+                        known.Status = UnitStatus.PickedUp;
+                        known.OrderId = null;
+                        known.OrderItemId = null;
+                        known.TransferRequestId = req.Id;
+                        known.PickedUpAt = now;
+                        known.PickedUpBy = _currentUser.Name;
+                        known.ItemVariantId = null;
+                    }
+                    for (int u = onHandMotors.Count; u < pulledTc; u++)
+                    {
+                        _db.MotorUnits.Add(new MotorUnit
+                        {
+                            ItemId = req.ItemId,
+                            ItemVariantId = null,
+                            LabNumber = null,
+                            Status = UnitStatus.PickedUp,
+                            RecordedAt = now,
+                            RecordedBy = _currentUser.Name,
+                            TransferRequestId = req.Id,
+                            PickedUpAt = now,
+                            PickedUpBy = _currentUser.Name
+                        });
+                    }
+                }
+
+                item.LastUpdated = now;
+                item.UpdatedBy = _currentUser.Name;
+
+                req.Status = TransferStatus.Approved;
+                req.DecidedBy = _currentUser.Name;
+                req.DecidedAt = now;
+
+                var flagParts = new List<string>();
+                if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
+                if (missingSerial > 0) flagParts.Add($"{missingSerial} missing serial #");
+                if (matchedUnits > 0) flagParts.Add($"{matchedUnits} matched to known unit(s)");
+                string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
+
+                _db.TransactionLogs.Add(new TransactionLog
+                {
+                    Timestamp = now,
+                    ActionType = "Transfer Approved",
+                    ItemId = req.ItemId,
+                    ItemName = item.ItemName,
+                    QuantityChange = -pulledQty,
+                    Details = (pulls.Count > 0
+                        ? $"Transfer #{req.Id} approved for {req.RequesterUserName} -- pulled {string.Join(", ", pulls)}"
+                        : $"Transfer #{req.Id} approved for {req.RequesterUserName}") + compressorFlag,
+                    User = _currentUser.Name
+                });
+
+                _db.SaveChanges();
+                tx.Commit();
+            }
+            catch { tx.Rollback(); throw; }
+        }
+
+        public void DenyTransfer(int transferRequestId)
+        {
+            var req = _db.TransferRequests.FirstOrDefault(b => b.Id == transferRequestId);
+            if (req == null) throw new System.InvalidOperationException("Transfer request not found.");
+            if (req.Status != TransferStatus.Requested) throw new System.InvalidOperationException("This request has already been decided.");
+
+            var inv = new InventoryService(_db, _currentUser);
+            var item = inv.GetById(req.ItemId);
+            if (item != null && !inv.CanApproveTransfer(item, req.RequestedVariantId))
+                throw new System.InvalidOperationException("You can only decide transfers against your own Line's items -- and, once an item is split across teams, only the owning team's own Engineers can decide that slice.");
+
+            req.Status = TransferStatus.Denied;
+            req.DecidedBy = _currentUser.Name;
+            req.DecidedAt = System.DateTime.UtcNow;
+            _db.SaveChanges();
         }
     }
 }

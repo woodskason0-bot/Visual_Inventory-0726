@@ -1,6 +1,6 @@
-@model Visual_Inventory_System.Models.ViewModels.MyOrdersViewModel
+@model Visual_Inventory_System.Models.ViewModels.MyActivityViewModel
 @{
-    ViewData["Title"] = "My Orders";
+    ViewData["Title"] = "My Activity";
 }
 
 <style>
@@ -51,8 +51,8 @@
         <div class="alert alert-danger">@TempData["Error"]</div>
     }
 
-    <h2 class="mo-h mb-1"><i class="bi bi-person-lines-fill me-2 text-primary"></i>My Orders</h2>
-    <div class="mo-sub mb-4">Signed in as <strong>@Model.UserName</strong> — this page shows only your orders and your loans.</div>
+    <h2 class="mo-h mb-1"><i class="bi bi-activity me-2 text-primary"></i>My Activity</h2>
+    <div class="mo-sub mb-4">Signed in as <strong>@Model.UserName</strong> — this page shows only your own orders, loans, and internal transfers.</div>
 
     <!-- SECTION 2 first: action lives here (things you owe back). -->
     <div class="mo-card">
@@ -218,6 +218,139 @@
         }
     </div>
 
+    <!-- INTERNAL TRANSFERS (Pass 30, corrected same day after live testing --
+         no due date, no return flow: a transferred unit doesn't come back in
+         practice, same as how a picked-up compressor already stays "Picked Up"
+         forever. One approval, then done.) MyRequests = requests I placed
+         against another Line's item, full history; AwaitingApproval = requests
+         against items my own Line/Team owns -- the approval queue lives right
+         here, not on a separate page. -->
+    <div class="mo-card">
+        <h4 class="mo-h mb-1"><i class="bi bi-arrow-left-right me-2" style="color:#F59E0B;"></i>Internal Transfers</h4>
+        <div class="mo-sub mb-3">Cross-Line stock moves -- one-way, one approval. Once approved, it's gone from the lending Line's shelf for good.</div>
+
+        <h6 class="mo-h mb-2" style="font-size:14px;">My Requests</h6>
+        @if (!Model.Transfer.MyRequests.Any())
+        {
+            <div class="mo-empty">You haven't requested a transfer.</div>
+        }
+        else
+        {
+            @foreach (var b in Model.Transfer.MyRequests)
+            {
+                <div class="loan-line">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                        <div>
+                            <span class="mo-h">@b.ItemName</span>
+                            <span class="mo-sub">(@b.ItemId@(string.IsNullOrWhiteSpace(b.RheemPartNumber) ? "" : $" · PN {b.RheemPartNumber}"))</span>
+                            @if (b.ThermocoupledCount > 0)
+                            {
+                                <span class="tc-tag ms-2"><i class="bi bi-thermometer-half"></i> TC</span>
+                            }
+                            <div class="loan-ctx mt-1">
+                                <i class="bi bi-hash"></i>Transfer #@b.Id · requested @b.RequestedAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                                @if (!string.IsNullOrWhiteSpace(b.ResolvedLocationLabel)) { <text> · @b.ResolvedLocationLabel</text> }
+                                @if (!string.IsNullOrWhiteSpace(b.Note)) { <text> · "@b.Note"</text> }
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="mo-sub" style="font-size:11px;">Qty</div>
+                            <div class="mo-h mo-outstanding" style="font-size:1.5rem;">@b.Quantity</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-2">
+                        @if (b.Status == "Requested")
+                        {
+                            <span class="badge bg-warning text-dark">Awaiting approval</span>
+                        }
+                        else if (b.Status == "Approved")
+                        {
+                            <span class="badge bg-success">Approved</span>
+                            <span class="loan-ctx ms-2">by @b.DecidedBy on @b.DecidedAt!.Value.ToLocalTime().ToString("MMM d, yyyy")</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-danger">Denied</span>
+                            <span class="loan-ctx ms-2">by @b.DecidedBy on @b.DecidedAt!.Value.ToLocalTime().ToString("MMM d, yyyy")</span>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        <h6 class="mo-h mb-2 mt-4" style="font-size:14px;">Awaiting My Approval</h6>
+        @if (!Model.Transfer.AwaitingApproval.Any())
+        {
+            <div class="mo-empty">Nothing waiting on your Line right now.</div>
+        }
+        else
+        {
+            @foreach (var b in Model.Transfer.AwaitingApproval)
+            {
+                <div class="loan-line">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                        <div>
+                            <span class="mo-h">@b.ItemName</span>
+                            <span class="mo-sub">(@b.ItemId@(string.IsNullOrWhiteSpace(b.RheemPartNumber) ? "" : $" · PN {b.RheemPartNumber}"))</span>
+                            @if (b.ThermocoupledCount > 0)
+                            {
+                                <span class="tc-tag ms-2"><i class="bi bi-thermometer-half"></i> TC</span>
+                            }
+                            <div class="loan-ctx mt-1">
+                                <i class="bi bi-person me-1"></i>Requested by @b.RequesterUserName · Transfer #@b.Id · @b.RequestedAt.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                                @if (!string.IsNullOrWhiteSpace(b.Note)) { <text> · "@b.Note"</text> }
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="mo-sub" style="font-size:11px;">Qty</div>
+                            <div class="mo-h mo-outstanding" style="font-size:1.5rem;">@b.Quantity</div>
+                        </div>
+                    </div>
+
+                    <div class="loan-ctx mt-1">
+                        @(string.IsNullOrWhiteSpace(b.ResolvedLocationLabel) ? "No location preference" : $"Prefers {b.ResolvedLocationLabel}")
+                    </div>
+
+                    <form asp-controller="Home" asp-action="ApproveTransfer" method="post" class="mt-2">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="transferRequestId" value="@b.Id" />
+
+                        @if (b.IsCompressor)
+                        {
+                            var allOnHand = b.LocationChoices.SelectMany(c => c.OnHandUnits).ToList();
+                            <div class="mb-2">
+                                <span class="d-block mb-1 mo-sub" style="font-size:11px;">Serial # -- pick from what's on hand, or add one</span>
+                                @for (int u = 0; u < b.Quantity; u++)
+                                {
+                                    <div class="d-flex gap-1 mb-1" style="max-width:420px;">
+                                        <input type="text" name="compLab_@u" class="mo-input" placeholder="Lab # (unit @(u + 1))" style="max-width:110px;" />
+                                        <select name="compSerial_@u" class="mo-input transfer-serial-select" style="max-width:170px;" onchange="toggleTransferManual(this)">
+                                            <option value="">-- none / unrecorded --</option>
+                                            @foreach (var oh in allOnHand)
+                                            {
+                                                <option value="@oh.SerialNumber">@oh.SerialNumber@(string.IsNullOrWhiteSpace(oh.LabNumber) ? "" : $" (Lab {oh.LabNumber})")</option>
+                                            }
+                                            <option value="__ADD__">+ Add a serial not listed</option>
+                                        </select>
+                                        <input type="text" name="compSerialManual_@u" class="mo-input comp-serial-manual d-none" placeholder="Type serial" style="max-width:140px;" />
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <button type="submit" class="btn btn-success fw-bold">Approve</button>
+                    </form>
+                    <form asp-controller="Home" asp-action="DenyTransfer" method="post" class="d-inline-block mt-2 ms-2">
+                        @Html.AntiForgeryToken()
+                        <input type="hidden" name="transferRequestId" value="@b.Id" />
+                        <button type="submit" class="btn btn-outline-danger fw-bold">Deny</button>
+                    </form>
+                </div>
+            }
+        }
+    </div>
+
     <!-- SECTION 1: my order history. -->
     <div class="mo-card">
         <h4 class="mo-h mb-3"><i class="bi bi-clock-history me-2 text-primary"></i>My Order History</h4>
@@ -290,6 +423,13 @@
             form.appendChild(h);
         });
         return true;
+    }
+
+    // Reveal the free-text serial input when the approver picks "+ Add a serial
+    // not listed" instead of a known on-hand one.
+    function toggleTransferManual(sel) {
+        var manual = sel.parentElement.querySelector('.comp-serial-manual');
+        if (manual) manual.classList.toggle('d-none', sel.value !== '__ADD__');
     }
 
     function doneUsing(oiid) {

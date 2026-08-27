@@ -124,6 +124,7 @@ namespace Visual_Inventory_System.Controllers
                 ViewBag.SearchResult = new SearchResult { Mode = "Ledger", Items = new List<InventoryItem>() };
                 ViewBag.Ledger = new LedgerViewModel { Entries = draftEntries };
                 ViewBag.InventoryService = _inventoryService;
+                ViewBag.TransferItemsJson = "[]";
                 return View();
             }
 
@@ -156,6 +157,37 @@ namespace Visual_Inventory_System.Controllers
 
             ViewBag.SearchResult = searchResult;
             ViewBag.InventoryService = _inventoryService;
+
+            // Pass 30 (Request Transfer): itemsList (built by PopulateSearchViewBag,
+            // off GetAll()) is Line-scoped -- that's correct for Add to Cart/Handle
+            // Stock, but it means openTransfer can never find the other-Line item
+            // it's meant to act on, since Search() itself stopped filtering by
+            // Line. A separate, narrower JSON blob scoped to exactly what this
+            // search actually returned (regardless of Line) closes that gap
+            // without widening itemsList's own exposure -- AddItem still has no
+            // Line check, so itemsList staying Line-scoped is load-bearing, not
+            // an oversight.
+            ViewBag.TransferItemsJson = System.Text.Json.JsonSerializer.Serialize(
+                searchResult.Items.Select(i => new
+                {
+                    id = i.ItemId,
+                    name = i.ItemName,
+                    type = i.Type,
+                    line = i.Line,
+                    // Per-team quantity ownership (2026-08-26): the Request Transfer
+                    // modal needs to show ownership too, so the requester can see
+                    // which team's slice they're actually picking when the location
+                    // dropdown doubles as the team picker.
+                    variants = i.ActiveVariants.OrderBy(v => v.VariantNumber).Select(v => new
+                    {
+                        vid = v.Id,
+                        num = v.VariantNumber,
+                        fda = v.FdaString,
+                        qty = v.Quantity,
+                        tcqty = v.ThermocoupledQty,
+                        team = v.Team
+                    }).ToList()
+                }).ToList());
 
             ViewBag.OmniSearch = omniSearch ?? "";
             ViewBag.FilterRheem = filterRheem ?? "";
@@ -211,6 +243,7 @@ namespace Visual_Inventory_System.Controllers
                 // Identity fields the Modify Stock "Edit Details" pane prefills.
                 rpn = i.RheemPartNumber,
                 line = i.Line,
+                team = i.Team,
                 brand = i.Brand,
                 desc = i.Description,
                 threshold = i.AlertThreshold,
@@ -239,7 +272,11 @@ namespace Visual_Inventory_System.Controllers
                     qty = v.Quantity,
                     // How many of this variant's qty are thermocoupled (the tagged
                     // subset). Feeds the modal's TC cap so the human never guesses.
-                    tcqty = v.ThermocoupledQty
+                    tcqty = v.ThermocoupledQty,
+                    // Which team's slice this stack is (per-team quantity ownership,
+                    // 2026-08-26) -- Modify Stock's variant picker shows it per option
+                    // once an item is split.
+                    team = v.Team
                 }).ToList()
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
@@ -265,6 +302,11 @@ namespace Visual_Inventory_System.Controllers
             // The export filter offers HIDDEN teams too -- you still need to pull a
             // report on a team that was retired last quarter.
             ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
+            // Which teams THIS user is on (per-team quantity ownership, 2026-08-26)
+            // -- Add to Cart's team picker only needs to show up when it's
+            // genuinely ambiguous for this specific person, not just whenever an
+            // item happens to be split.
+            ViewBag.MyTeamsJson = System.Text.Json.JsonSerializer.Serialize(_inventoryService.GetUserTeamNames(_currentUser.Name));
         }
 
         // Pass 28 (2b): now that a second real page (SearchCenter) can trigger
@@ -292,9 +334,9 @@ namespace Visual_Inventory_System.Controllers
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
-        public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0)
+        public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0, string? requestedTeam = null)
         {
-            _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount);
+            _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount, requestedTeam);
             if (Request.Headers["X-Requested-With"] == "XMLHttpRequest") return Json(new { success = true, message = "Added to cart!" });
             TempData["Message"] = "Item added to cart.";
             return SmartRedirect();
@@ -382,7 +424,7 @@ namespace Visual_Inventory_System.Controllers
             string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
             string? newRheemPart = null, string? newDescription = null, string? newBrand = null,
-            string? newLine = null)
+            string? newLine = null, string? variantTeam = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return SmartRedirect();
 
@@ -426,7 +468,7 @@ namespace Visual_Inventory_System.Controllers
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
                     newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
-                    newLine, serials);
+                    newLine, serials, variantTeam);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -1047,8 +1089,10 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Intake");
         }
 
-        // Self-scoped loan ledger: this user's orders + their items still out.
-        public IActionResult MyOrders()
+        // Self-scoped activity feed: this user's orders, loans, and internal
+        // transfers (renamed 2026-08-26 from "My Orders" once Transfer grew
+        // this page past just orders).
+        public IActionResult MyActivity()
         {
             var me = _currentUser.Name;
 
@@ -1120,8 +1164,86 @@ namespace Visual_Inventory_System.Controllers
                 }
             }
 
+            // ----- Internal Transfer section (Pass 30): MyRequests = this
+            // user's own transfer requests, full history like My Order History
+            // below it (there's nothing further to act on once decided, but the
+            // outcome is still worth seeing). AwaitingApproval = Requested-status
+            // rows against items this user's Line/Team owns -- the queue itself;
+            // once decided a row needs no more action and drops off, same "only
+            // show what needs attention" convention the loan bench above uses.
+            TransferLineViewModel ToTransferLine(TransferRequest b)
+            {
+                invLookup.TryGetValue(b.ItemId, out var bInv);
+                var bActiveVars = (bInv?.ActiveVariants ?? Enumerable.Empty<ItemVariant>()).OrderBy(v => v.VariantNumber).ToList();
+                bool isComp = InventoryService.IsCompressorType(bInv?.Type);
+                bool isMotor = InventoryService.IsMotorType(bInv?.Type);
+
+                var onHandUnits = isComp
+                    ? _db.CompressorUnits.AsNoTracking()
+                        .Where(cu => cu.ItemId == b.ItemId && cu.Status == UnitStatus.OnHand)
+                        .ToList()
+                    : new List<CompressorUnit>();
+
+                string? resolvedLabel = null;
+                if (b.RequestedVariantId.HasValue)
+                {
+                    var rv = bActiveVars.FirstOrDefault(x => x.Id == b.RequestedVariantId.Value);
+                    resolvedLabel = rv != null ? VLabel(rv) : "requested location no longer active -- will auto-pull";
+                }
+
+                return new TransferLineViewModel
+                {
+                    Id = b.Id,
+                    ItemId = b.ItemId,
+                    ItemName = bInv?.ItemName ?? "Unknown",
+                    RheemPartNumber = bInv?.RheemPartNumber ?? "",
+                    ItemType = bInv?.Type ?? "",
+                    Quantity = b.Quantity,
+                    ThermocoupledCount = b.ThermocoupledCount,
+                    RequesterUserName = b.RequesterUserName,
+                    Status = b.Status,
+                    RequestedAt = b.RequestedAt,
+                    Note = b.Note,
+                    DecidedBy = b.DecidedBy,
+                    DecidedAt = b.DecidedAt,
+                    IsCompressor = isComp,
+                    IsMotor = isMotor,
+                    ResolvedLocationLabel = resolvedLabel,
+                    LocationChoices = bActiveVars.Select(v => new VariantChoiceViewModel
+                    {
+                        VariantId = v.Id,
+                        Label = VLabel(v),
+                        Quantity = v.Quantity,
+                        OnHandUnits = onHandUnits.Where(u => u.ItemVariantId == v.Id)
+                            .Select(u => new OnHandUnitViewModel { SerialNumber = u.SerialNumber, LabNumber = u.LabNumber }).ToList()
+                    }).ToList()
+                };
+            }
+
+            var myTransferRequests = _db.TransferRequests.AsNoTracking()
+                .Where(b => b.RequesterUserName == me)
+                .OrderByDescending(b => b.RequestedAt)
+                .ToList()
+                .Select(ToTransferLine).ToList();
+
+            var awaitingApproval = _db.TransferRequests.AsNoTracking()
+                .Where(b => b.Status == TransferStatus.Requested)
+                .OrderByDescending(b => b.RequestedAt)
+                .ToList()
+                // Per-team quantity ownership (2026-08-26): Line AND, once an item
+                // is split, Team -- otherwise a same-Line Engineer on the wrong
+                // team would see a request here that ApproveTransfer then refuses.
+                .Where(b => invLookup.TryGetValue(b.ItemId, out var lentInv) && _inventoryService.CanApproveTransfer(lentInv, b.RequestedVariantId))
+                .Select(ToTransferLine).ToList();
+
             ViewBag.LocationParents = BuildLocationParents();
-            return View(new MyOrdersViewModel { UserName = me, Orders = myOrders, Loans = loans });
+            return View(new MyActivityViewModel
+            {
+                UserName = me,
+                Orders = myOrders,
+                Loans = loans,
+                Transfer = new TransferSectionViewModel { MyRequests = myTransferRequests, AwaitingApproval = awaitingApproval }
+            });
         }
 
         [HttpPost]
@@ -1138,7 +1260,7 @@ namespace Visual_Inventory_System.Controllers
                 TempData["Success"] = "Loan return recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
-            return RedirectToAction("MyOrders");
+            return RedirectToAction("MyActivity");
         }
 
         [HttpPost]
@@ -1152,7 +1274,72 @@ namespace Visual_Inventory_System.Controllers
                 TempData["Success"] = "Loan scrap recorded.";
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
-            return RedirectToAction("MyOrders");
+            return RedirectToAction("MyActivity");
+        }
+
+        // ============================
+        // REQUEST TRANSFER - INTERNAL (Pass 30)
+        // ============================
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult RequestTransfer(string itemId, int quantity,
+            int? requestedVariantId = null, int thermocoupledCount = 0, string? note = null)
+        {
+            try
+            {
+                _orderService.RequestTransfer(itemId, quantity, requestedVariantId, thermocoupledCount, note);
+                TempData["Success"] = "Transfer request sent.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+            return SmartRedirect();
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Engineer)]
+        public IActionResult ApproveTransfer(int transferRequestId)
+        {
+            try
+            {
+                // compLab_{n} / compSerial_{n}, n = 0-based unit index -- same
+                // shape as PickUpOrderConfirmed's compLab_{oi}_{n}, just without
+                // the order-item key since one transfer request is one line.
+                var pairs = new List<(string? Lab, string? Serial)>();
+                var indices = Request.Form.Keys
+                    .Where(k => k.StartsWith("compLab_"))
+                    .Select(k => int.TryParse(k.Substring("compLab_".Length), out int n) ? n : -1)
+                    .Where(n => n >= 0)
+                    .OrderBy(n => n);
+                foreach (var n in indices)
+                {
+                    string? lab = Request.Form[$"compLab_{n}"].ToString();
+                    string? serial = Request.Form[$"compSerial_{n}"].ToString();
+                    if (serial == "__ADD__") serial = Request.Form[$"compSerialManual_{n}"].ToString();
+                    else if (serial == "__NONE__") serial = null;
+                    pairs.Add((string.IsNullOrWhiteSpace(lab) ? null : lab, string.IsNullOrWhiteSpace(serial) ? null : serial));
+                }
+
+                _orderService.ApproveTransfer(transferRequestId, pairs.Count > 0 ? pairs : null);
+                TempData["Success"] = "Transfer approved.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+            return RedirectToAction("MyActivity");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Engineer)]
+        public IActionResult DenyTransfer(int transferRequestId)
+        {
+            try
+            {
+                _orderService.DenyTransfer(transferRequestId);
+                TempData["Success"] = "Transfer denied.";
+            }
+            catch (Exception ex) { TempData["Error"] = ex.Message; }
+            return RedirectToAction("MyActivity");
         }
 
         public IActionResult PickupQueue()
@@ -1165,8 +1352,8 @@ namespace Visual_Inventory_System.Controllers
 
                 foreach (var it in order.Items)
                 {
-                    var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt);
-                    var totalAvailable = _inventoryService.GetAvailableQuantity(it.ItemId);
+                    var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt, it.Team);
+                    var totalAvailable = _inventoryService.GetAvailableQuantity(it.ItemId, it.Team);
                     var itemEntity = _db.InventoryItems.AsNoTracking().Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
 
                     // Friendly per-location labels for the pickup person. Decode the
@@ -1188,7 +1375,12 @@ namespace Visual_Inventory_System.Controllers
                         return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
                     }
 
+                    // Per-team quantity ownership (2026-08-26): same team scoping
+                    // FulfillOrderItem applies to the real pull -- the picker's
+                    // location/serial choices here must be the identical pool, or
+                    // they could pick a spot the actual pickup then can't honor.
                     var activeVars = (itemEntity?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
+                        .Where(v => string.IsNullOrEmpty(it.Team) || v.Team == it.Team)
                         .OrderBy(v => v.VariantNumber).ToList();
 
                     // Real on-hand units per location -- feeds the serial picker
@@ -1786,6 +1978,17 @@ namespace Visual_Inventory_System.Controllers
                 .Where(o => o.SplitFromOrderId == id)
                 .Select(o => o.Id)
                 .ToList();
+            // Which physical units this order actually pulled, per line -- this
+            // view never fetched CompressorUnits at all, so a compressor line's
+            // serials were invisible here even though they're logged at pickup
+            // (visible on My Orders' loan bench and the Compressor Registry, just
+            // never surfaced on the order itself). Grouped by OrderItemId, not
+            // OrderId, so a multi-line order doesn't mix serials across lines.
+            ViewBag.UnitsByOrderItem = _db.CompressorUnits.AsNoTracking()
+                .Where(c => c.OrderId == id)
+                .ToList()
+                .GroupBy(c => c.OrderItemId)
+                .ToDictionary(g => g.Key, g => g.ToList());
             return View(order);
         }
 

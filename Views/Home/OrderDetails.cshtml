@@ -32,6 +32,8 @@
 
 @{
     var splitTo = ViewBag.SplitTo as System.Collections.Generic.List<int> ?? new System.Collections.Generic.List<int>();
+    var unitsByOrderItem = ViewBag.UnitsByOrderItem as System.Collections.Generic.Dictionary<int?, System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>>
+        ?? new System.Collections.Generic.Dictionary<int?, System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>>();
 }
 <h2>Order @Model.Id</h2>
 <p>Created: @Model.CreatedAt.ToLocalTime() @(string.IsNullOrEmpty(Model.RequestedBy) ? "" : $"by {Model.RequestedBy}")</p>
@@ -66,6 +68,7 @@
             <th>Description</th>
             <th>Location</th>
             <th class="text-end">Quantity</th>
+            <th>Serial #</th>
             <th></th>
         </tr>
     </thead>
@@ -74,6 +77,8 @@
     {
         var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
         var wasShort = it.Status == "Cancelled";
+        var isCompressor = Visual_Inventory_System.Services.InventoryService.IsCompressorType(inv?.Type);
+        var lineUnits = unitsByOrderItem.TryGetValue(it.Id, out var uList) ? uList : new System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>();
         <tr class="@(wasShort ? "text-muted" : "")">
             <td>@it.ItemId</td>
             <td>@(inv?.ItemName ?? "Unknown item")@(string.IsNullOrWhiteSpace(inv?.RheemPartNumber) ? "" : $" — PN: {inv!.RheemPartNumber}")</td>
@@ -85,6 +90,35 @@
                 )
             </td>
             <td class="text-end">@it.Quantity</td>
+            <td>
+                @if (!isCompressor)
+                {
+                    @:—
+                }
+                else if (!lineUnits.Any())
+                {
+                    <span class="text-muted">none on record</span>
+                }
+                else
+                {
+                    <ul class="list-unstyled mb-0">
+                        @foreach (var cu in lineUnits)
+                        {
+                            <li>
+                                @(string.IsNullOrWhiteSpace(cu.SerialNumber) ? "(no serial)" : cu.SerialNumber)
+                                @if (!string.IsNullOrWhiteSpace(cu.LabNumber))
+                                {
+                                    <span class="text-muted"> · Lab @cu.LabNumber</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                    @if (lineUnits.Count < it.Quantity)
+                    {
+                        <div class="text-muted" style="font-size:11px;">@(it.Quantity - lineUnits.Count) more unidentified</div>
+                    }
+                }
+            </td>
             <td>
                 @if (wasShort)
                 {

@@ -607,6 +607,21 @@ body {
 :root[data-theme="light"] .modal-content .text-warning,
 :root[data-theme="light"] .grid-card .text-warning { color: #8A6100 !important; }
 
+/* Plain modal-body text -- "Are you sure you want to submit this order?"
+   (Confirm Final Order), Start Order, Delete Item, the bulk-threshold
+   confirm, and every other modal that just has a sentence of body copy.
+   Two gaps, not one: the base .modal-content rule above never got a
+   light-theme override for its own `color: white`, AND most of these bodies
+   also carry the literal `text-white` class, which is a Bootstrap utility
+   (`!important`) that would keep beating a plain color override even after
+   fixing the first gap. On a white light-theme modal this reads as
+   completely invisible, not just washed out -- worse than the label/
+   text-info gaps above, which were merely low-contrast. Found live testing
+   2026-08-26 (Kason, Request Transfer pass -- Confirm Final Order's body
+   was a blank white box). */
+:root[data-theme="light"] .modal-content { color: #1A1D23; }
+:root[data-theme="light"] .modal-content .text-white { color: #1A1D23 !important; }
+
 /* One of those (a compressor's blank-serial flag, in its History table) sits
    inside .comp-row, whose background stays dark regardless of theme --
    same exclusion shape as the label rule above, same reason: four
@@ -627,7 +642,7 @@ body {
 /* Bootstrap's outline-danger/warning/info are tuned for dark surfaces --
    ~2:1 contrast on white (found live testing 2d.1: Alert Rules' "Apply to
    all" button). Sitewide, not scoped to Command/Search Center: these three
-   variants show up across MyOrders, PickupQueue, Intake, and AllItems too,
+   variants show up across My Activity, PickupQueue, Intake, and AllItems too,
    all with the same problem, none of it new. None of the app's always-dark
    containers (.comp-row/.motor-row/.filter-bar-dark) use these outline
    variants, so no exclusion needed the way the label/text-warning fixes
