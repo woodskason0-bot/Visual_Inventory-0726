@@ -38,7 +38,11 @@ only confirmed by static reading and a clean build, and the difference is spelle
 ## Deployed state
 
 ```
-Migrations       37   (latest: 20260826023152_AddOrderSplitLineage)
+Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
+                 this line read "37 / AddOrderSplitLineage" until Pass 32 --
+                 AddTransferRequests and AddPerTeamQuantityOwnership shipped
+                 in Pass 30/31 without it being updated. Count Migrations/,
+                 don't trust this number.)
 Items           487   (compressor ownership reconciled against real claim sheets;
                  leftover test-fixture rows removed; one exact duplicate merged;
                  63 Residential OD compressors re-minted with an RCR- prefix and
@@ -120,6 +124,29 @@ team you're not on is still just as visible/invisible as it always was), but
 it now gates *how much of a split item you can order* and *who can approve a
 Transfer against it* — see the Pass 30/31 entries in "Current state" for the
 full shape.
+
+**The Team boundary has exactly three definitions, and they all live in
+`InventoryService` (Pass 32).** Do not write a fourth inline — Pass 31
+shipped the ordering half correctly and left four other paths on the old
+item-wide view, and every Pass 32 bug is those two halves disagreeing:
+- `ResolveTransferTeam(item, requestedVariantId)` — which team's slice a
+  Transfer is aimed at. `CanApproveTransfer` gates on it, `ApproveTransfer`
+  scopes its pull loop to it, and `OrderService.PlanTransferPull` builds the
+  approval UI's per-unit serial picklists from it.
+- `ResolveOrderingTeam(item, requestedTeam)` — which team an order line
+  resolves against, returning `(Team, Ambiguous, Applicable)` and deciding
+  nothing about the ambiguity. `OrderService.ResolveOrderingTeam` wraps it
+  and throws (an order can't proceed unanswered); Search Center's
+  `GetAvailableForViewer` wraps it and just displays (a card can).
+- `v.Team == it.Team` on a materialized variant list — the pull-loop filter
+  itself, in `FulfillOrderItem`, `ReportShortPull`, and
+  `PickUpPartialAndSplit`.
+
+**Blank always fails OPEN**, on every one of them, exactly like Line: no
+resolved team means no team scoping, not "nobody." That is *why* a variant
+created without a Team was so damaging — it doesn't fail open, it falls
+*out* of its own team's scope while still counting toward the item total, so
+the missing stock reads as a phantom shortfall rather than an error.
 
 **`OrgStructure.cs` is managed now, not hardcoded (Pass 13).** Branches and Lines live
 in `Branches`/`OrgLines` tables, editable from Settings the same way Teams and Locations
@@ -1105,6 +1132,22 @@ a genuine `getBoundingClientRect()` change. Don't use that tool to disprove a
 `ResizeObserver` fix; verify container-resize fixes via an actual DOM mutation
 (e.g. toggling the class by hand) instead.)
 
+**`String(null)` is `"null"`, and a JS-built `<option>` will happily carry it
+into the database (Pass 32).** Pickup Queue builds its serial dropdown
+client-side from a JSON payload whose `serial` is genuinely nullable — a
+serial-less On Hand unit is a normal, supported state. `'<option value="' +
+String(u.serial) + '">'` turned that into a real, selectable
+`value="null"`, and the staggered default (`sel.value = units[idx].serial`,
+which coerces the same way) *opened on it*, so a picker who touched nothing
+posted the literal serial `"null"` and minted a bogus `PickedUp` row.
+Razor's `@` renders `null` as empty instead, which is quieter but no better —
+it shows as a nameless ghost option next to the real "none" entry. Anywhere
+an option list is built from nullable server data, filter the nulls out at
+the query AND keep a client-side guard; don't rely on either alone. In this
+app's case the anonymous units already had a correct path
+(`AssignOneCompressorUnit`'s null-serial FIFO branch, behind `__NONE__`) —
+listing them by name was the whole mistake.
+
 **A copied scratchpad/backup `.db` file needs its `-wal`/`-shm` sidecars copied as one
 atomic set, or not at all (Pass 13).** A stale `-wal`/`-shm` pair left over from an
 earlier backup, sitting next to a freshly-copied newer `.db`, produces
@@ -1132,6 +1175,22 @@ through this tool, not a real phone. Treat any "verified at mobile width" claim
 that used this tool as DOM/CSS-correctness only, not proof of real-device
 behavior — say so explicitly rather than letting it read as a stronger claim than
 it is.
+
+**A new field on `ItemVariant` or `OrderItem` has to be carried at every
+CREATION and every COPY site, and the compiler will not tell you (Pass 19,
+Pass 32 — twice now, same method).** Both classes are built with object
+initializers in a dozen scattered places; a field the initializer omits gets
+the CLR default silently, and the row saves clean. Pass 19 found
+`CreateSplitOrder` dropping `ThermocoupledCount`/`RequestedVariantId` on a
+reissue; Pass 32 found the *same method* dropping `Team`, plus four of the
+five `new ItemVariant` sites never setting it. Before shipping a field on
+either class, grep `new ItemVariant` / `new OrderItem` across the whole repo
+(`.claude/worktrees/` hits are stale copies — ignore them) and account for
+every one, including the `pv = new ItemVariant { ... }` self-heal paths in
+`ModifyStock`/`AddStock`. Where a copy constructor exists, make the new field
+a **required** parameter rather than an optional one — that converts the next
+occurrence of this bug into a compile error, which is what `CreateSplitOrder`
+now does for `team`.
 
 **EF Core cannot translate `string.Equals(a, b, StringComparison.X)` against a
 live `IQueryable` (Pass 29).** It works fine against an already-materialized
@@ -2213,3 +2272,125 @@ sidebar nav link/icon) once Transfer requests and loans made "orders" too
 narrow a name for what the page actually shows. Verified live: the nav
 link's route, the renamed page rendering under its new title, and a
 `RedirectToAction` landing on the new route instead of a stale one.
+
+**Pass 32 (2026-08-27) — the team boundary carried to the four paths Pass 31
+didn't reach. A bug-hunt pass, not a feature: no new mechanic, no migration,
+no schema change.** Pass 31 introduced `ItemVariant.Team` and scoped the
+*ordering* path to it correctly. Everything else that reads or writes a
+variant kept its pre-Pass-31 item-wide view, and those two halves disagreeing
+is what every finding below turns out to be. Found by reading, then
+reproduced end to end on the dev-only db (`inventory.dev.db`) before any fix
+was written — the real `C:\VIS_Inventory\inventory.db` was never touched, and
+the dev db was restored byte-for-byte afterward (491 items, CCR-0029 back to
+0/14/1, `PRAGMA integrity_check` ok).
+
+- **Transfer approval pulled straight across the team boundary it had just
+  checked.** `ApproveTransfer` gated *who may approve* on
+  `CanApproveTransfer` (Line + owning team) and then ran its pull loop over
+  `item.Variants.Where(v => !v.IsRetired)` — every team's stock.
+  `FulfillOrderItem` has had the team filter since Pass 31; this never got
+  it. **Reproduced live:** Cedric Martis (Residential Coils/AH) requested 5
+  of CCR-0029 against V3, Ninja's 1-unit slice; James Masters — **Ninja
+  only** — approved; the log read `pulled 1 from V3 (ETRD.0.0.0.0), 4 from
+  V2 (PATS.LEAN-TO)` and **Samurai's stack went 11 → 7**, decided by an
+  engineer with no claim on it and surfaced to Samurai nowhere. The
+  `totalAvailable` guard above it was item-wide for the same reason, so it
+  never fired. Fixed by giving the boundary ONE definition —
+  `InventoryService.ResolveTransferTeam(item, requestedVariantId)` — which
+  `CanApproveTransfer` gates on, `ApproveTransfer` scopes its pull to, and
+  the approval UI builds its serial picklists from. Re-verified: the same
+  sequence now refuses with *"Not enough on the shelf -- 5 requested, 1 on
+  hand across Ninja's locations,"* Samurai's 11 and 3 untouched, the request
+  left `Requested` (transaction rolled back cleanly).
+- **Four of the five `new ItemVariant` sites never set `Team`.**
+  `ItemVariant.Team`'s own doc comment says it defaults to the parent item's
+  Team at creation; only `ModifyStock`'s new-location Add actually did that.
+  `CreateItem`, both `CommitIntake` branches, and — worst — `ModifyStock`'s
+  Location Transfer **partial split** all minted variants with `Team = ""`.
+  The migration backfilled every pre-existing row, so this only bites
+  variants created since, which is why it hadn't surfaced yet.
+  **Reproduced live, both ends:** a real New Item Registry submission with
+  Team = Samurai landed `InventoryItems.Team='Samurai'`,
+  `ItemVariants.Team=''`; and splitting 3 units off CCR-0029's Samurai V2
+  produced a V4 with `Team=''`. Then the consequence, as Conner Walworth
+  (Samurai): `ResolveOrderingTeam` sees one non-blank team, resolves
+  `"Samurai"`, and the blank variant drops out of the availability math —
+  *"only has 11 available in stock"* on an attempt to order 12 of Samurai's
+  own 14. **Stock stranded in plain sight: it still counts toward the item
+  total, so the shortfall reads as a phantom.** All four now inherit the
+  right team (Intake deliberately inherits the EXISTING item's family Team
+  rather than the batch's, so a bulk import can't silently split an item —
+  see the backlog note that's still open); the two `pv = new ItemVariant`
+  self-heal paths got it too. Re-verified: the split V4 comes out `Samurai`,
+  a fresh registration's variant 1 inherits `Ninja`, and Conner can order all
+  14.
+- **`CreateSplitOrder` dropped `OrderItem.Team`** — the same shape as the
+  Pass 19 bug in this exact method (which dropped `ThermocoupledCount` and
+  `RequestedVariantId`), on the field added since. Both callers are
+  affected: `PickUpPartialAndSplit`'s deferred remainder and
+  `ReportShortPull`'s reissue — and the reissue is picked up *in the same
+  call*, so a corrected short pull could pull out of another team's stack
+  immediately. `ReportShortPull`'s own `available` sum was item-wide too.
+  Both fixed; `team` is a **required** parameter on `CreateSplitOrder` now,
+  not an optional one, so the next field added here has to be passed rather
+  than silently defaulted. **Code-reviewed and build-verified only** —
+  reproducing it needs a short-pull setup that leaves real rows behind, and
+  this pass deliberately left the dev db unchanged.
+- **Blank-serial on-hand units rendered as pickable garbage, on both serial
+  pickers.** A `CompressorUnit` can legitimately sit On Hand with no serial
+  (lab-only rows from `LogCompressorUnits`, and Pass 29's own "No serial"
+  FIFO fallback). Neither picker excluded them. On **Pickup Queue** the
+  options are built in JS, where `String(u.serial)` on `null` yields the
+  string `"null"` — so the unit rendered as `<option value="null">SN:
+  null</option>`, *and the staggered default selected it*, meaning a picker
+  who touched nothing posted the literal serial `"null"`. That misses the
+  real anonymous unit and mints a bogus `PickedUp` row beside it: the
+  CCR-0213 orphan mechanism Pass 29 was written to close, re-entered through
+  the UI. On **transfer approval** (Razor, so `null` renders empty) it showed
+  as a nameless ghost option — **confirmed live** in the rendered DOM. Fixed
+  at the source on both surfaces (the queries exclude serial-less rows), with
+  a client-side `namedUnits()` guard kept as belt-and-braces. Anonymous stock
+  is exactly what the `__NONE__` option is for —
+  `AssignOneCompressorUnit`'s null-serial branch already takes the oldest
+  anonymous unit at that location, FIFO.
+- **Transfer approval's serial picklist pooled every location into every unit
+  slot** while `AssignOneCompressorUnit` matches per-variant, so a perfectly
+  reasonable pick got refused with *"already on record for X at a different
+  location"* — and the approver couldn't see which slot mapped to which
+  shelf, because the spill order was never shown. Pickup Queue solved this in
+  Pass 29; none of it had carried over. The plan now comes from the service
+  that executes it (`OrderService.PlanTransferPull`, sharing
+  `TransferPullOrder` with `ApproveTransfer` itself so the two cannot drift):
+  one slot per physical unit, labelled with the shelf it comes off, listing
+  only that shelf's serials, with Pickup Queue's staggered default and
+  cross-slot exclusivity brought over too. **Confirmed live** — a 5-unit
+  request against Ninja's 1-unit slice now renders exactly one slot, labelled
+  `Unit 1 — V3 — External Yard · Qty 1`, instead of five slots offering
+  Samurai's serials.
+
+*Smaller ones fixed in the same pass:* `RemoveFromLedger` removed **every**
+cart line for an item (`RemoveAll(e => e.ItemId == itemId)`) while `AddItem`
+deliberately keys a line on `(ItemId, RequestedVariantId, RequestedTeam)` —
+pre-existing for the two-locations case, and Pass 31 added a second axis to
+it; the cart posts all three back now. Search Center's **"Available:"** read
+the item-wide total, promising a split item's whole stack to whichever team
+was looking and then bouncing them at Submit — now `GetAvailableForViewer`,
+resolving the team the same way `Submit()` does (**confirmed live**: the card
+went from `15` to `14` for a Samurai user, and 14 submits clean). Settings'
+**"N item(s) still reference it"** when hiding a team counted
+`InventoryItems.Team` only, so a team holding nothing but variant-level
+slices reported zero. `PickUpPartialAndSplit` didn't check the chosen variant
+against the line's team (a direct-POST hole, not a UI one — Pickup Queue only
+ever offers the right locations). And `ModifyStock`'s **Ownership** branch
+moved `item.Team` without touching the variants, so a reassigned item kept
+displaying and exporting its *old* owner forever — it now moves the variants
+that carried the old family team, which on a split item correctly moves only
+that slice and leaves the other team's claim alone.
+
+**Not changed, deliberately:** the fail-open cases. A blank resolved team
+still sees every variant, an unsplit item is still gated on Line alone, and a
+split item with no pull location named still spills anywhere — all three
+match what `CanApproveTransfer` already did, and the Request Transfer modal
+makes the location pick effectively mandatory whenever an item has more than
+one variant. Tightening those is a behavior change, not a bug fix, and would
+want its own scoping round.

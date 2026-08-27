@@ -42,6 +42,15 @@ sequence at all. Resolved:
 | Aug 13 | **Pass 23** | Delete Stack: a new Admin-gated variant-level hard delete for the gap Delete Item doesn't cover (one empty stack on an item that still carries stock elsewhere) -- built and immediately used for real on the actual stuck item (CCR-0013) that surfaced the gap. Rack/Row fields on Registry, Intake, Export Wizard (new there), and Modify Stock now cascade-suggest from real stock data under the picked Parent/Major/Sub, still fully free text. See handoff. |
 | Aug 13 | **Pass 24** | The app's first responsive pass -- zero media queries existed anywhere before this. The dashboard's fixed 6-column grid (two 380px sidebars, position:fixed) genuinely didn't work below ~1400px, no scroll escape; now reflows to a stacked column on phones/tablets with the same markup. Found and fixed two real overflow bugs live-testing at mobile width (a stat bar that bled past its container's overflow:visible, and the top nav's inline layout kicking in too early for real tablets). Every table in the app wrapped for overflow-x instead of forcing the page wider. Verified at 375px/768px/1280px; desktop confirmed unregressed. See handoff. |
 
+**This table stops at Pass 24 and is not being backfilled.** Passes 25–32 (Delivery
+intake/claim, the real-device responsive pass, the whole Pass 27/28 sidebar +
+Command Center + Search Center redesign arc, the compressor-pickup rebuild,
+Request Transfer, per-team quantity ownership, and Pass 32's team-boundary bug
+hunt) are logged in `VIS_Handoff_State.md`'s "Current state" section, which
+became the running pass log somewhere around Pass 25. This table's job was
+always ordering the *threads* against each other — that question is settled, so
+it's left as the historical record of it rather than duplicated forward.
+
 The Cowork thread is a long-running parallel track, not a predecessor. Its **code**
 knowledge froze on July 15 and is stale everywhere. Its **IT/organizational** knowledge
 runs to early August and, as of that point, was the newest of any source here.
@@ -66,7 +75,11 @@ Superseded, not merely outdated:
 4. **Group is derived and frozen at creation**, removed from the registration form in
    Pass 7A.
 5. **Migration count.** 15 → 26 → 33 as of Pass 13 → 34 as of Pass 16 → 35 as of
-   Pass 17. Anything reasoning from migration numbers is stale.
+   Pass 17 → 36 as of Pass 25 (`AddDeliveries`) → **39 as of Pass 31**
+   (`AddOrderSplitLineage` 37, `AddTransferRequests` 38,
+   `AddPerTeamQuantityOwnership` 39; Pass 32 added none). Anything reasoning from
+   migration numbers is stale — count `Migrations/` rather than trusting any doc,
+   this line included.
 6. **Claude hand-authors migration files now, when it has shell access.** Old rule was
    "supply the model + DbSet diff and stop." Both the Cowork and Passes 1–4 threads ran
    under the old rule. I still compile, run, and test everything myself either way.

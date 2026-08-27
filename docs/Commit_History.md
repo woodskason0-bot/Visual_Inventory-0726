@@ -9,6 +9,51 @@ landed, when."
 
 ---
 
+## 2026-08-27
+
+### `377da69` — Pass 32: carry the per-team boundary to the four paths Pass 31 didn't reach
+Bug-hunt pass, no new mechanic and no migration. Pass 31 scoped the *ordering*
+path to `ItemVariant.Team` correctly and left every other path that reads or
+writes a variant on the old item-wide view; each fix here is those two halves
+disagreeing. **`ApproveTransfer` pulled across the team boundary it had just
+gated on** — it checked `CanApproveTransfer` (Line + owning team), then looped
+over every active variant regardless of team, so a Ninja-only Engineer
+approving a 5-unit request against Ninja's 1-unit slice took 4 units out of
+Samurai's stack (reproduced live before the fix). **Four of the five
+`new ItemVariant` sites never set `Team`** — `CreateItem`, both `CommitIntake`
+branches, and `ModifyStock`'s Location Transfer partial split, against
+`ItemVariant.Team`'s own documented default; such a variant still counts toward
+the item total but drops out of its own team's scope, so the stock reads as a
+phantom shortfall ("only has 11 available" on an attempt to order 12 of
+Samurai's own 14). **`CreateSplitOrder` dropped `OrderItem.Team`** — the same
+shape as the Pass 19 bug in this exact method, on the field added since; `team`
+is a required parameter now so the next one is a compile error.
+**Blank-serial on-hand units rendered as pickable garbage on both serial
+pickers** — Pickup Queue builds options in JS where `String(null)` is `"null"`,
+and the staggered default *selected* it, so a picker who touched nothing posted
+the literal serial `"null"`. **Transfer approval pooled every location's serials
+into every unit slot** while `AssignOneCompressorUnit` matches per-variant.
+The boundary now has exactly three definitions, all in `InventoryService`
+(`ResolveTransferTeam`, `ResolveOrderingTeam`, and the `v.Team == it.Team`
+pull-loop filter), with `OrderService.TransferPullOrder` shared by
+`ApproveTransfer` and the new `PlanTransferPull` so the approval UI can't drift
+from the executor. Blank still fails OPEN everywhere, same as Line. Also fixed:
+`RemoveFromLedger` wiping every cart line for an item instead of the one keyed
+by `(ItemId, RequestedVariantId, RequestedTeam)`; Search Center's "Available:"
+showing the item-wide total then bouncing the user at Submit; Settings'
+"N item(s) still reference it" missing variant-level team claims;
+`PickUpPartialAndSplit` not checking the chosen variant against the line's team;
+and `ModifyStock`'s Ownership branch moving `item.Team` without the variants, so
+a reassigned item displayed and exported its old owner forever. Verified live on
+the dev-only db and restored byte-for-byte afterward; `CreateSplitOrder`'s fix is
+code-reviewed/build-verified only.
+**Touched:** `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`,
+`Models/TransferViewModels.cs`, `Services/InventoryService.cs`,
+`Services/OrderService.cs`, `Views/Home/MyActivity.cshtml`,
+`Views/Home/PickupQueue.cshtml`, `Views/Home/SearchCenter.cshtml`. No migration.
+
+---
+
 ## 2026-08-26
 
 ### `95e4fc8` — Pass 30/31: Request Transfer - Internal, per-team quantity ownership, My Activity rename

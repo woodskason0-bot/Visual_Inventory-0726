@@ -101,6 +101,20 @@ Scoped and built the same day. `ItemVariant.Team`, team-scoped availability,
 the "which team" ordering prompt, `FulfillOrderItem`'s pull-loop boundary,
 and Team-aware Transfer approval routing all shipped as scoped below — see
 `VIS_Handoff_State.md`'s Pass 31 entry for the real shape and what got
-verified live. One thing this entry called "worth re-checking once this
-lands" is still genuinely open, not resolved by Pass 31: **the compressor
-serial cascade (Pass 29) hasn't been re-checked against team boundaries.**
+verified live.
+
+**The thing this entry called "worth re-checking once this lands" — the
+compressor serial cascade (Pass 29) against team boundaries — was checked in
+Pass 32 (2026-08-27), and it was right to flag it.** Three real bugs sat
+exactly there: Transfer approval pulled across the team boundary it had just
+gated on (live-reproduced taking 4 units out of Samurai's stack on a
+Ninja-only engineer's approval), the approval UI pooled every location's
+serials into every unit slot while the matcher is per-variant, and
+serial-less on-hand units rendered as pickable `value="null"` options on
+Pickup Queue. All fixed and re-verified live; see the Pass 32 entry in
+`VIS_Handoff_State.md`. **Nothing from this entry's own scope is left
+open** — the remaining known gap is the separate one Pass 31 flagged
+alongside it: Intake's bulk path still has no per-variant Team picker, so a
+bulk-imported addition inherits the existing item's family Team rather than
+letting the batch choose (deliberate as of Pass 32 — the alternative silently
+splits an item as a side effect of an import).
