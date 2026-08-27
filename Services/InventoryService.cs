@@ -1,4 +1,4 @@
-using Visual_Inventory_System.Models;
+﻿using Visual_Inventory_System.Models;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
@@ -101,6 +101,41 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
+        /// The distinct teams with a real claim on this item -- non-blank
+        /// ItemVariant.Team across its ACTIVE variants. One entry (or none)
+        /// means the item isn't actually split and Team gates nothing.
+        /// </summary>
+        private static List<string> ActiveVariantTeams(InventoryItem item) =>
+            item.ActiveVariants
+                .Select(v => (v.Team ?? "").Trim())
+                .Where(t => t.Length > 0)
+                .Distinct(System.StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        /// <summary>
+        /// Which team's slice a Transfer request is actually aimed at, or "" for
+        /// "no team boundary applies here." Blank covers three cases that all
+        /// behave identically: the item isn't split across teams, no pull
+        /// location was named, or the named variant carries no team -- all fail
+        /// OPEN, the same convention Line uses everywhere else.
+        ///
+        /// This is the SINGLE definition of that boundary. CanApproveTransfer
+        /// gates on it, ApproveTransfer scopes its pull loop to it, and the
+        /// approval UI builds its per-unit serial picklists from it. Those three
+        /// disagreeing is exactly what let a Ninja-only Engineer approve a
+        /// 1-unit Ninja slice and have 4 of the units come out of Samurai's
+        /// stack -- see the Pass 32 entry in the handoff.
+        /// </summary>
+        public string ResolveTransferTeam(InventoryItem item, int? requestedVariantId)
+        {
+            if (ActiveVariantTeams(item).Count <= 1) return "";
+            if (!requestedVariantId.HasValue) return "";
+            var target = item.ActiveVariants
+                .FirstOrDefault(v => v.Id == requestedVariantId.Value)?.Team;
+            return string.IsNullOrWhiteSpace(target) ? "" : target.Trim();
+        }
+
+        /// <summary>
         /// Can THIS user approve/deny a Transfer request against this item
         /// (per-team quantity ownership, scoped 2026-08-26)? Two gates, not one:
         /// Line (unchanged -- IsOwnLine, same as every other Transfer check) AND,
@@ -116,20 +151,59 @@ namespace Visual_Inventory_System.Services
             if (_currentUser.Level >= AccessLevels.Admin) return true;
             if (!IsOwnLine(item.Line)) return false;
 
-            var variantTeams = item.ActiveVariants
-                .Select(v => (v.Team ?? "").Trim())
-                .Where(t => t.Length > 0)
-                .Distinct(System.StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (variantTeams.Count <= 1) return true;   // not split -- Line is the whole gate, same as before this existed
-
-            string? targetTeam = requestedVariantId.HasValue
-                ? item.ActiveVariants.FirstOrDefault(v => v.Id == requestedVariantId.Value)?.Team
-                : null;
-            if (string.IsNullOrWhiteSpace(targetTeam)) return true;   // no resolved team -- fails open, same convention as everywhere else
+            string targetTeam = ResolveTransferTeam(item, requestedVariantId);
+            if (targetTeam.Length == 0) return true;
 
             var myTeams = GetUserTeamNames(_currentUser.Name);
             return myTeams.Any(t => string.Equals(t, targetTeam, System.StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Which team an order line resolves against, WITHOUT deciding what to
+        /// do about an unanswered ambiguity -- OrderService.ResolveOrderingTeam
+        /// wraps this and throws (the order can't proceed without an answer),
+        /// while Search Center's card just wants a number to display and treats
+        /// ambiguous as "no scope yet." Extracted so those two can't drift:
+        /// a card promising "Available: 15" while Submit refuses at 12 is the
+        /// same class of disagreement as the Transfer one above.
+        ///
+        /// Ambiguous means specifically: more than one of the REQUESTER'S OWN
+        /// teams has a real claim on this item and nothing has been picked --
+        /// not merely "this person is on several teams somewhere."
+        /// </summary>
+        public (string Team, bool Ambiguous, List<string> Applicable) ResolveOrderingTeam(
+            InventoryItem item, string? requestedTeam)
+        {
+            var variantTeams = ActiveVariantTeams(item);
+            if (variantTeams.Count <= 1)
+                return (variantTeams.FirstOrDefault() ?? "", false, variantTeams);
+
+            var myTeams = GetUserTeamNames(_currentUser.Name);
+            var applicable = variantTeams
+                .Where(vt => myTeams.Any(mt => string.Equals(mt, vt, System.StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            if (applicable.Count == 0) return ("", false, applicable);              // none of my teams claim this item -- fails open
+            if (applicable.Count == 1) return (applicable[0], false, applicable);   // exactly one applies -- no need to ask
+
+            if (!string.IsNullOrWhiteSpace(requestedTeam)
+                && applicable.Any(t => string.Equals(t, requestedTeam, System.StringComparison.OrdinalIgnoreCase)))
+                return (requestedTeam!.Trim(), false, applicable);
+
+            return ("", true, applicable);
+        }
+
+        /// <summary>
+        /// What THIS viewer could actually order of this item right now --
+        /// GetAvailableQuantity narrowed to whichever team's claim applies to
+        /// them. Falls back to the item total whenever no single team applies
+        /// (unsplit item, no membership overlap, or an unanswered ambiguity),
+        /// which is exactly what Submit() would then allow too.
+        /// </summary>
+        public int GetAvailableForViewer(InventoryItem item)
+        {
+            var (team, _, _) = ResolveOrderingTeam(item, null);
+            return GetAvailableQuantity(item.ItemId, team);
         }
 
         /// <summary>
@@ -250,6 +324,12 @@ namespace Visual_Inventory_System.Services
                 VariantNumber = 1,
                 Quantity = qty,
                 ThermocoupledQty = tcQty,
+                // Per-team quantity ownership: a variant inherits the family's
+                // Team at creation (ItemVariant.Team's documented default, and
+                // what the AddPerTeamQuantityOwnership backfill did to every
+                // pre-existing row). Left blank, this stack is invisible to
+                // team-scoped ordering -- its own team can't order it.
+                Team = newItem.Team ?? "",
                 Parent = newItem.Parent,
                 Major = newItem.Major,
                 Sub = newItem.Sub,
@@ -1176,6 +1256,13 @@ namespace Visual_Inventory_System.Services
                     {
                         VariantNumber = NextFreeVariantNumber(existing),
                         Quantity = qty, ThermocoupledQty = tcQty,
+                        // Deliberately the EXISTING item's family Team, not this
+                        // batch's `team` param: Intake has no per-variant team
+                        // picker (only interactive Modify Stock does), so letting
+                        // the batch's team through here would silently split an
+                        // item across teams as a side effect of a bulk import.
+                        // Inheriting keeps intake additive -- see the backlog note.
+                        Team = existing.Team ?? "",
                         Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
                         FdaString = fda, RegisteredAt = now, IsRetired = false
                     };
@@ -1216,6 +1303,7 @@ namespace Visual_Inventory_System.Services
                     item.Variants.Add(new ItemVariant
                     {
                         VariantNumber = 1, Quantity = qty, ThermocoupledQty = tcQty,
+                        Team = team,   // brand-new item: variant 1 inherits the family Team, same as CreateItem
                         Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
                         FdaString = fda, RegisteredAt = now, IsRetired = false
                     });
@@ -1430,7 +1518,7 @@ namespace Visual_Inventory_System.Services
             {
                 // Self-heal: an item somehow missing all variants gets a fresh
                 // #1 at qty 0 (should never happen after backfill).
-                pv = new ItemVariant { VariantNumber = 1, Quantity = 0, IsRetired = false };
+                pv = new ItemVariant { VariantNumber = 1, Quantity = 0, Team = item.Team ?? "", IsRetired = false };
                 item.Variants.Add(pv);
             }
 
@@ -1569,10 +1657,29 @@ namespace Visual_Inventory_System.Services
                     // newTeam == "" is a real choice (team is optional), so this
                     // tests for null rather than blank.
                     string t = newTeam.Trim();
+                    string previousTeam = (item.Team ?? "").Trim();
                     item.Team = t;
                     item.ProjectCode = t.Length == 0
                         ? ""
                         : (_db.Teams.FirstOrDefault(x => x.Name == t)?.ProjectCode ?? "");
+
+                    // Per-team quantity ownership: the family-level Team moving
+                    // has to take the stock that belonged to it along, or the
+                    // variants keep reading (and exporting, and displaying) as
+                    // the OLD team forever while the item claims the new one.
+                    // Scoped to variants carrying the previous family team on
+                    // purpose -- on an item split across teams that moves only
+                    // the slice this reassignment is actually about and leaves
+                    // the other team's claim intact, which is the whole point of
+                    // the split existing.
+                    if (t != previousTeam)
+                    {
+                        foreach (var av in item.ActiveVariants
+                                     .Where(v => string.Equals((v.Team ?? "").Trim(), previousTeam,
+                                                               System.StringComparison.OrdinalIgnoreCase))
+                                     .ToList())
+                            av.Team = t;
+                    }
                 }
                 string nowLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
                 string nowTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
@@ -1647,6 +1754,12 @@ namespace Visual_Inventory_System.Services
                         VariantNumber = NextFreeVariantNumber(item),
                         Quantity = moveQty,
                         ThermocoupledQty = tcMove,
+                        // Moving stock across the floor never changes WHOSE it is
+                        // -- the split carries the source stack's Team. Without
+                        // this the moved units land team-less and their own team
+                        // can no longer order them (they still count toward the
+                        // item total, so the shortfall reads as a phantom).
+                        Team = pv.Team,
                         Parent = dP, Major = dM, Sub = dS, Rack = dRk, Row = dRw,
                         FdaString = destFda,
                         RegisteredAt = System.DateTime.UtcNow,
@@ -1699,7 +1812,7 @@ namespace Visual_Inventory_System.Services
                 if (pv == null)
                 {
                     // Self-heal (see ModifyStock): never expected post-backfill.
-                    pv = new ItemVariant { VariantNumber = 1, Quantity = 0, IsRetired = false };
+                    pv = new ItemVariant { VariantNumber = 1, Quantity = 0, Team = inv.Team ?? "", IsRetired = false };
                     inv.Variants.Add(pv);
                 }
                 pv.Quantity += qty;

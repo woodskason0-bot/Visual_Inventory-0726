@@ -149,39 +149,39 @@ namespace Visual_Inventory_System.Services
         /// </summary>
         private string ResolveOrderingTeam(InventoryItem item, string? requestedTeam)
         {
-            var variantTeams = item.ActiveVariants
-                .Select(v => (v.Team ?? "").Trim())
-                .Where(t => t.Length > 0)
-                .Distinct(System.StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (variantTeams.Count <= 1)
-                return variantTeams.FirstOrDefault() ?? "";
-
+            // The rule itself lives in InventoryService so Search Center's
+            // "Available:" figure resolves the team the exact same way this does
+            // -- a card promising more than Submit() will accept is the same
+            // class of disagreement as the Transfer one Pass 32 closed. Only the
+            // "what do we do about an unanswered ambiguity" half differs: an
+            // order can't proceed without the answer, a display can.
             var inv = new InventoryService(_db, _currentUser);
-            var myTeams = inv.GetUserTeamNames(_currentUser.Name);
-            var applicable = variantTeams
-                .Where(vt => myTeams.Any(mt => string.Equals(mt, vt, System.StringComparison.OrdinalIgnoreCase)))
-                .ToList();
+            var (team, ambiguous, applicable) = inv.ResolveOrderingTeam(item, requestedTeam);
 
-            if (applicable.Count == 0) return "";              // none of my teams claim this item -- fails open
-            if (applicable.Count == 1) return applicable[0];   // exactly one applies -- no need to ask
+            if (ambiguous)
+                throw new System.InvalidOperationException(
+                    $"'{item.ItemId}' is split across your teams ({string.Join(", ", applicable)}) -- pick which team you're ordering for.");
 
-            // Genuinely ambiguous: more than one of my teams has a real claim here.
-            if (!string.IsNullOrWhiteSpace(requestedTeam)
-                && applicable.Any(t => string.Equals(t, requestedTeam, System.StringComparison.OrdinalIgnoreCase)))
-                return requestedTeam!.Trim();
-
-            throw new System.InvalidOperationException(
-                $"'{item.ItemId}' is split across your teams ({string.Join(", ", applicable)}) -- pick which team you're ordering for.");
+            return team;
         }
 
-        public void RemoveItem(string itemId)
+        /// <summary>
+        /// Removes ONE cart line. AddItem deliberately keys a line on
+        /// (ItemId, RequestedVariantId, RequestedTeam) so the same item ordered
+        /// from two locations -- or against two teams -- survives as two
+        /// independent lines; removing by ItemId alone silently wiped all of
+        /// them. The cart posts all three back, so an exact match is what
+        /// "remove this row" actually means.
+        /// </summary>
+        public void RemoveItem(string itemId, int? requestedVariantId = null, string? requestedTeam = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return;
+            string? team = string.IsNullOrWhiteSpace(requestedTeam) ? null : requestedTeam.Trim();
 
             var draft = GetDraftFromSession();
-            draft.Entries.RemoveAll(e => e.ItemId == itemId);
+            draft.Entries.RemoveAll(e => e.ItemId == itemId
+                && e.RequestedVariantId == requestedVariantId
+                && e.RequestedTeam == team);
 
             SaveDraftToSession(draft);
         }
@@ -407,6 +407,13 @@ namespace Visual_Inventory_System.Services
 
                 var variant = inv.Variants.FirstOrDefault(v => v.Id == variantId && !v.IsRetired);
                 if (variant == null) throw new InvalidOperationException("That location is no longer active.");
+                // Pickup Queue only ever OFFERS this line's own team's locations,
+                // so this closes a direct-POST hole rather than a UI one -- but
+                // the whole point of the team boundary is that it holds without
+                // the UI's cooperation, same as ApproveTransfer's own check.
+                if (!string.IsNullOrEmpty(it.Team) && variant.Team != it.Team)
+                    throw new InvalidOperationException(
+                        $"That location belongs to {(string.IsNullOrWhiteSpace(variant.Team) ? "no team" : variant.Team)}, not {it.Team} -- this line can only be pulled from its own team's stock.");
                 // Live recheck at the moment of pickup, same principle as the
                 // short-pull guard in FulfillOrderItem -- what the picker saw on
                 // the queue page a moment ago may already be stale.
@@ -430,7 +437,7 @@ namespace Visual_Inventory_System.Services
                 int remainderQty = it.Quantity - pickupQty;
                 int remainderTc = System.Math.Max(0, it.ThermocoupledCount - tcTake);
 
-                var (newOrder, _) = CreateSplitOrder(order, it.ItemId, remainderQty, it.RequestedVariantId, remainderTc);
+                var (newOrder, _) = CreateSplitOrder(order, it.ItemId, remainderQty, it.RequestedVariantId, remainderTc, it.Team);
 
                 it.Quantity = pickupQty;
                 it.ThermocoupledCount = tcTake;
@@ -853,7 +860,14 @@ namespace Visual_Inventory_System.Services
         /// rest" both funnel through this so the lineage (SplitFromOrderId) is
         /// recorded the same way regardless of which situation caused it.
         /// </summary>
-        private (Order Order, OrderItem Item) CreateSplitOrder(Order original, string itemId, int quantity, int? requestedVariantId, int thermocoupledCount)
+        /// <param name="team">
+        /// The original line's resolved ordering team, carried forward. NOT
+        /// optional in practice: a reissue that loses it silently widens the
+        /// remainder's pull back to every team's stock, which is the same shape
+        /// of bug as Pass 19's dropped TC count / requested location -- a field
+        /// added to OrderItem that this copy constructor didn't learn about.
+        /// </param>
+        private (Order Order, OrderItem Item) CreateSplitOrder(Order original, string itemId, int quantity, int? requestedVariantId, int thermocoupledCount, string team)
         {
             var newOrder = new Order
             {
@@ -872,6 +886,7 @@ namespace Visual_Inventory_System.Services
                 Quantity = quantity,
                 RequestedVariantId = requestedVariantId,
                 ThermocoupledCount = thermocoupledCount,
+                Team = team,
                 Status = "Pending"
             };
             _db.OrderItems.Add(newItem);
@@ -937,7 +952,13 @@ namespace Visual_Inventory_System.Services
                     });
                 }
 
-                int available = inv.Variants.Where(v => !v.IsRetired).Sum(v => v.Quantity);
+                // Scoped to the line's own team, same as FulfillOrderItem's pull
+                // loop -- reissuing against the item-wide total would promise a
+                // quantity the re-pickup below then has to find outside this
+                // team's stock (or short-pull a second time).
+                int available = inv.Variants
+                    .Where(v => !v.IsRetired && (string.IsNullOrEmpty(it.Team) || v.Team == it.Team))
+                    .Sum(v => v.Quantity);
                 int correctedQty = System.Math.Min(it.Quantity, available);
 
                 var result = new PickupResult { OrderId = orderId };
@@ -958,7 +979,7 @@ namespace Visual_Inventory_System.Services
                 // first with TC = 0, so no TC stock was drawn down, no
                 // MotorUnit rows flipped, and no loan was created.
                 var (newOrder, newItem) = CreateSplitOrder(it.Order, it.ItemId, correctedQty, it.RequestedVariantId,
-                    System.Math.Min(it.ThermocoupledCount, correctedQty));
+                    System.Math.Min(it.ThermocoupledCount, correctedQty), it.Team);
 
                 // Pick it up immediately -- the picker is already standing here
                 // with the corrected count in hand. This IS the "pick up clean"
@@ -1265,6 +1286,53 @@ namespace Visual_Inventory_System.Services
             _db.SaveChanges();
         }
 
+        /// <summary>
+        /// The variants an approval will draw from, in the order it draws from
+        /// them: the requester's preferred location first (when it's still
+        /// active), then lowest variant number as spill -- all of it confined to
+        /// the team that owns the requested slice.
+        ///
+        /// One definition, two callers, deliberately: ApproveTransfer executes
+        /// it, and PlanTransferPull hands the same answer to the approval UI so
+        /// each unit's serial picklist offers the shelf that unit is actually
+        /// coming off. Those two disagreeing is what made the approver's serial
+        /// dropdown a trap -- it pooled every location's serials into every
+        /// slot, so a perfectly reasonable pick got refused by
+        /// AssignOneCompressorUnit's (correct) location-scoped match.
+        /// </summary>
+        private List<ItemVariant> TransferPullOrder(InventoryItem item, int? requestedVariantId, out string targetTeam)
+        {
+            targetTeam = new InventoryService(_db, _currentUser).ResolveTransferTeam(item, requestedVariantId);
+            string team = targetTeam;
+            return item.Variants
+                .Where(v => !v.IsRetired && (team.Length == 0 || v.Team == team))
+                .OrderBy(v => requestedVariantId.HasValue && v.Id == requestedVariantId.Value ? 0 : 1)
+                .ThenBy(v => v.VariantNumber)
+                .ToList();
+        }
+
+        /// <summary>
+        /// How many units an approval of this request would take from each
+        /// location, in pull order -- flattened one entry per physical unit by
+        /// the caller to line each serial slot up with its real shelf. Purely a
+        /// projection: reads nothing it doesn't also read at approval time, and
+        /// writes nothing.
+        /// </summary>
+        public List<(int VariantId, int Take)> PlanTransferPull(InventoryItem item, int? requestedVariantId, int quantity)
+        {
+            var plan = new List<(int VariantId, int Take)>();
+            int remaining = quantity;
+            foreach (var v in TransferPullOrder(item, requestedVariantId, out _))
+            {
+                if (remaining <= 0) break;
+                int take = System.Math.Min(v.Quantity, remaining);
+                if (take <= 0) continue;
+                plan.Add((v.Id, take));
+                remaining -= take;
+            }
+            return plan;
+        }
+
         // compressorUnits mirrors PickUpOrderConfirmed's shape exactly (Lab#/Serial#
         // pairs posted per physical unit, both soft) -- the approver is standing in
         // for the fulfiller role a normal pickup already has, so the same serial
@@ -1284,15 +1352,21 @@ namespace Visual_Inventory_System.Services
                 if (!inv.CanApproveTransfer(item, req.RequestedVariantId))
                     throw new System.InvalidOperationException("You can only approve transfers against your own Line's items -- and, once an item is split across teams, only the owning team's own Engineers can approve that slice.");
 
-                var activeVariants = item.Variants.Where(v => !v.IsRetired).ToList();
-                int totalAvailable = activeVariants.Sum(v => v.Quantity);
+                // Per-team quantity ownership: the pull loop below must stay
+                // inside the SAME slice CanApproveTransfer just gated on.
+                // Without this the approver's authority was checked against one
+                // team's variant and the stock then spilled into another team's
+                // -- a Ninja-only Engineer approving a 1-unit Ninja slice took 4
+                // units out of Samurai's stack, with nothing surfaced to Samurai.
+                // Mirrors FulfillOrderItem's own team scoping exactly; "" (item
+                // not split, or no resolvable target) sees every active variant,
+                // same fail-open as before.
+                var pullOrder = TransferPullOrder(item, req.RequestedVariantId, out string targetTeam);
+                int totalAvailable = pullOrder.Sum(v => v.Quantity);
                 if (req.Quantity > totalAvailable)
-                    throw new System.InvalidOperationException($"Not enough on the shelf -- {req.Quantity} requested, {totalAvailable} on hand across active locations.");
-
-                var pullOrder = activeVariants
-                    .OrderBy(v => req.RequestedVariantId.HasValue && v.Id == req.RequestedVariantId.Value ? 0 : 1)
-                    .ThenBy(v => v.VariantNumber)
-                    .ToList();
+                    throw new System.InvalidOperationException(
+                        $"Not enough on the shelf -- {req.Quantity} requested, {totalAvailable} on hand"
+                        + (targetTeam.Length > 0 ? $" across {targetTeam}'s locations." : " across active locations."));
 
                 int remaining = req.Quantity;
                 int remainingTc = req.ThermocoupledCount;

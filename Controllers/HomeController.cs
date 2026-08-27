@@ -345,9 +345,13 @@ namespace Visual_Inventory_System.Controllers
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
-        public IActionResult RemoveFromLedger(string itemId)
+        public IActionResult RemoveFromLedger(string itemId, int? requestedVariantId = null, string? requestedTeam = null)
         {
-            _orderService.RemoveItem(itemId);
+            // All three identify ONE cart line -- the same key AddItem stacks on.
+            // Posting itemId alone wiped every line for that item, so removing
+            // "the 2 from the Lean-To" also silently took the 3 from New Test
+            // Cells (and, since Pass 31, the other team's line too).
+            _orderService.RemoveItem(itemId, requestedVariantId, requestedTeam);
             TempData["Message"] = "Item removed.";
             return SmartRedirect();
         }
@@ -1178,9 +1182,18 @@ namespace Visual_Inventory_System.Controllers
                 bool isComp = InventoryService.IsCompressorType(bInv?.Type);
                 bool isMotor = InventoryService.IsMotorType(bInv?.Type);
 
+                // Blank-serial rows are excluded on purpose. A unit can legitimately
+                // sit On Hand with only a lab number (or nothing) -- but as a
+                // *named* option it renders as a nameless ghost entry, and picking
+                // it posts an empty/garbage serial instead of the real anonymous
+                // unit. Those are exactly what the "No serial" option is for:
+                // AssignOneCompressorUnit's null-serial branch already takes the
+                // oldest anonymous unit at that location, FIFO.
                 var onHandUnits = isComp
                     ? _db.CompressorUnits.AsNoTracking()
-                        .Where(cu => cu.ItemId == b.ItemId && cu.Status == UnitStatus.OnHand)
+                        .Where(cu => cu.ItemId == b.ItemId && cu.Status == UnitStatus.OnHand
+                                  && cu.SerialNumber != null && cu.SerialNumber != "")
+                        .OrderBy(cu => cu.RecordedAt)
                         .ToList()
                     : new List<CompressorUnit>();
 
@@ -1191,8 +1204,34 @@ namespace Visual_Inventory_System.Controllers
                     resolvedLabel = rv != null ? VLabel(rv) : "requested location no longer active -- will auto-pull";
                 }
 
+                // Per-unit pull plan, straight from the service that will execute
+                // it -- flattened one slot per physical unit so slot u's serial
+                // dropdown offers the shelf slot u actually comes off.
+                var unitSlots = new List<TransferUnitSlotViewModel>();
+                if (isComp && bInv != null && b.Status == TransferStatus.Requested)
+                {
+                    foreach (var (variantId, take) in _orderService.PlanTransferPull(bInv, b.RequestedVariantId, b.Quantity))
+                    {
+                        var pv = bActiveVars.FirstOrDefault(v => v.Id == variantId);
+                        var here = onHandUnits.Where(x => x.ItemVariantId == variantId)
+                            .Select(x => new OnHandUnitViewModel { SerialNumber = x.SerialNumber, LabNumber = x.LabNumber })
+                            .ToList();
+                        for (int u = 0; u < take; u++)
+                            unitSlots.Add(new TransferUnitSlotViewModel
+                            {
+                                VariantId = variantId,
+                                LocationLabel = pv != null ? VLabel(pv) : $"Variant #{variantId}",
+                                OnHandUnits = here,
+                                // Staggered within THIS variant's slots, so two units
+                                // off the same shelf don't both open on unit #1.
+                                DefaultSerial = u < here.Count ? here[u].SerialNumber : null
+                            });
+                    }
+                }
+
                 return new TransferLineViewModel
                 {
+                    UnitSlots = unitSlots,
                     Id = b.Id,
                     ItemId = b.ItemId,
                     ItemName = bInv?.ItemName ?? "Unknown",
@@ -1387,9 +1426,19 @@ namespace Visual_Inventory_System.Controllers
                     // on Pickup Queue. Fetched once per line, grouped by variant,
                     // so choosing a location client-side can swap in exactly
                     // what's actually on that shelf instead of a blind text box.
+                    // Blank-serial rows are excluded deliberately. A unit can sit On
+                    // Hand with no serial (lab-only rows, Pass 29's own FIFO
+                    // fallback), but as a NAMED option the client renders it
+                    // `<option value="null">SN: null</option>` -- String(null) --
+                    // and the staggered default even opens on it, so a picker who
+                    // touches nothing posts the literal serial "null". That misses
+                    // the real anonymous unit and mints a bogus PickedUp row beside
+                    // it: the CCR-0213 orphan mechanism again. Anonymous stock is
+                    // what the "No serial" option is for.
                     var onHandByVariant = InventoryService.IsCompressorType(itemEntity?.Type)
                         ? _db.CompressorUnits.AsNoTracking()
-                              .Where(c => c.ItemId == it.ItemId && c.Status == Visual_Inventory_System.Models.UnitStatus.OnHand && c.ItemVariantId != null)
+                              .Where(c => c.ItemId == it.ItemId && c.Status == Visual_Inventory_System.Models.UnitStatus.OnHand && c.ItemVariantId != null
+                                       && c.SerialNumber != null && c.SerialNumber != "")
                               .OrderBy(c => c.RecordedAt)
                               .GroupBy(c => c.ItemVariantId!.Value)
                               .ToDictionary(g => g.Key, g => g.Select(c => new OnHandUnitViewModel { SerialNumber = c.SerialNumber, LabNumber = c.LabNumber }).ToList())

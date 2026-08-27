@@ -424,9 +424,19 @@
 (function () {
     "use strict";
 
+    // Only units with a REAL serial can be offered as named options. A
+    // serial-less On Hand row (lab-only, or Pass 29's FIFO fallback) rendered
+    // as an option becomes `value="null"` via String(null) -- selectable, and
+    // the stagger below would even default to it -- so a picker who touches
+    // nothing posts the literal serial "null". The server filters these out of
+    // the payload too; this keeps the client honest if that ever changes.
+    function namedUnits(units) {
+        return (units || []).filter(function (u) { return u.serial; });
+    }
+
     function optionsFor(units) {
         var html = "";
-        (units || []).forEach(function (u) {
+        namedUnits(units).forEach(function (u) {
             var label = "SN: " + u.serial + (u.lab ? " (Lab: " + u.lab + ")" : "");
             var val = String(u.serial).replace(/"/g, "&quot;");
             html += '<option value="' + val + '">' + label + "</option>";
@@ -463,7 +473,7 @@
         if (!dataEl) return;
         var data = {};
         try { data = JSON.parse(dataEl.textContent || "{}"); } catch (e) { data = {}; }
-        var units = variantId ? data[variantId] : null;
+        var units = namedUnits(variantId ? data[variantId] : null);
 
         document.querySelectorAll('.comp-serial-select[data-oi="' + oi + '"]').forEach(function (sel, idx) {
             var manual = sel.parentElement.querySelector(".comp-serial-manual");
@@ -479,7 +489,8 @@
             // open with every dropdown already aimed at the same physical
             // serial -- one real serial per unit while they last, "No serial"
             // once they run out, rather than everyone defaulting to option 0.
-            sel.value = (units && idx < units.length) ? units[idx].serial : "__NONE__";
+            var named = namedUnits(units);
+            sel.value = (idx < named.length) ? named[idx].serial : "__NONE__";
             if (manual) manual.classList.add("d-none");
         });
         enforceSerialExclusivity(document.querySelector('.comp-block[data-oi="' + oi + '"]'));
@@ -581,8 +592,9 @@
             rows.innerHTML = html;
             // Same stagger as populate() -- one real serial per unit while
             // they last, instead of every row opening on the same default.
+            var namedHere = namedUnits(units);
             rows.querySelectorAll(".comp-serial-select").forEach(function (sel, idx) {
-                sel.value = (units && idx < units.length) ? units[idx].serial : "__NONE__";
+                sel.value = (idx < namedHere.length) ? namedHere[idx].serial : "__NONE__";
             });
             enforceSerialExclusivity(document.getElementById("partial-pickup-card"));
 

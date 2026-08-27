@@ -276,9 +276,14 @@
                                             <span class="fw-bold ms-2" style="color:#F59E0B;">TC Ct: @entry.ThermocoupledCount</span>
                                         }
                                         <br />
+                                        @* All three fields together identify THIS line --
+                                           the same key AddItem stacks on. Posting itemId
+                                           alone removed every line for the item. *@
                                         <form asp-action="RemoveFromLedger" method="post" class="mt-2">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="itemId" value="@entry.ItemId" />
+                                            <input type="hidden" name="requestedVariantId" value="@(entry.RequestedVariantId?.ToString() ?? "")" />
+                                            <input type="hidden" name="requestedTeam" value="@(entry.RequestedTeam ?? "")" />
                                             <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">Remove</button>
                                         </form>
                                     </div>
@@ -331,7 +336,15 @@
                                         <i class="bi bi-signpost-2 me-1"></i>Line: @(string.IsNullOrWhiteSpace(item.Line) ? "Unassigned" : item.Line)
                                         &nbsp;·&nbsp; Team: @teamSummary
                                     </small>
-                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableQuantity(item.ItemId) : item.Quantity)</span>
+                                    @* Team-scoped for THIS viewer, resolved the same way
+                                       Submit() will resolve it (InventoryService.
+                                       ResolveOrderingTeam) -- the item-wide figure
+                                       promised a split item's whole stack to whichever
+                                       team was looking, then Submit refused at the
+                                       team's real ceiling. Falls back to the item total
+                                       whenever no single team applies, which is exactly
+                                       what Submit would allow too. *@
+                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableForViewer(item) : item.Quantity)</span>
                                     @if (actVars.Count > 1)
                                     {
                                         foreach (var v in actVars)

@@ -924,7 +924,12 @@ namespace Visual_Inventory_System.Controllers
             }
             team.IsActive = !team.IsActive;
 
-            int inUse = _db.InventoryItems.Count(i => i.Team == team.Name);
+            // Per-team quantity ownership (2026-08-26): a team can own a SLICE of
+            // an item without being its family-level Team, so counting
+            // InventoryItems alone reported "0 item(s) still reference it" for a
+            // team that in fact holds real stock. Count either kind of claim.
+            int inUse = _db.InventoryItems.Count(i => i.Team == team.Name
+                || i.Variants.Any(v => !v.IsRetired && v.Team == team.Name));
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = DateTime.UtcNow,

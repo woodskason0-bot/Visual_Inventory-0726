@@ -316,22 +316,31 @@
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="transferRequestId" value="@b.Id" />
 
-                        @if (b.IsCompressor)
+                        @if (b.IsCompressor && b.UnitSlots.Any())
                         {
-                            var allOnHand = b.LocationChoices.SelectMany(c => c.OnHandUnits).ToList();
-                            <div class="mb-2">
-                                <span class="d-block mb-1 mo-sub" style="font-size:11px;">Serial # -- pick from what's on hand, or add one</span>
-                                @for (int u = 0; u < b.Quantity; u++)
+                            @* Each slot lists ONLY the serials on the shelf that slot
+                               will actually be pulled from (OrderService.PlanTransferPull's
+                               plan, same order ApproveTransfer executes). Pooling every
+                               location's serials into every slot let the approver pick one
+                               that lives elsewhere, which AssignOneCompressorUnit then
+                               correctly refused -- same location-scoping Pickup Queue
+                               already does for a normal pickup. *@
+                            <div class="mb-2 transfer-serial-block" data-req="@b.Id">
+                                <span class="d-block mb-1 mo-sub" style="font-size:11px;">Serial # -- each unit lists what's on hand at the shelf it's coming off</span>
+                                @for (int u = 0; u < b.UnitSlots.Count; u++)
                                 {
-                                    <div class="d-flex gap-1 mb-1" style="max-width:420px;">
-                                        <input type="text" name="compLab_@u" class="mo-input" placeholder="Lab # (unit @(u + 1))" style="max-width:110px;" />
-                                        <select name="compSerial_@u" class="mo-input transfer-serial-select" style="max-width:170px;" onchange="toggleTransferManual(this)">
-                                            <option value="">-- none / unrecorded --</option>
-                                            @foreach (var oh in allOnHand)
+                                    var slot = b.UnitSlots[u];
+                                    <div class="d-flex gap-1 mb-1 align-items-center flex-wrap" style="max-width:640px;">
+                                        <span class="loan-ctx" style="min-width:150px; font-size:10px;">Unit @(u + 1) — @slot.LocationLabel</span>
+                                        <input type="text" name="compLab_@u" class="mo-input" placeholder="Lab #" style="max-width:110px;" />
+                                        <select name="compSerial_@u" class="mo-input transfer-serial-select" style="max-width:200px;"
+                                                onchange="toggleTransferManual(this); enforceTransferSerialExclusivity(this);">
+                                            @foreach (var oh in slot.OnHandUnits)
                                             {
-                                                <option value="@oh.SerialNumber">@oh.SerialNumber@(string.IsNullOrWhiteSpace(oh.LabNumber) ? "" : $" (Lab {oh.LabNumber})")</option>
+                                                <option value="@oh.SerialNumber" selected="@(slot.DefaultSerial != null && oh.SerialNumber == slot.DefaultSerial)">@oh.SerialNumber@(string.IsNullOrWhiteSpace(oh.LabNumber) ? "" : $" (Lab {oh.LabNumber})")</option>
                                             }
-                                            <option value="__ADD__">+ Add a serial not listed</option>
+                                            <option value="__NONE__" selected="@(slot.DefaultSerial == null)">No serial</option>
+                                            <option value="__ADD__">Serial not in list -- add serial</option>
                                         </select>
                                         <input type="text" name="compSerialManual_@u" class="mo-input comp-serial-manual d-none" placeholder="Type serial" style="max-width:140px;" />
                                     </div>
@@ -425,12 +434,38 @@
         return true;
     }
 
-    // Reveal the free-text serial input when the approver picks "+ Add a serial
-    // not listed" instead of a known on-hand one.
+    // Reveal the free-text serial input when the approver picks "Serial not in
+    // list -- add serial" instead of a known on-hand one.
     function toggleTransferManual(sel) {
         var manual = sel.parentElement.querySelector('.comp-serial-manual');
         if (manual) manual.classList.toggle('d-none', sel.value !== '__ADD__');
     }
+
+    // Two units on one approval can't be the same physical compressor.
+    // AssignOneCompressorUnit rejects it server-side, but greying the option out
+    // the moment a sibling claims it is friendlier than a bounced submit --
+    // same treatment Pickup Queue's own serial picker already gives this.
+    // __NONE__/__ADD__ are exempt: several units may genuinely have no serial.
+    function enforceTransferSerialExclusivity(changed) {
+        var block = changed.closest('.transfer-serial-block');
+        if (!block) return;
+        var selects = Array.prototype.slice.call(block.querySelectorAll('.transfer-serial-select'));
+        selects.forEach(function (sel) {
+            Array.prototype.forEach.call(sel.options, function (opt) {
+                if (!opt.value || opt.value === '__NONE__' || opt.value === '__ADD__') return;
+                opt.disabled = selects.some(function (other) {
+                    return other !== sel && other.value === opt.value;
+                });
+            });
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.transfer-serial-block').forEach(function (block) {
+            var first = block.querySelector('.transfer-serial-select');
+            if (first) enforceTransferSerialExclusivity(first);
+        });
+    });
 
     function doneUsing(oiid) {
         document.querySelectorAll('.disp-' + oiid).forEach(function (el) { el.style.display = ''; });
