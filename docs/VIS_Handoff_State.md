@@ -99,15 +99,27 @@ against my actual copied-in database, with no `PendingModelChangesWarning`.
 variants — **never usable inside raw EF LINQ queries**, only after materialization.
 18 models legitimately have two variants (stocked at both New Test Cells and the Lean-To).
 
-**Visibility is Line, not Team.** Signed-in user sees items where
-`item.Line == "" || item.Line == user.Line` (case-insensitive). **Level 5 bypasses
-entirely.** A blank *item* Line fails OPEN for everyone. A blank *user* Line is a
-separate, stronger case: it skips the filter entirely and that user sees the whole org,
-not just blank-Line items — worth knowing before assuming "unassigned" means "scoped to
+**Visibility is Line, not Team — still true for browsing, no longer the whole
+picture once ordering/approval enters the frame (Pass 30/31, 2026-08-26).**
+Signed-in user sees items where `item.Line == "" || item.Line == user.Line`
+(case-insensitive). **Level 5 bypasses entirely.** A blank *item* Line fails
+OPEN for everyone. A blank *user* Line is a separate, stronger case: it skips
+the filter entirely and that user sees the whole org, not just blank-Line
+items — worth knowing before assuming "unassigned" means "scoped to
 nothing." (Pass 13 added a middle option — see `User.Branch` below.)
-`InventoryService.ApplyLineVisibility()` filters `GetAll`/`Search`/`ExportToCsv` only;
-`GetById`/`FindByRheemPart`/quantity math stay unfiltered on purpose so org-wide dedup
-and cross-Line reassignment keep working.
+`InventoryService.ApplyLineVisibility()` filters `GetAll`/`ExportToCsv`
+only as of Pass 30 — **`Search()` deliberately stopped applying it**, so a
+Search result can now include another Line's item (Request Transfer's whole
+premise); `GetById`/`FindByRheemPart`/quantity math stay unfiltered on
+purpose so org-wide dedup and cross-Line reassignment keep working.
+`InventoryService.IsOwnLine(itemLine)` is the in-memory sibling of the same
+rule, for exactly the one caller (Search's card renderer) that needs a
+per-item yes/no instead of a query filter. **Team entered the picture in
+Pass 31**: it still never gates *visibility* (an out-of-Line item with a
+team you're not on is still just as visible/invisible as it always was), but
+it now gates *how much of a split item you can order* and *who can approve a
+Transfer against it* — see the Pass 30/31 entries in "Current state" for the
+full shape.
 
 **`OrgStructure.cs` is managed now, not hardcoded (Pass 13).** Branches and Lines live
 in `Branches`/`OrgLines` tables, editable from Settings the same way Teams and Locations
@@ -1675,7 +1687,8 @@ fix just never got extended to the other two. Extended the same selector list in
   gets registered twice for real.
 - **Motors: only the TC subset is tracked (deliberate).**
 - **Compressor/Motor filter: Team→Branch/Line is one-way on purpose.**
-- **`MyOrders.cshtml` was not extended for motor-unit selection.**
+- **`MyActivity.cshtml`** (renamed from `MyOrders.cshtml` in Pass 30, see Current
+  state) **was not extended for motor-unit selection.**
 
 - **Unit lifecycle / event history — scoped in Pass 16, not started.** The eventual
   goal (Kason's framing): full lifecycle tracking on a serialized unit — pick a model
@@ -2063,3 +2076,140 @@ compressor-only; whatever transfers to motors gets flagged once this has run
 for real. Order-time pre-resolution (letting the orderer pick a location/
 serial preference before pickup, the same way `RequestedVariantId` already
 lets them pin a location) is scoped but not built.
+
+**Pass 30 (2026-08-26) added Request Transfer - Internal: an item outside
+your own Line/Team now shows up in Search results too, with a Request
+Transfer button instead of the normal order/handle actions.** `Search()`
+stopped applying `ApplyLineVisibility` — the only carve-out; `GetAll` and
+`ExportToCsv` stay Line-scoped exactly as before. `InventoryService.
+IsOwnLine(itemLine)` is the new in-memory sibling of that same rule (`Apply
+LineVisibility` has to stay a SQL-translatable expression tree; this one only
+ever runs against an already-materialized item), used by the card renderer to
+decide which action to offer. **This shipped in two shapes, not one — the
+first was wrong and got corrected same-day after Kason's own live testing.**
+Originally built as a genuine Borrow: `BorrowRequest`, a `DurationValue`/
+`DurationUnit`, `DueDate`, a `RequestBorrowExtension`/`DecideBorrowExtension`
+pair, and a full `ReturnBorrow` flow mirroring `ReturnLoan`. Kason tested it
+live and caught the real-world mismatch: a transferred unit doesn't actually
+come back in practice — the same reality that already makes a picked-up
+compressor stay "Picked Up" forever with no return ever expected (see
+`LoanLineViewModel`'s own "normally CONSUMED" doc comment). Corrected to
+one-way: request, one Engineer+ approval on the owning Line, done. Every
+Borrow-era name got renamed to match, not left as a residual mismatch:
+`BorrowRequest` → `TransferRequest`, `BorrowStatus` → `TransferStatus`
+("Requested"/"Approved"/"Denied", no "Active"/"Returned"), `RequestBorrow`/
+`ApproveBorrow`/`DenyBorrow` → `RequestTransfer`/`ApproveTransfer`/
+`DenyTransfer`, `BorrowRequestId` → `TransferRequestId` on both
+`CompressorUnit` and `MotorUnit`. The migration was deleted and regenerated
+clean (`AddTransferRequests`) rather than layering a second migration on top,
+since nothing had shipped yet. Compressor serial capture happens at
+**approval** time, not request time (mirrors how a normal order never asks
+the requester to pick serials either) — reuses `AssignOneCompressorUnit`
+verbatim, which picked up a third caller and had its `borrowRequestId` param
+renamed to `transferRequestId` along with everything else. My Orders' new
+"Borrowed" section is "Internal Transfers": **My Requests** (the requester's
+own full history — Requested/Approved/Denied, same "still show completed
+history" shape as My Order History) and **Awaiting My Approval** (only
+Requested rows against items the viewer's Line/Team owns — decided rows need
+no more action and drop off, same convention the loan bench already uses).
+Verified live end-to-end, both before and after the correction: request →
+approve (with a mix of a known compressor serial matched and an unrecorded
+one creating a fresh roster row, exact spill across two locations) → deny,
+plus (pre-correction only, since the mechanism was removed) an extension
+request/approve with correct `DueDate` math and a full return restoring both
+stock and unit state. Two real bugs surfaced and fixed during Kason's own
+testing, unrelated to Transfer itself: every modal's plain body text was
+invisible in light mode — `.modal-content` has always hardcoded
+`color: white` with zero light-theme override at that level, and most modal
+bodies also carry Bootstrap's `text-white` utility class (`!important`,
+beats a plain override) — not just the Submit confirmation, literally every
+modal in the app (Delete Item, Start Order, the bulk-threshold confirm, all
+of them); fixed with the same targeted `!important` override pattern the
+existing "LIGHT THEME - VIEW-LEVEL LEGIBILITY PASS" section already uses for
+labels/text-info. And Order Details never fetched `CompressorUnit` rows at
+all, so a completed order's compressor serials were invisible there even
+though they're logged at pickup and already show up on the loan bench and
+Compressor Registry — added a Serial # column keyed by `OrderItemId`.
+
+**Pass 31 (2026-08-26, same day) — per-team quantity ownership, reviving the
+`Potential_Changes.md` entry scoped earlier that same day and building it in
+full,** after Kason asked to see Line/Team ownership on Search results and
+in the Request Transfer modal, then confirmed he wanted the real
+per-quantity split built now rather than deferred. `ItemVariant` gains a
+`Team` field, backfilled from each item's existing `Team` (migration
+`AddPerTeamQuantityOwnership`, a raw SQL `UPDATE ... FROM` correlated
+subquery, not just a default value) so every pre-existing item keeps
+behaving exactly as it always has until someone actually splits it. **Line
+itself stays item-level, deliberately** — only Team became
+variant-level; Line is still the one field the whole app's visibility system
+(`ApplyLineVisibility`/`IsOwnLine`) is built around, and making it
+variant-level too would have meant reworking that everywhere, not just here.
+Modify Stock's Add action gained a Team picker, shown only for "New
+location…" — a second team's slice is a second variant with a different
+`Team`, the exact same mechanism a second location already was; the field
+posts as `variantTeam` (not reusing `ModifyStock`'s existing `newTeam` param,
+which is a different, pre-existing thing — the item-level Ownership
+reassignment). `InventoryService.GetUserTeamNames(userName)` is a new
+reusable helper consolidating what used to be a copy-pasted inline `Users`⋈
+`UserTeams` join (`HomeController.SetDefaultThreshold` had its own copy).
+Ordering-team resolution (`OrderService.ResolveOrderingTeam`) defaults to the
+requester's own team; asks only when genuinely ambiguous — the intersection
+of the requester's teams and the item's actual claimant teams is >1, not
+merely "requester has more than one team somewhere" — via a new conditional
+picker in the Add to Cart modal. `FulfillOrderItem`'s pull loop and Pickup
+Queue's own `GetAvailableForOrder`/`GetAvailableQuantity`/`LocationChoices`
+all now scope to the resolved team's own variants, mirroring Pass 29's
+location-scoping fix onto a Team axis — without this half, team-scoped
+ordering would just reopen the identical silent-crossing bug Pass 29 closed,
+on a new axis. Transfer approval routing became Team-aware:
+`InventoryService.CanApproveTransfer(item, requestedVariantId)` gates on
+Line (unchanged) **and**, only once an item's variants actually span more
+than one team, on the approver belonging (via `UserTeams` — the same table
+Settings' "pick a team, check/uncheck members" screen already writes to) to
+the specific team that owns the requested slice; Admin bypasses both, same
+as everywhere else. Enforced in two places, not one: the query that builds
+"Awaiting My Approval" (so a wrong-team Engineer never even sees a request
+they can't act on) and inside `ApproveTransfer`/`DenyTransfer` themselves
+(so a direct POST bypassing the UI is refused too, not just hidden). Since
+Team now lives on `ItemVariant`, the Request Transfer modal's existing "Pull
+location" dropdown does double duty as the team picker once an item is
+split — each option's label got the team tag appended, and a new line in the
+modal spells out the item's current Line/Team ownership before the requester
+even picks. Search Center cards show "Line: X · Team: Y" always, plus a
+per-variant team tag in the location breakdown once an item is actually
+split. Export Wizard: added a Line column (never had one, despite Line
+gating visibility everywhere else); the Team column becomes semicolon-joined
+across a split item's distinct variant-teams; the Team *filter* now also
+matches a team that only owns a slice, not just an item whose family-level
+`Team` field happens to match.
+**Verified live, full chain, on the dev-only db:** created a real second-team
+variant on a real item via Modify Stock's new picker; Search Center showed
+both teams correctly (summary line + per-variant tags); a cross-Line
+transfer request against that specific team's slice was correctly invisible
+to an Engineer on the same Line but the wrong team — confirmed both in the
+UI list and via a direct POST to `DenyTransfer` that was cleanly refused with
+no state change — and was approved by the right team's Engineer with only
+that team's variant losing stock; confirmed the routing genuinely reads from
+`UserTeams` by adding a membership row directly (mirroring `UpdateTeamMembers`
+exactly) and watching a previously-unambiguous user get prompted; ran that
+prompt through Add to Cart → Submit → pickup end to end, confirming the
+resolved team landed on `OrderItem.Team` and the pull stayed inside that
+team's variant the whole way; confirmed the CSV export's new Line column and
+multi-team Team column.
+**Not verified directly:** Settings' team-membership screen is passcode-
+locked and the passcode wasn't available this session, so the UI side of
+`UpdateTeamMembers` was confirmed by reading the code and by writing
+`UserTeams` directly (same table, same effect), not by actually clicking
+through that screen — worth a real pass once the passcode's on hand.
+**Flagged, not solved:** re-checking the compressor serial cascade against
+team boundaries (the original `Potential_Changes.md` entry already carried
+this same flag); Intake's bulk-CSV import path doesn't get a Team picker —
+only interactive Modify Stock does, so a bulk-imported addition lands on
+whatever team the first existing variant at that location already has.
+
+Same day: **My Orders renamed to My Activity** (route, controller action,
+`MyOrdersViewModel` → `MyActivityViewModel`, the view file itself, and the
+sidebar nav link/icon) once Transfer requests and loans made "orders" too
+narrow a name for what the page actually shows. Verified live: the nav
+link's route, the renamed page rendering under its new title, and a
+`RedirectToAction` landing on the new route instead of a stale one.

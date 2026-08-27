@@ -9,6 +9,100 @@ landed, when."
 
 ---
 
+## 2026-08-26
+
+### `95e4fc8` — Pass 30/31: Request Transfer - Internal, per-team quantity ownership, My Activity rename
+Three pieces of work in one commit (interleaved line-by-line across the same
+files, not cleanly separable — see `VIS_Handoff_State.md`'s Pass 30/31
+entries in "Current state" for the full narrative of each). **Request
+Transfer - Internal:** `Search()` stopped applying `ApplyLineVisibility`, so
+another Line's item now shows up in results with a Request Transfer button
+instead of the normal order/handle actions (`InventoryService.IsOwnLine` is
+the new in-memory version of that same rule, for the card renderer).
+Originally built as a genuine time-boxed Borrow (`BorrowRequest`,
+`DurationValue`/`DurationUnit`, `DueDate`, an extension pair, a full
+`ReturnBorrow` flow) and live-verified working end to end, then corrected
+same-day after Kason's own testing: a transferred unit doesn't actually come
+back in practice, so it was rebuilt one-way — request, one Engineer+
+approval, done. Every Borrow-era name was renamed to match rather than left
+mismatched (`BorrowRequest`→`TransferRequest`, `RequestBorrow`/`ApproveBorrow`/
+`DenyBorrow`→`RequestTransfer`/`ApproveTransfer`/`DenyTransfer`,
+`BorrowRequestId`→`TransferRequestId` on both unit tables), and the migration
+was deleted and regenerated clean rather than layered. Compressor serial
+capture happens at approval time, reusing `AssignOneCompressorUnit` (now a
+three-caller shared method). My Orders' "Borrowed" section is "Internal
+Transfers" → My Requests (full history) / Awaiting My Approval (the queue).
+Two unrelated pre-existing bugs fixed along the way, both found live by
+Kason: every modal's plain body text was invisible in light mode
+(`.modal-content`'s hardcoded `color: white` had no light-theme override,
+and most bodies also carry Bootstrap's `text-white` `!important` utility) —
+not just Submit's confirm dialog, every modal in the app; and Order Details
+never fetched `CompressorUnit` rows, so a completed order's serials were
+invisible there despite being logged at pickup.
+**Per-team quantity ownership**, reviving `Potential_Changes.md`'s entry
+scoped earlier the same day: `ItemVariant.Team`, backfilled via a raw SQL
+`UPDATE` in the migration so no pre-existing item's behavior changes. Line
+deliberately stays item-level — only Team became variant-level. Modify
+Stock's Add action gained a Team picker (New location only; posts as
+`variantTeam`, not the pre-existing `newTeam` param, which is the unrelated
+item-level Ownership field). Ordering resolves to the requester's own team by
+default, asking only when the intersection of the requester's teams and the
+item's actual claimant teams exceeds one (`OrderService.
+ResolveOrderingTeam`); `FulfillOrderItem`'s pull loop and Pickup Queue's own
+availability/`LocationChoices` all scope to the resolved team, mirroring Pass
+29's location fix onto a Team axis. Transfer approval routing gained
+`InventoryService.CanApproveTransfer`: Line (unchanged) and, once an item
+spans more than one team, membership (via `UserTeams`) in the specific team
+that owns the requested slice — enforced in both the "Awaiting My Approval"
+query and inside `ApproveTransfer`/`DenyTransfer` themselves, not just
+hidden in the UI. The Request Transfer modal's location dropdown does double
+duty as the team picker once an item is split, with a new line showing the
+item's current Line/Team ownership before the requester even asks. Search
+Center cards show Line/Team always, per-variant tags once split. Export
+Wizard gained a Line column and a semicolon-joined multi-team Team column;
+the Team filter now also matches a partial-slice claim, not just the item's
+family-level default.
+**My Orders renamed to My Activity** (route, controller action,
+`MyOrdersViewModel`→`MyActivityViewModel`, view file, nav link/icon) once
+Transfer and loans made "orders" too narrow a name.
+Verified live end-to-end on the dev-only db (`inventory.dev.db`, never the
+real one), both before and after the Borrow→Transfer correction: request/
+approve/deny with real compressor serial matching and location-scoped
+spill; (pre-correction) an extension and a full return; the light-mode modal
+fix and the Order Details serial column; a real second-team variant created
+via Modify Stock; a cross-Line transfer against that specific team's slice
+correctly invisible to an Engineer on the right Line but wrong team
+(confirmed via the UI list AND a direct POST bypassing it entirely) and
+approved cleanly by the right team's Engineer with only that variant's stock
+moving; the Settings-driven team-membership routing (confirmed by writing
+`UserTeams` directly, mirroring `UpdateTeamMembers`, since Settings itself is
+passcode-locked and the passcode wasn't available this session); an
+ambiguous-team Add to Cart prompt resolving correctly through Submit() and
+pickup; the CSV export's new columns; and the My Activity rename's nav link,
+render, and redirect target.
+**Not verified:** Settings' team-membership screen itself, by actually
+clicking through it (passcode-locked, no passcode this session — the
+underlying `UpdateTeamMembers` code was read and its effect confirmed by
+writing the same table directly, not exercised through its own UI). **Flagged,
+not solved:** the compressor serial cascade (Pass 29) against team
+boundaries — same flag the original per-team doc entry already carried;
+Intake's bulk-CSV import path has no Team picker, only interactive Modify
+Stock does.
+**Touched:** `Controllers/HomeController.cs`, `Data/AppDbContext.cs`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Models/CompressorUnit.cs`,
+`Models/ItemVariant.cs`, `Models/LedgerDraft.cs`, `Models/MotorUnit.cs`,
+`Models/OrderItem.cs`, `Models/TransferRequest.cs` (new),
+`Models/TransferViewModels.cs` (new), `Services/InventoryService.cs`,
+`Services/OrderService.cs`, `Views/Home/OrderDetails.cshtml`,
+`Views/Home/SearchCenter.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`,
+`Views/Shared/_Layout.cshtml`, `appsettings.Development.json`,
+`wwwroot/css/site.css`, migrations `AddTransferRequests` and
+`AddPerTeamQuantityOwnership`; renamed `Models/MyOrdersViewModel.cs` →
+`Models/MyActivityViewModel.cs` and `Views/Home/MyOrders.cshtml` →
+`Views/Home/MyActivity.cshtml`.
+
+---
+
 ## 2026-08-25
 
 ### `8c60955` — Pass 29: compressor pickup now location-scoped, with proactive shortfall handling and order splitting
