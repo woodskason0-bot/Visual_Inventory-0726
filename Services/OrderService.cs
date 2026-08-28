@@ -1034,11 +1034,28 @@ namespace Visual_Inventory_System.Services
                 bool asTc = InventoryService.IsMotorType(inv.Type);   // motor loans return as TC stock
                 string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "0" : v.Trim().ToUpperInvariant();
 
+                // Per-team quantity ownership: units come back to whoever they were
+                // pulled FOR, which is the order line's resolved team -- falling back
+                // to the item's family Team for a line that predates the split (or an
+                // item that was never split at all), the same default every other
+                // variant-creation site uses. Without it a return to a brand-new shelf
+                // mints a team-less stack: it still counts toward the item total, so
+                // its own team reads the missing units as a phantom shortfall rather
+                // than as stock they can no longer reach.
+                string returnTeam = string.IsNullOrWhiteSpace(it.Team) ? (inv.Team ?? "") : it.Team;
+
                 ItemVariant dest;
                 if (targetVariantId.HasValue && targetVariantId.Value > 0)
                 {
                     dest = inv.Variants.FirstOrDefault(v => v.Id == targetVariantId.Value && !v.IsRetired)
                         ?? throw new InvalidOperationException("The chosen location is no longer active.");
+                    // The picker only ever OFFERS this line's own team's shelves, so
+                    // this closes a direct-POST hole rather than a UI one -- same
+                    // reasoning as PickUpPartialAndSplit's identical guard. Returning
+                    // into another team's stack would hand them the units outright.
+                    if (!string.IsNullOrEmpty(it.Team) && dest.Team != it.Team)
+                        throw new InvalidOperationException(
+                            $"That location belongs to {(string.IsNullOrWhiteSpace(dest.Team) ? "no team" : dest.Team)}, not {it.Team} -- this loan can only be returned to its own team's stock.");
                     dest.Quantity += give;
                     if (asTc) dest.ThermocoupledQty = System.Math.Min(dest.ThermocoupledQty + give, dest.Quantity);
                 }
@@ -1053,6 +1070,7 @@ namespace Visual_Inventory_System.Services
                         VariantNumber = nextNum,
                         Quantity = give,
                         ThermocoupledQty = asTc ? give : 0,
+                        Team = returnTeam,
                         Parent = p, Major = m, Sub = s, Rack = rk, Row = rw,
                         FdaString = string.Join(".", new[] { p, m, s, rk, rw }),
                         RegisteredAt = System.DateTime.UtcNow,
@@ -1270,6 +1288,19 @@ namespace Visual_Inventory_System.Services
             if (inv.IsOwnLine(item.Line))
                 throw new System.InvalidOperationException("This item belongs to your own Line -- use Add to Cart instead of Request Transfer.");
 
+            // Ask for no more than actually exists to give. This used to be capped
+            // against nothing at all, so a request for 500 of a 3-unit slice sat in
+            // the owning Line's queue looking legitimate until approval refused it.
+            // Allocation-aware on purpose (GetAvailableQuantity nets out Pending
+            // orders): units another team already has on order aren't spare.
+            string targetTeam = inv.ResolveTransferTeam(item, requestedVariantId);
+            int available = inv.GetAvailableQuantity(itemId, targetTeam);
+            if (qty > available)
+                throw new System.InvalidOperationException(
+                    $"Only {available} of {itemId} available to transfer"
+                    + (targetTeam.Length > 0 ? $" from {targetTeam}'s stock" : "")
+                    + " -- units already committed to a pending order don't count.");
+
             int tc = InventoryService.IsMotorType(item.Type) ? System.Math.Min(System.Math.Max(0, thermocoupledCount), qty) : 0;
 
             _db.TransferRequests.Add(new TransferRequest
@@ -1362,11 +1393,18 @@ namespace Visual_Inventory_System.Services
                 // not split, or no resolvable target) sees every active variant,
                 // same fail-open as before.
                 var pullOrder = TransferPullOrder(item, req.RequestedVariantId, out string targetTeam);
-                int totalAvailable = pullOrder.Sum(v => v.Quantity);
+                // Raw shelf quantity is the wrong ceiling: it counts units a Pending
+                // order has already been promised, so approving here could quietly
+                // turn someone else's clean pickup into a short pull. Same
+                // allocation-aware math AddToCart and Submit() gate on, so a transfer
+                // and an order compete for the same units on the same terms rather
+                // than the transfer silently outbidding the order that got there first.
+                int totalAvailable = inv.GetAvailableQuantity(req.ItemId, targetTeam);
                 if (req.Quantity > totalAvailable)
                     throw new System.InvalidOperationException(
-                        $"Not enough on the shelf -- {req.Quantity} requested, {totalAvailable} on hand"
-                        + (targetTeam.Length > 0 ? $" across {targetTeam}'s locations." : " across active locations."));
+                        $"Not enough available -- {req.Quantity} requested, {totalAvailable} free"
+                        + (targetTeam.Length > 0 ? $" across {targetTeam}'s locations" : " across active locations")
+                        + " (units already committed to a pending order are excluded).");
 
                 int remaining = req.Quantity;
                 int remainingTc = req.ThermocoupledCount;

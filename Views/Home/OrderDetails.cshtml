@@ -76,7 +76,13 @@
     @foreach (var it in Model.Items)
     {
         var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
-        var wasShort = it.Status == "Cancelled";
+        @* "Corrected" is what ReportShortPull flips a short line to once it acts on
+           it, so keying only on "Cancelled" dropped the badge at exactly the moment
+           its own tooltip became true -- a corrected order rendered as a Cancelled
+           header over an unannotated line, with nothing pointing at the reissue. The
+           two states get their own wording since one still needs a picker to act. *@
+        var wasShort = it.Status == "Cancelled" || it.Status == "Corrected";
+        var shortCorrected = it.Status == "Corrected";
         var isCompressor = Visual_Inventory_System.Services.InventoryService.IsCompressorType(inv?.Type);
         var lineUnits = unitsByOrderItem.TryGetValue(it.Id, out var uList) ? uList : new System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>();
         <tr class="@(wasShort ? "text-muted" : "")">
@@ -120,9 +126,13 @@
                 }
             </td>
             <td>
-                @if (wasShort)
+                @if (shortCorrected)
                 {
                     <span class="badge bg-warning text-dark" title="Came up short on the shelf; stock was corrected and the real quantity was reissued and picked up on a separate order.">Short — reissued separately</span>
+                }
+                else if (wasShort)
+                {
+                    <span class="badge bg-danger" title="Came up short on the shelf. Nothing was pulled — report the real count from the Pickup Queue to correct stock and reissue.">Short — needs correction</span>
                 }
                 @if (it.Status == "Split")
                 {

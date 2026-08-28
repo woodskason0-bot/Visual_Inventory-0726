@@ -66,6 +66,14 @@
                     <div id="stock-variant-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Location / Variant</label>
                         <div class="d-flex gap-2 align-items-start">
+                            @* Per-team quantity ownership: narrows the stack list to one
+                               team's slice. No name attribute -- a pure client-side filter
+                               that must never post (variantTeam below is a different
+                               thing: which team a NEW stack is being created for).
+                               Disabled unless the item is genuinely split, since one team
+                               leaves nothing to choose between. *@
+                            <select id="stock-variant-team-filter" class="form-select fw-bold text-warning"
+                                    style="max-width:190px;" title="Filter stacks by owning team" disabled></select>
                             <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
                             @if (CurrentUser.Level >= AccessLevels.Admin)
                             {
@@ -82,6 +90,11 @@
                             }
                         </div>
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
+                        @* Warn, don't refuse. Acting on another team's slice is
+                           sometimes exactly right (a runner correcting a miscount
+                           doesn't belong to the team that owns the shelf), so this
+                           surfaces whose stock it is rather than gating it. *@
+                        <small class="text-warning fw-bold" style="display:none; font-size:11px;" id="stock-variant-team-note"></small>
                     </div>
 
                     <!-- TEAM (per-team quantity ownership, 2026-08-26): only meaningful
@@ -283,6 +296,36 @@
 </div>
 
 <script>
+    // Declared HERE, not read from the parent page, because this partial renders
+    // on both Command Center and Search Center and a top-level const in one
+    // <script> tag isn't visible to an earlier one -- the exact break 15822b4
+    // had to fix. Deliberately NOT named myTeams: SearchCenter.cshtml already
+    // declares that at page level, and a duplicate const in shared global scope
+    // is a SyntaxError that kills this whole block.
+    const msMyTeams = @Html.Raw(ViewBag.MyTeamsJson ?? "[]");
+
+    // The distinct teams with a real claim on this item -- the client-side twin
+    // of InventoryService.ActiveVariantTeams. One (or none) means the item isn't
+    // split and team gates nothing here.
+    function msItemTeams(item) {
+        const seen = [];
+        ((item && item.variants) ? item.variants : []).forEach(function (v) {
+            const t = (v.team || '').trim();
+            if (t && seen.indexOf(t) === -1) seen.push(t);
+        });
+        return seen;
+    }
+    // Membership is a LIST, not a single team -- someone on Samurai and Ninja
+    // owns both slices of a split item and must not be warned about either.
+    // Blank fails open, same convention as Line everywhere else.
+    function msIsMyTeam(t) {
+        const s = (t || '').trim();
+        if (!s) return true;
+        return msMyTeams.some(function (m) {
+            return String(m).trim().toLowerCase() === s.toLowerCase();
+        });
+    }
+
     // Closes whichever preview modal (Low Stock / Out of Stock / Needs PN) is
     // open, waits for the close transition, then opens Modify Stock for that
     // item -- avoids two Bootstrap modals stacking backdrops.
@@ -343,9 +386,20 @@
             && action !== 'Ownership' && action !== 'Edit Details';
 
         sel.innerHTML = '';
-        if (!show) { div.style.display = 'none'; refreshDeleteVariantBtn(); return; }
+        if (!show) { div.style.display = 'none'; refreshDeleteVariantBtn(); refreshVariantTeamNote(); return; }
 
-        vars.forEach(function (v) {
+        populateVariantTeamFilter(item);
+        const tf = document.getElementById('stock-variant-team-filter');
+        // A disabled filter contributes nothing -- an unsplit item has no team
+        // choice to make, so every stack shows regardless of what's selected.
+        const teamFilter = (tf && !tf.disabled) ? tf.value : '';
+        const shownVars = vars.filter(function (v) {
+            if (!teamFilter) return true;
+            const t = (v.team || '').trim();
+            return (teamFilter === '__NOTEAM__') ? !t : t.toLowerCase() === teamFilter.toLowerCase();
+        });
+
+        shownVars.forEach(function (v) {
             const o = document.createElement('option');
             o.value = String(v.vid);
             const teamTag = v.team ? ' [' + v.team + ']' : '';
@@ -366,6 +420,77 @@
         }
         div.style.display = 'block';
         refreshDeleteVariantBtn();
+        refreshVariantTeamNote();
+    }
+    // (Re)build the owning-team filter for the current item. Grays out entirely
+    // unless the item is genuinely split -- offering "All teams / Samurai" on an
+    // item only Samurai has ever touched is a choice that isn't one.
+    function populateVariantTeamFilter(item) {
+        const tf = document.getElementById('stock-variant-team-filter');
+        if (!tf) return;
+        const vars = (item && item.variants) ? item.variants : [];
+        const teams = msItemTeams(item);
+        const hasBlank = vars.some(function (v) { return !(v.team || '').trim(); });
+        const prev = tf.value;
+        // The auto-default below may only fire when the ITEM changes. Keying it
+        // on `prev` being falsy instead made "All teams" (value "") unreachable:
+        // every rebuild read it as "nothing chosen yet" and re-applied the
+        // default, so the other team's stacks could never be listed again.
+        const seedFor = (item && item.id) ? item.id : '';
+        const isNewItem = tf.dataset.seededFor !== seedFor;
+        tf.dataset.seededFor = seedFor;
+
+        tf.innerHTML = '';
+        const all = document.createElement('option');
+        all.value = ''; all.textContent = 'All teams';
+        tf.appendChild(all);
+        teams.forEach(function (t) {
+            const o = document.createElement('option');
+            o.value = t;
+            o.textContent = t + (msIsMyTeam(t) ? ' (yours)' : '');
+            tf.appendChild(o);
+        });
+        if (hasBlank && teams.length) {
+            const o = document.createElement('option');
+            o.value = '__NOTEAM__'; o.textContent = 'No team';
+            tf.appendChild(o);
+        }
+
+        const splitAcrossTeams = teams.length > 1 || (teams.length === 1 && hasBlank);
+        tf.disabled = !splitAcrossTeams;
+        if (!splitAcrossTeams) { tf.value = ''; return; }
+
+        // Keep an explicit pick across rebuilds; otherwise land a multi-team
+        // person on their OWN slice when exactly one of the item's teams is
+        // theirs. Two of theirs (or none) is a real choice -- open on the full
+        // list rather than guessing which one they meant.
+        const prevStillValid = Array.prototype.some.call(tf.options, function (o) { return o.value === prev; });
+        if (!isNewItem && prevStillValid) {
+            tf.value = prev;
+        } else {
+            const mine = teams.filter(msIsMyTeam);
+            tf.value = (mine.length === 1) ? mine[0] : '';
+        }
+    }
+    // Says whose stock the chosen stack is when it isn't the viewer's. Never
+    // blocks -- see the markup note; the server has no matching refusal.
+    function refreshVariantTeamNote() {
+        const note = document.getElementById('stock-variant-team-note');
+        if (!note) return;
+        const div = document.getElementById('stock-variant-div');
+        const sel = document.getElementById('stock-variant-sel');
+        const item = getStockItem();
+        const showing = div && div.style.display !== 'none';
+        const isRealVariant = sel && sel.value && sel.value !== 'NEW';
+        if (!showing || !isRealVariant || !item) { note.style.display = 'none'; return; }
+
+        const v = getSelectedVariant(item);
+        const t = v ? (v.team || '').trim() : '';
+        if (!t || msIsMyTeam(t)) { note.style.display = 'none'; return; }
+
+        note.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>This stack belongs to <strong>'
+            + t + '</strong> — not one of your teams. You can still act on it.';
+        note.style.display = 'block';
     }
     // Admin-only: a zero-qty stack on a multi-variant item has no other way
     // to go away (Delete Item needs the item's TOTAL to be 0). Shown only
@@ -417,15 +542,29 @@
         };
         const dest = [seg('loc-parent'), seg('loc-major'), seg('loc-sub'), seg('loc-rack'), seg('loc-row')];
 
-        const hit = (item.variants || []).find(function (v) {
-            if (v.vid === srcVar.vid) return false;
-            return norm(v.parent) === dest[0] && norm(v.major) === dest[1] && norm(v.sub) === dest[2]
+        const sameLoc = function (v) {
+            return v.vid !== srcVar.vid
+                && norm(v.parent) === dest[0] && norm(v.major) === dest[1] && norm(v.sub) === dest[2]
                 && norm(v.rack) === dest[3] && norm(v.row) === dest[4];
+        };
+        // Mirrors ModifyStock's mergeTarget lookup exactly, TEAM INCLUDED. The
+        // server only merges into a same-team stack now; promising a merge here
+        // that it then declines to perform is the same two-halves-disagreeing
+        // shape every Pass 32 bug turned out to be.
+        const srcTeam = (srcVar.team || '').trim().toLowerCase();
+        const hit = (item.variants || []).find(function (v) {
+            return sameLoc(v) && (v.team || '').trim().toLowerCase() === srcTeam;
         });
+        const otherTeam = hit ? null : (item.variants || []).find(sameLoc);
 
         if (hit) {
             note.innerHTML = '<i class="bi bi-arrow-down-up me-1"></i>Merges into Variant ' + hit.num
                 + ' (Qty ' + hit.qty + ') — source retires if fully drained.';
+            note.style.display = 'block';
+        } else if (otherTeam) {
+            note.innerHTML = '<i class="bi bi-people me-1"></i>'
+                + ((otherTeam.team || '').trim() || 'Another team')
+                + ' also stocks that spot — your units move there as their own stack, still yours.';
             note.style.display = 'block';
         } else {
             note.style.display = 'none';
@@ -769,9 +908,20 @@
     (function bindVariantSel() {
         const sel = document.getElementById('stock-variant-sel');
         if (!sel) return;
+
+        // Narrowing to a team rebuilds the stack list, which changes what's
+        // selected -- so it has to run the same follow-ups a manual pick does.
+        const tf = document.getElementById('stock-variant-team-filter');
+        if (tf) tf.addEventListener('change', function () {
+            const action = document.getElementById('stock-action-type').value;
+            populateVariantSel(action);
+            sel.dispatchEvent(new Event('change'));
+        });
+
         sel.addEventListener('change', function () {
             const action = document.getElementById('stock-action-type').value;
             refreshDeleteVariantBtn();
+            refreshVariantTeamNote();
             if (typeof refreshTcFields === 'function') refreshTcFields(action);
             if (action === 'Location Transfer') {
                 if (typeof seedLocationTransfer === 'function') seedLocationTransfer();

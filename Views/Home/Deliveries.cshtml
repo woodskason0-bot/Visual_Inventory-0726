@@ -31,6 +31,26 @@
     }
     .delivery-card.claimed { border-left-color: #64748B; opacity: 0.92; }
     .delivery-card .thumb { width: 100%; height: 160px; object-fit: cover; display: block; background: #14151A; }
+    /* The thumb is a 160px CENTRE CROP -- a tracking number or label near an edge
+       is simply not on screen, and the stored file is a full 1600px JPEG. A button
+       (not an <img onclick>) so it's tab-reachable and announced as activatable. */
+    .delivery-card .thumb-btn { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; position: relative; }
+    .delivery-card .thumb-btn:focus-visible { outline: 2px solid var(--vis-red); outline-offset: -2px; }
+    .delivery-card .zoom-hint {
+        position: absolute; right: 0.5rem; bottom: 0.5rem;
+        background: rgba(0,0,0,0.62); color: #fff; border-radius: 4px;
+        padding: 0.15rem 0.4rem; font-size: 11px; line-height: 1.4;
+        opacity: 0; transition: opacity 0.15s ease;
+    }
+    .delivery-card .thumb-btn:hover .zoom-hint,
+    .delivery-card .thumb-btn:focus-visible .zoom-hint { opacity: 1; }
+    /* Only the PHOTO's own ground is forced dark -- object-fit:contain letterboxes
+       a 4:3 snap inside the box, and a neutral surround is what makes it readable.
+       The modal chrome is deliberately left to theme normally: forcing .modal-content
+       dark put the light-theme .modal-title color (#1A1D23) on a #0E0F13 panel at
+       ~1.1:1, the same dark-on-dark trap 2d.1 had to add .comp-row/.filter-bar-dark
+       exclusions for. Cheaper to not leave the theme system than to override it. */
+    #deliveryPhotoModal .photo-full { width: 100%; max-height: 80vh; object-fit: contain; display: block; background: #0E0F13; }
     .delivery-card .body { padding: 0.9rem 1rem; }
     .delivery-card h6 { color: var(--vis-text); font-weight: 700; margin-bottom: 0.35rem; }
     .delivery-card .field { color: var(--vis-text-muted); font-size: 12px; }
@@ -62,7 +82,11 @@
                 var claimed = d.Status == "Claimed";
                 var mine = claimed && string.Equals(d.ClaimedBy, me, StringComparison.OrdinalIgnoreCase);
                 <div class="delivery-card @(claimed ? "claimed" : "")">
-                    <img src="@d.PhotoUrl" class="thumb" alt="Delivery photo" />
+                    <button type="button" class="thumb-btn" data-photo="@d.PhotoUrl" data-label="@d.RecipientLabel"
+                            title="View the full photo">
+                        <img src="@d.PhotoUrl" class="thumb" alt="Delivery photo for @d.RecipientLabel" />
+                        <span class="zoom-hint"><i class="bi bi-arrows-fullscreen me-1"></i>Expand</span>
+                    </button>
                     <div class="body">
                         <h6>@d.RecipientLabel</h6>
                         @if (!string.IsNullOrWhiteSpace(d.BrandOfItem) && d.BrandOfItem != "N/A")
@@ -115,3 +139,61 @@
 
     <p class="mt-4"><a asp-controller="Home" asp-action="Index" class="btn btn-sm btn-secondary">&larr; Back to Dashboard</a></p>
 </div>
+
+<!-- ONE shared modal for the whole board, not one per card: the src is swapped in
+     on click, so a board of 30 deliveries still renders exactly one of these. -->
+<div class="modal fade" id="deliveryPhotoModal" tabindex="-1" aria-hidden="true" aria-labelledby="deliveryPhotoLabel">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title fw-bold" id="deliveryPhotoLabel">Delivery photo</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                <img src="" alt="" class="photo-full" id="deliveryPhotoFull" />
+            </div>
+            <div class="modal-footer py-2">
+                @* The saved file is a 1600px JPEG. Handing it to a real browser tab is
+                   what actually lets someone pinch/zoom into a tracking number -- no
+                   in-page zoom widget can beat the browser's own. *@
+                <a href="#" target="_blank" rel="noopener" class="btn btn-sm btn-outline-info fw-bold" id="deliveryPhotoOpen">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Open full size in new tab
+                </a>
+                <button type="button" class="btn btn-sm btn-secondary fw-bold" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Delegated off document, and every value read from data-* attributes rather
+    // than interpolated into JS: a recipient label is a real person's name and an
+    // apostrophe in an inline onclick would take the whole handler out.
+    (function bindDeliveryPhotoExpand() {
+        var modalEl = document.getElementById('deliveryPhotoModal');
+        if (!modalEl) return;
+        var img = document.getElementById('deliveryPhotoFull');
+        var cap = document.getElementById('deliveryPhotoLabel');
+        var openLink = document.getElementById('deliveryPhotoOpen');
+
+        document.addEventListener('click', function (e) {
+            var btn = e.target.closest ? e.target.closest('.thumb-btn') : null;
+            if (!btn) return;
+            var url = btn.getAttribute('data-photo') || '';
+            var label = btn.getAttribute('data-label') || 'Delivery photo';
+            if (!url) return;
+            img.setAttribute('src', url);
+            img.setAttribute('alt', 'Delivery photo for ' + label);
+            cap.textContent = label;
+            openLink.setAttribute('href', url);
+            bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        });
+
+        // The src is deliberately NOT cleared on close. Clearing it on
+        // hidden.bs.modal raced the next open -- close-then-reopen let the
+        // teardown's removeAttribute land AFTER the new src was assigned, so the
+        // modal came up permanently blank. Setting src before show() already
+        // means the right photo is assigned before anything is visible, which is
+        // what the clear was reaching for anyway.
+    })();
+</script>

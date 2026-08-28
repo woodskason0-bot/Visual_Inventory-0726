@@ -641,6 +641,13 @@ namespace Visual_Inventory_System.Services
             if (onPendingOrder)
                 return (false, $"Can't delete -- {itemId} is on a pending order.");
 
+            // An undecided Transfer request is outstanding work against this item
+            // exactly like a Pending order is -- deleting out from under it strands
+            // the request with nothing to approve.
+            bool onOpenTransfer = _db.TransferRequests.Any(t => t.ItemId == itemId && t.Status == TransferStatus.Requested);
+            if (onOpenTransfer)
+                return (false, $"Can't delete -- {itemId} has an open transfer request. Approve or deny it first.");
+
             string itemName = item.ItemName;
 
             _db.ItemVariants.RemoveRange(item.Variants);
@@ -699,6 +706,17 @@ namespace Visual_Inventory_System.Services
             bool onPendingOrder = _db.OrderItems.Any(oi => oi.RequestedVariantId == variant.Id && oi.Order.Status == "Pending");
             if (onPendingOrder)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} is requested on a pending order.");
+
+            // Sharper than the DeleteItem case above: ResolveTransferTeam reads the
+            // requested variant to decide WHOSE slice a transfer is aimed at, and a
+            // variant it can no longer find resolves to "" -- which fails open. So
+            // deleting the stack a live request names doesn't just orphan it, it
+            // silently converts a team-gated request into an ungated one that any
+            // Engineer on the Line can approve out of any team's stock.
+            bool onOpenTransfer = _db.TransferRequests.Any(t => t.ItemId == itemId
+                && t.RequestedVariantId == variant.Id && t.Status == TransferStatus.Requested);
+            if (onOpenTransfer)
+                return (false, $"Can't delete -- Variant {variant.VariantNumber} is the requested pull location on an open transfer request. Approve or deny it first.");
 
             string fda = variant.FdaString;
             int number = variant.VariantNumber;
@@ -1717,9 +1735,20 @@ namespace Visual_Inventory_System.Services
                 if (moveQty >= pv.Quantity) tcMove = pv.ThermocoupledQty;
                 string tcMoveNote = (isMotor && tcMove > 0) ? $" [{tcMove} TC]" : "";
 
+                // Per-team quantity ownership: a merge target has to be the SAME
+                // team's stack, not just the same shelf. Two teams legitimately
+                // stock one location (a slice is a variant, and nothing requires it
+                // to sit somewhere else), so a location-only match handed the
+                // destination team the source team's units -- ownership changing
+                // hands as a side effect of moving a box across the floor. With no
+                // same-team stack there, this falls through to the relocate-in-place
+                // or split branches below, both of which already carry pv.Team, so
+                // the stock lands where it was asked to and stays whose it was.
+                string srcTeam = (pv!.Team ?? "").Trim();
                 var mergeTarget = item.ActiveVariants.FirstOrDefault(v => v.Id != pv.Id
                     && Seg(v.Parent) == dP && Seg(v.Major) == dM && Seg(v.Sub) == dS
-                    && Seg(v.Rack) == dRk && Seg(v.Row) == dRw);
+                    && Seg(v.Rack) == dRk && Seg(v.Row) == dRw
+                    && string.Equals((v.Team ?? "").Trim(), srcTeam, System.StringComparison.OrdinalIgnoreCase));
 
                 if (mergeTarget != null)
                 {
@@ -1759,7 +1788,7 @@ namespace Visual_Inventory_System.Services
                         // this the moved units land team-less and their own team
                         // can no longer order them (they still count toward the
                         // item total, so the shortfall reads as a phantom).
-                        Team = pv.Team,
+                        Team = srcTeam,
                         Parent = dP, Major = dM, Sub = dS, Rack = dRk, Row = dRw,
                         FdaString = destFda,
                         RegisteredAt = System.DateTime.UtcNow,

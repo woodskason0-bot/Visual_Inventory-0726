@@ -1133,7 +1133,14 @@ namespace Visual_Inventory_System.Controllers
                 foreach (var it in o.Items.Where(x => x.LoanOutstanding > 0))
                 {
                     invLookup.TryGetValue(it.ItemId, out var inv);
+                    // Per-team quantity ownership: offer only the shelves this line's
+                    // own team owns, the same pool Pickup Queue narrows to and the
+                    // same one ReturnLoan now enforces server-side -- otherwise the
+                    // picker invites a return that hands another team the units.
+                    // "" (unsplit item, or a line that predates the split) still sees
+                    // every location, same fail-open as everywhere else.
                     var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
+                        .Where(v => string.IsNullOrEmpty(it.Team) || v.Team == it.Team)
                         .OrderBy(v => v.VariantNumber).ToList();
 
                     // Pass 6B: the named units still out on THIS line. Usually
