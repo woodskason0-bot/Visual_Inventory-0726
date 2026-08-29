@@ -969,6 +969,10 @@ see the Backlog entry above for the scoping trail), then built same session.
   Claim/complete on the new `/Home/Deliveries` board is gated
   `AccessLevel >= Management`, mirroring `ClaimTask`/`CompleteTask`'s
   existing pattern (first claim wins, only the claimant can mark Done).
+  **SUPERSEDED for the Unknown bucket by the Pass 33 follow-up — the levels
+  in this bullet are historical.** The Unknown fan-out is now *exactly* L3
+  (Engineer), and the board/claim/complete came down to Engineer-and-up with
+  it. Direct-to-a-named-person routing is unchanged and still Management+.
 - **N/A toggle on all four optional text fields**, same `reg-rpn-mode-real`/
   `reg-rpn-mode-na` btn-check convention Rheem PN already uses on New Item
   Registry — picking N/A sets the field `readOnly` with the literal value
@@ -981,6 +985,9 @@ see the Backlog entry above for the scoping trail), then built same session.
   and claim/complete are `AccessLevel >= Management`. Nav shows "Log
   Delivery" to everyone signed in (server-gated, same pattern `Intake`'s
   nav link already uses) and "Deliveries" only to Management+.
+  **The board/claim/complete/nav levels here are SUPERSEDED — all four moved
+  to Engineer-and-up in the Pass 33 follow-up.** Logging stays Standard+.
+  See the Pass 33 entry for the current table.
 - **Verified live end-to-end against the real db**, not just build+DOM: a
   synthetic photo (canvas-drawn, not a real file — the automated browser
   can't drive a native OS file-picker dialog) submitted via an in-page
@@ -2579,3 +2586,52 @@ deciding whether a local run is safe.
 `C:\VIS_Host\august28threlease`, with the migrated `inventory.db` hand-copied
 across separately (a publish never carries the database — see the corrected note
 above). Commit `7f96a1f`.
+
+**Pass 33 follow-up (2026-08-29) — Unknown Delivery routes to L3, not Management.**
+Small ask, but it took a correction round to land, and the correction is the part
+worth recording. The Unknown Delivery bucket had notified Management+ since Pass 25
+— 15 people, none of them Engineers, for what is in practice an Engineer's job
+(go find out what the unlabelled box is). Moved to **exactly L3**.
+
+`NotificationService.CreateForLevel(minLevel, maxLevel, ...)` already had the band
+parameter, so the fan-out itself is a one-argument change:
+`CreateForLevel(Engineer, Engineer, ...)`. No service change, no new gate type.
+
+**What made it more than one line:** `[RequireLevel(x)]` is min-only (`level < _min`
+blocks), and the board, Claim, Complete and the sidebar link were all
+`Management`. Notifying 29 Engineers about a page they'd be bounced off — with no
+nav link to it either — would have been worse than not notifying them, so those
+four came down to Engineer-and-up in the same change. They stay open **upward**
+deliberately: Management and Admin no longer get pinged, but shutting them out of
+the board entirely would strand any delivery addressed to a named manager, since
+that dropdown is still Management+. "Who can pick up an unlabelled box" and "who
+can a box be assigned to by name" stayed two separate questions.
+
+Current state, after the correction:
+
+| | level |
+|---|---|
+| Unknown-bucket notification | **exactly L3** |
+| `/Home/Deliveries` board, Claim, Complete, nav link | Engineer and up |
+| Log a delivery | Standard+ (unchanged) |
+| Address a delivery to a named person | Management+ (unchanged) |
+
+**The correction round, since it's the useful part.** The first build read the ask
+as "Engineer**+**" and shipped a 44-person fan-out — the 29 Engineers plus the 12
+Managers and 3 Admins it was supposed to stop pestering. The ask was "L4s don't
+need to see it at all, only L3s." Verified by counting real notification rows
+rather than trusting the level constant: **29 created, all L3, zero L4, zero L5,
+zero below**, matching active-L3-minus-actor exactly. For contrast the original
+Management+ audience was 15, and the wrong middle version was 44. Worth writing
+down because "Engineer+" and "exactly Engineer" read almost identically in a
+diff and differ by 15 people in production.
+
+Also left alone on purpose: `_Layout.cshtml`'s `isManager` flag, which gated the
+Deliveries nav link but is *also* what shows the low-stock line in the notification
+bell. Widening it would have handed Engineers a second thing nobody asked to
+widen, so the nav link got its own `canHandleDeliveries` flag instead.
+
+Verified on the dev-only db and restored byte-for-byte afterward (synthetic test
+photo deleted from `C:\VIS_Image-Uploads\` too); production `inventory.db` never
+opened. L2 confirmed still bounced off the board with no nav link, L3 reaching it,
+L4 unchanged.

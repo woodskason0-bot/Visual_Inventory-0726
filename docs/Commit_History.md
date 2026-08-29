@@ -9,6 +9,35 @@ landed, when."
 
 ---
 
+## 2026-08-29
+
+### `6015ead` — Pass 33 follow-up: Unknown Delivery routes to exactly L3, not Management+
+The Unknown Delivery bucket had notified Management+ since Pass 25 — 15 people,
+none of them Engineers, for what is in practice an Engineer's job. Now **exactly
+L3**: `NotificationService.CreateForLevel` already takes `(minLevel, maxLevel)`, so
+the fan-out is a one-argument change (`CreateForLevel(Engineer, Engineer, ...)`)
+with no service change and no new gate type. **What made it more than one line:**
+`RequireLevel` is min-only, and the board, Claim, Complete and the sidebar link were
+all `Management` — notifying 29 Engineers about a page they'd be bounced off, with
+no nav link to it either, would be worse than not notifying them, so those four came
+down to Engineer-and-up alongside it. They stay open *upward* deliberately:
+Management and Admin stop being pinged, but shutting them out of the board would
+strand any delivery addressed to a named manager, since that dropdown is still
+Management+. Logging a delivery stays Standard+. `_Layout`'s `isManager` flag was
+left alone — it gated the Deliveries nav link but also shows the low-stock line in
+the notification bell, so the link got its own `canHandleDeliveries` flag rather
+than widening both. Verified by counting real notification rows rather than trusting
+the level constant: 29 created, all L3, zero L4, zero L5, zero below, matching
+active-L3-minus-actor exactly (original Management+ audience was 15; an earlier
+build of this change read the ask as "Engineer+" and produced 44 — the two read
+almost identically in a diff and differ by 15 people in production). L2 confirmed
+still bounced off the board with no nav link. Dev db restored byte-for-byte and the
+synthetic test photo deleted; production `inventory.db` never opened.
+**Touched:** `Controllers/HomeController.cs`, `Views/Shared/_Layout.cshtml`.
+No migration.
+
+---
+
 ## 2026-08-28
 
 ### `7f96a1f` — Pass 33: six team-boundary/audit fixes plus delivery photo expansion
