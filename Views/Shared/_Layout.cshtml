@@ -52,6 +52,11 @@
         : new List<Visual_Inventory_System.Models.Notification>();
     int unreadCount = notifications.Count(n => !n.IsRead);
     bool isManager = signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Management;
+    // Deliberately NOT isManager: the Unknown Delivery bucket routes to Engineer+
+    // (Pass 33 follow-up), but the low-stock line in the bell below still keys off
+    // isManager. Folding them together would quietly hand Engineers a second thing
+    // nobody asked to widen.
+    bool canHandleDeliveries = signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Engineer;
 
     Func<DateTime, string> relTime = utc =>
     {
@@ -289,7 +294,7 @@
                 <a class="sidebar-link @(isActiveAction("LogDelivery") ? "active" : "")" asp-controller="Home" asp-action="LogDelivery">
                     <i class="bi bi-camera-fill"></i><span class="sidebar-link-text">Log Delivery</span>
                 </a>
-                @if (isManager)
+                @if (canHandleDeliveries)
                 {
                     <a class="sidebar-link @(isActiveAction("Deliveries") ? "active" : "")" asp-controller="Home" asp-action="Deliveries">
                         <i class="bi bi-box-seam-fill"></i><span class="sidebar-link-text">Deliveries</span>

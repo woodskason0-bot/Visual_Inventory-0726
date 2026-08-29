@@ -1,4 +1,4 @@
-using Visual_Inventory_System.Models;
+﻿using Visual_Inventory_System.Models;
 using Visual_Inventory_System.Services;
 using Visual_Inventory_System.Data;
 using Microsoft.EntityFrameworkCore;
@@ -1570,9 +1570,20 @@ namespace Visual_Inventory_System.Controllers
         }
 
         // Delivery intake board: the shared "Unknown Delivery" bucket (visible to
-        // every Management+ user) plus anything routed straight to this person.
+        // every Engineer+ user) plus anything routed straight to this person.
         // Done deliveries drop off, same as the VisTask board above.
-        [RequireLevel(AccessLevels.Management)]
+        //
+        // Engineer+, not Management+, as of the Pass 33 follow-up. The Unknown
+        // bucket now notifies EXACTLY L3 (see SubmitDelivery), and a notification
+        // pointing at a page the recipient is bounced off is worse than not sending
+        // it -- so the board, Claim and Complete had to come down to Engineer with
+        // it. They stay open UPWARD on purpose though: Management and Admin no
+        // longer get pinged, but shutting them out of the board entirely would
+        // strand any delivery addressed to a named manager, since that dropdown is
+        // still Management+ (see LogDelivery below). "Anyone Engineer+ can pick up
+        // an unlabelled box" and "who can a box be assigned to by name" are
+        // deliberately two different questions.
+        [RequireLevel(AccessLevels.Engineer)]
         public IActionResult Deliveries()
         {
             string mine = _currentUser.Name;
@@ -1612,6 +1623,11 @@ namespace Visual_Inventory_System.Controllers
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult LogDelivery()
         {
+            // Still Management+ on purpose, even though the Unknown bucket moved to
+            // Engineer+ in the Pass 33 follow-up. Naming a recipient is assigning a
+            // box to a person; the Unknown bucket is "whoever gets to it first."
+            // Widening this list too would put all 29 Engineers in a dropdown that
+            // exists to route to someone accountable for it.
             ViewBag.Recipients = _db.Users.AsNoTracking()
                 .Where(u => u.IsActive && u.AccessLevel >= AccessLevels.Management)
                 .OrderBy(u => u.DisplayName)
@@ -1675,7 +1691,13 @@ namespace Visual_Inventory_System.Controllers
                 + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})");
 
             if (isUnknown)
-                _notifications.CreateForLevel(AccessLevels.Management, null, "DeliveryReceived", message, "/Home/Deliveries", _currentUser.Name);
+                // EXACTLY L3, not Engineer-and-up -- the maxLevel arg is what that
+                // second parameter is for. Handling an unlabelled box is an Engineer
+                // job, so Management and Admin deliberately stop being pinged for it
+                // (was Management+, which pinged 15 people and no Engineers at all).
+                // They can still open the board and pitch in if one sits; they just
+                // don't get the notification.
+                _notifications.CreateForLevel(AccessLevels.Engineer, AccessLevels.Engineer, "DeliveryReceived", message, "/Home/Deliveries", _currentUser.Name);
             else
                 _notifications.Create(recipientUserName, "DeliveryReceived", message, "/Home/Deliveries");
 
@@ -1683,11 +1705,11 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("LogDelivery");
         }
 
-        // Claim an open delivery. Management+ -- the same band it was routed to.
+        // Claim an open delivery. Engineer+ -- the same band it is routed to.
         // First claim wins, same as ClaimTask.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Management)]
+        [RequireLevel(AccessLevels.Engineer)]
         public IActionResult ClaimDelivery(int id)
         {
             var d = _db.Deliveries.FirstOrDefault(x => x.Id == id);
@@ -1711,7 +1733,7 @@ namespace Visual_Inventory_System.Controllers
         // Mark a claimed delivery done -- only the person who claimed it, same as CompleteTask.
         [HttpPost]
         [ValidateAntiForgeryToken]
-        [RequireLevel(AccessLevels.Management)]
+        [RequireLevel(AccessLevels.Engineer)]
         public IActionResult CompleteDelivery(int id)
         {
             var d = _db.Deliveries.FirstOrDefault(x => x.Id == id);
