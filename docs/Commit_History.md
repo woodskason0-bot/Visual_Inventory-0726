@@ -9,6 +9,66 @@ landed, when."
 
 ---
 
+## 2026-08-28
+
+### `7f96a1f` — Pass 33: six team-boundary/audit fixes plus delivery photo expansion
+Bug-hunt pass off a docs-vs-code audit, no new mechanic and no migration authored.
+**`ReturnLoan` was never carried across the Pass 31 team boundary** — its
+`new ItemVariant` is the SIXTH such site and Pass 32's sweep, which stayed inside
+`InventoryService`, wrote "four of the five" and missed it. Returning a loan to a
+brand-new shelf minted a `Team = ""` stack: counted in the item total, invisible to
+its own team's ordering, so the gap read as a phantom shortfall — the exact failure
+Pass 32 closed, re-entered through the one path it didn't check. Now the variant
+inherits `OrderItem.Team`, My Activity's location picker is team-scoped like Pickup
+Queue's, and a server guard covers the direct-POST case. **Location Transfer's MERGE
+branch crossed the same boundary** — `mergeTarget` matched on location alone, so
+moving stock to a shelf another team stocks handed them the units; Pass 32 fixed
+this method's *split* branch and left this one. Merge is same-team-only now, falling
+through to relocate/split (which already carry `pv.Team`), with the client-side
+merge note updated in lockstep so the two halves can't disagree. **`OrderDetails`'
+short-pull badge was inverted** — keyed only on `"Cancelled"`, so "reissued
+separately" showed *before* any reissue and vanished once one existed; split into
+two real states. **`DeleteItem`/`DeleteVariant` ignored open `TransferRequests`** —
+the variant case silently converted a team-gated request into an ungated one, since
+`ResolveTransferTeam` fails OPEN on a variant it can't find. **`ApproveTransfer`
+guarded on raw shelf quantity** while `GetAvailableQuantity` nets out Pending
+orders, so a transfer could drain units already promised to an order; now
+allocation-aware, and `RequestTransfer` caps the ask the same way instead of against
+nothing. **Modify Stock gained an owning-team filter and a warn-don't-refuse note** —
+client-side only (no `name`, never posts), disabled unless the item is genuinely
+split, membership read as a LIST so a two-team member is warned about neither slice.
+**Delivery photos can finally be opened** — the board showed a 160px `object-fit:
+cover` band of a stored 1600px JPEG with no click target anywhere in the app; the
+thumb is now a real `<button>` opening one shared modal, plus an "open full size"
+link. Pure UI, the file was already served at `/delivery-photos/{guid}.jpg`.
+All six verified live against the dev-only db, which was restored byte-for-byte
+afterward. Two bugs introduced during the work were caught by running it, not
+building it, and are new Traps entries: clearing the modal's img `src` on
+`hidden.bs.modal` raced the next open and left it permanently blank on the second
+click, and forcing `.modal-content` dark put the light-theme `.modal-title` colour
+on it at ~1.1:1.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Services/OrderService.cs`, `Views/Home/Deliveries.cshtml`,
+`Views/Home/OrderDetails.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`.
+No migration.
+
+**Outside git, same session — the real database was migrated onto the Pass 29-32
+schema for the first time.** The host had been running pre-Pass-29 code against a db
+still at 36 migrations, so `AddOrderSplitLineage`, `AddTransferRequests` and
+`AddPerTeamQuantityOwnership` had never touched real data. Handed over as a clean
+single file (`journal_mode` already `delete`, no `-wal`/`-shm`), rehearsed on a
+throwaway copy before anything real was written, then applied with
+`dotnet ef database update --connection` rather than by starting the app so no page
+load could write a stray row. Result: 36 → 39 migrations, `integrity_check ok`,
+492 items / 513 variants / 605 logs / 53 users / 218 compressor units / 4 deliveries
+all preserved, **513 of 513 active variants backfilled to their item's Team with
+zero mismatches**, zero NULL-Team rows, zero dev artifacts carried across.
+`inventory.dev.db` re-seeded from the migrated file afterward. Published
+self-contained `win-x64` to `C:\VIS_Host\august28threlease`; the db moves separately
+by hand, since a publish never carries one.
+
+---
+
 ## 2026-08-27
 
 ### `377da69` — Pass 32: carry the per-team boundary to the four paths Pass 31 didn't reach

@@ -77,9 +77,13 @@ Superseded, not merely outdated:
 5. **Migration count.** 15 → 26 → 33 as of Pass 13 → 34 as of Pass 16 → 35 as of
    Pass 17 → 36 as of Pass 25 (`AddDeliveries`) → **39 as of Pass 31**
    (`AddOrderSplitLineage` 37, `AddTransferRequests` 38,
-   `AddPerTeamQuantityOwnership` 39; Pass 32 added none). Anything reasoning from
+   `AddPerTeamQuantityOwnership` 39; Passes 32 and 33 added none). **Those last
+   three reached the REAL database only in Pass 33 (2026-08-28)** — until then the
+   host ran pre-Pass-29 code against a db still at 36, and every Pass 29–32 "verified
+   live" claim means `inventory.dev.db`, not production. Anything reasoning from
    migration numbers is stale — count `Migrations/` rather than trusting any doc,
-   this line included.
+   this line included, and check `__EFMigrationsHistory` on the actual file before
+   assuming the code's count and the data's count agree.
 6. **Claude hand-authors migration files now, when it has shell access.** Old rule was
    "supply the model + DbSet diff and stop." Both the Cowork and Passes 1–4 threads ran
    under the old rule. I still compile, run, and test everything myself either way.
@@ -262,6 +266,21 @@ Two tracks, and the second one is above the first.
 ### Deployment lineage
 - The database was deliberately moved out of the publish folder to
   `C:\VIS_Inventory\inventory.db` so republishing can never touch data.
+- **Two config files, layered — not one that gets switched (Pass 29, documented
+  Pass 33).** `appsettings.json` names `C:\VIS_Inventory\inventory.db` and is the
+  base; `appsettings.Development.json` names `C:\VIS_Inventory\inventory.dev.db`
+  and is an *overlay* loaded only when `ASPNETCORE_ENVIRONMENT=Development`, which
+  both launch profiles set. A published release runs with that variable unset, so it
+  defaults to Production and never reads the overlay. Consequences: a publish carries
+  **no database at all** (the path is absolute), so dev stock changes cannot reach the
+  host through a release — only through a hand-copy of the wrong file; and
+  `appsettings.Development.json` *does* ship inside the publish, inert, but would
+  point a host at a non-existent `inventory.dev.db` if that variable were ever set
+  there, making the app look like it had lost all its stock.
+- **Release folders are dated.** Pass 33 published self-contained `win-x64` to
+  `C:\VIS_Host\august28threlease`; earlier releases went to `C:\VIS_Publish`. Roughly
+  132 MB / 353 files per release. Stop the running `.exe` before overwriting — a live
+  process holds a file lock and the copy fails partway.
 - Served via `$env:ASPNETCORE_URLS = "http://0.0.0.0:5000"`.
 - `.sqbpro` files are DB Browser session sidecars — created only by that GUI, never by
   the app or EF Core. Safe to delete, zero signal.

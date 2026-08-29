@@ -42,11 +42,14 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  this line read "37 / AddOrderSplitLineage" until Pass 32 --
                  AddTransferRequests and AddPerTeamQuantityOwnership shipped
                  in Pass 30/31 without it being updated. Count Migrations/,
-                 don't trust this number.)
-Items           487   (compressor ownership reconciled against real claim sheets;
-                 leftover test-fixture rows removed; one exact duplicate merged;
-                 63 Residential OD compressors re-minted with an RCR- prefix and
-                 Group flipped to Residential -- see Pass 14)
+                 don't trust this number. All 39 are now applied to the REAL
+                 db as well, not just the code -- see Pass 33.)
+Items           492   (was 487 through Pass 16; this line sat stale at 487 until
+                 Pass 33 counted the real db. Compressor ownership reconciled
+                 against real claim sheets; leftover test-fixture rows removed;
+                 one exact duplicate merged; 63 Residential OD compressors
+                 re-minted with an RCR- prefix and Group flipped to Residential
+                 -- see Pass 14)
 Compressor units count evolving -- On Hand roster is directly editable, not just
                  a pickup-time log
 Motor units      TC only, seeded from real pickups
@@ -57,7 +60,10 @@ Teams             8   Samurai, Ninja, Falcon, Polaris, Hurricane, T-Rex, Spartan
 Branches          3   Residential Air, Commercial Air, Sustaining -- now managed
                  in Settings, not hardcoded (see Pass 13)
 Lines            10   managed alongside Branches, same place
-Users            51   (9 added in Pass 14 -- see Pass log)
+Users            53   (9 added in Pass 14; this line sat stale at 51 until
+                 Pass 33 counted the real db -- see Pass log)
+Variants        513   active, all carrying a Team as of the Pass 33 backfill
+                 (Samurai 256 / Ninja 130 / blank 127; blank fails OPEN)
 ```
 
 Publishes **self-contained** (`-r win-x64 --self-contained`) to `C:\VIS_Publish` on the
@@ -1178,19 +1184,48 @@ it is.
 
 **A new field on `ItemVariant` or `OrderItem` has to be carried at every
 CREATION and every COPY site, and the compiler will not tell you (Pass 19,
-Pass 32 — twice now, same method).** Both classes are built with object
+Pass 32, Pass 33 — three times now).** Both classes are built with object
 initializers in a dozen scattered places; a field the initializer omits gets
 the CLR default silently, and the row saves clean. Pass 19 found
 `CreateSplitOrder` dropping `ThermocoupledCount`/`RequestedVariantId` on a
 reissue; Pass 32 found the *same method* dropping `Team`, plus four of the
-five `new ItemVariant` sites never setting it. Before shipping a field on
-either class, grep `new ItemVariant` / `new OrderItem` across the whole repo
-(`.claude/worktrees/` hits are stale copies — ignore them) and account for
-every one, including the `pv = new ItemVariant { ... }` self-heal paths in
-`ModifyStock`/`AddStock`. Where a copy constructor exists, make the new field
-a **required** parameter rather than an optional one — that converts the next
-occurrence of this bug into a compile error, which is what `CreateSplitOrder`
-now does for `team`.
+`new ItemVariant` sites never setting it. **Pass 33 then found a SIXTH site
+that Pass 32's own sweep had missed** — `OrderService.ReturnLoan`'s
+"mint a variant at a brand-new location" branch. That is the lesson worth
+carrying: Pass 32 wrote "four of the five sites" and was wrong about the
+denominator, because the sweep stayed inside `InventoryService` where the
+other seven live and never crossed into `OrderService`. **Grep the WHOLE
+repo, not the file you're already in** — `grep -rn "new ItemVariant" --include=*.cs`
+returns eight hits across two services (`.claude/worktrees/` hits are stale
+copies — ignore them), and account for every one, including the
+`pv = new ItemVariant { ... }` self-heal paths in `ModifyStock`/`AddStock`.
+Where a copy constructor exists, make the new field a **required** parameter
+rather than an optional one — that converts the next occurrence into a
+compile error, which is what `CreateSplitOrder` now does for `team`.
+
+**Tearing down modal state on `hidden.bs.modal` races the next open (Pass 33).**
+The delivery photo modal cleared its `<img>` src on close, so a stale photo
+couldn't flash behind the next one. Close-then-reopen let that teardown land
+*after* the reopen had already assigned the new src — the modal came up
+**permanently blank** (`modalOpen: true` with `imgSrc: null`), and only on the
+second open, so a single click always looked fine. Bootstrap's hide is a
+transition, not an instant: anything scheduled off `hidden.bs.modal` runs
+several hundred ms later and can overtake a fast reopen. If a modal's content
+is fully assigned at OPEN time, don't clear it at close — the close handler
+buys nothing and can only lose the race.
+
+**A view that forces `.modal-content` to a fixed colour opts out of the theme
+system, and the light-theme overrides don't know that (Pass 33).** Pinning the
+photo modal dark in both themes left the light-mode `.modal-title` rule
+(`#1A1D23`) painting on a `#0E0F13` panel — **~1.1:1, invisible**. This is the
+same trap 2d.1 hit, which is why `.comp-row`/`.motor-row`/`.filter-bar-dark`
+all needed matching exclusions. Two ways out, and the cheap one is usually
+right: either add an exclusion for every themed text rule that can land inside
+your fixed-colour box, or **don't leave the theme system** — here, only the
+`<img>`'s own background needed to be dark (`object-fit: contain` letterboxes
+against it), and letting the surrounding chrome theme normally took the title
+to 16.66:1 dark / 16.88:1 light for free. Check any new fixed-colour surface
+in BOTH themes with computed values, not by eye.
 
 **EF Core cannot translate `string.Equals(a, b, StringComparison.X)` against a
 live `IQueryable` (Pass 29).** It works fine against an already-materialized
@@ -1219,9 +1254,14 @@ unique index enforces, plain `==` is usually the more correct comparison anyway
 - **`Type` is free text** — no vocabulary. `IsControlType` matches only items literally typed
   `Control`; EEV, VFD and Valve are uncovered.
 - **`newGroup`** is a dead parameter on `ModifyStock`, accepted and ignored.
-- Build warnings: `NU1903` (SQLitePCLRaw advisory), `CS0114` (`SignOut` hides base member),
-  a few `CS8602`. Unchanged count/shape through Pass 13 — nothing this session introduced
-  a new one.
+- Build warnings: **14 as of Pass 33**, and this is the baseline to diff against —
+  `NU1903` (SQLitePCLRaw 2.1.11, now flagged **high severity**, not the mild advisory
+  this line used to call it), `CS0114` (`SignOut` hides base member), `CS8602` ×3,
+  `CS8714` ×3 (`int?` as a dictionary `TKey`, OrderDetails + HomeController), and
+  `CA1416` ×5 (the `System.Drawing` platform annotations Pass 25 brought in). This
+  line claimed "unchanged shape through Pass 13" long after `CS8714`/`CA1416` had
+  joined the list — corrected in Pass 33. If a build reports anything other than 14,
+  something in that pass introduced it.
 - **`<select>` imbalance in `Index.cshtml` is a false positive** — `<select>` inside a JS
   comment. Pre-existing, harmless, don't chase it.
 - **27 skipped negative-quantity Ninja rows from the original go-live import** — accepted
@@ -1745,6 +1785,15 @@ fix just never got extended to the other two. Extended the same selector list in
   heads-up alongside the existing PN check — before the next family-wide-`N/A` model
   gets registered twice for real.
 - **Motors: only the TC subset is tracked (deliberate).**
+- **No split item exists on either database any more (Pass 33).** The
+  `AddPerTeamQuantityOwnership` backfill gives every variant its item's family
+  Team, so real data has zero items spanning more than one team — correct, but it
+  means the per-team ordering/transfer/approval paths have no test fixture
+  anywhere now that `inventory.dev.db` has been re-seeded from real data. The
+  dev db previously carried one (CCR-0029, Samurai + a Ninja slice) and that was
+  what made every Pass 31/32/33 team-boundary bug reproducible. Reproducing the
+  next one means rebuilding a split by hand first, through Modify Stock's Team
+  picker on the dev db. Worth doing pre-emptively rather than during a bug hunt.
 - **Compressor/Motor filter: Team→Branch/Line is one-way on purpose.**
 - **`MyActivity.cshtml`** (renamed from `MyOrders.cshtml` in Pass 30, see Current
   state) **was not extended for motor-unit selection.**
@@ -1936,10 +1985,27 @@ The actual server-side rejection of a blank-Line submission (Pass 15) end to end
   a full-catalog `fetchall()` re-check afterward, not before — the pre-check only
   covered Rheem PN, which didn't apply to this family (`N/A` on every one of them).
 
-**Worth knowing:** the `vis-dev` launch profile points at the same
-`C:\VIS_Inventory\inventory.db` as production — there's no separate test database, so
-"verified live" in this doc means the real data, with test rows/log entries cleaned up
-immediately after.
+**Worth knowing — TRUE UP TO PASS 28, NOT AFTER (corrected in Pass 33).** The
+`vis-dev` launch profile used to point at the same `C:\VIS_Inventory\inventory.db` as
+production, so "verified live" anywhere above this line means the real data, with test
+rows/log entries cleaned up immediately after. **Pass 29 ended that**: there are two
+config files layered, not one that gets switched —
+
+- `appsettings.json` → `C:\VIS_Inventory\inventory.db`. The base. This is what the
+  published release uses, because it runs with no `ASPNETCORE_ENVIRONMENT` set and so
+  defaults to Production.
+- `appsettings.Development.json` → `C:\VIS_Inventory\inventory.dev.db`. An **overlay**,
+  loaded only when `ASPNETCORE_ENVIRONMENT=Development`, which both launch profiles set.
+  So every local `dotnet run` hits the dev db and cannot touch production data.
+
+Two consequences worth having straight. **A publish never carries a database at all** —
+the connection string is an absolute path, so no `.db` is in the publish output; dev
+stock changes structurally cannot reach the host through a release, only through a
+hand-copy of the wrong file. And **`appsettings.Development.json` does ship inside the
+publish** (it's inert, since the overlay is never loaded in Production) — but if
+`ASPNETCORE_ENVIRONMENT=Development` were ever set on the host, EF would mint an empty
+`inventory.dev.db` there and the app would come up looking like it lost all its stock.
+That's the first thing to check if it ever does.
 
 **Pass 17:** verified live by me (Kason) directly this time, not Claude — I tested
 against my own pre-release backup copy. Five scenarios run through the real Bulk
@@ -2394,3 +2460,122 @@ match what `CanApproveTransfer` already did, and the Request Transfer modal
 makes the location pick effectively mandatory whenever an item has more than
 one variant. Tightening those is a behavior change, not a bug fix, and would
 want its own scoping round.
+
+**Pass 33 (2026-08-28) — six fixes off a docs-vs-code audit, plus the delivery
+photo expansion, plus the real db finally migrated onto the Pass 29-32 schema.**
+Started as a question ("do the docs match the code, any bugs left") rather than a
+feature ask. No new mechanic, no migration authored. Five findings came out of
+reading the docs against the code; the sixth (the photo) I asked for directly
+once the audit surfaced that it had never been built at all.
+
+- **`ReturnLoan` was never carried across the Pass 31 team boundary — the SIXTH
+  `new ItemVariant` site, which Pass 32's own sweep missed.** Pass 32 wrote "four
+  of the five sites"; there are six, and the one it didn't reach lives in
+  `OrderService`, not `InventoryService`. Returning a loan to a brand-new shelf
+  minted a stack with `Team = ""`: it counts toward the item total but drops out
+  of its own team's ordering scope, so the missing units read as a phantom
+  shortfall — the exact failure Pass 32 was written to close, re-entered through
+  the one path it didn't check. The "New location" option on My Activity's return
+  form is a normal, reachable UI path, so this was live, not theoretical. Fixed
+  three ways: the minted variant inherits `OrderItem.Team` (falling back to the
+  item's family Team for a line predating the split), the loan bench's location
+  picker is scoped to that team the way Pickup Queue already was, and
+  `ReturnLoan` refuses a cross-team target server-side for the direct-POST case.
+  **Verified live** against the real Ninja-team loan on CCR-0029: the picker went
+  from offering all three stacks to only Ninja's V3, and a hand-built POST naming
+  Samurai's V2 was refused with no state change.
+- **Location Transfer's MERGE branch crossed the team boundary.** `mergeTarget`
+  matched on location alone, so moving a box to a shelf another team also stocks
+  handed them the units — ownership changing hands as a side effect of a physical
+  move, at Standard level, on an action that used to be genuinely non-destructive.
+  Pass 32 fixed this same method's *split* branch and left the merge branch.
+  Merge is now same-team-only; with no same-team stack there it falls through to
+  the existing relocate/split paths, which already carry `pv.Team`, so the stock
+  still lands where it was sent and stays whose it was. The client-side merge note
+  was updated in the same edit — it had been promising "Merges into Variant N" for
+  a merge the server would now decline, which is the same two-halves-disagreeing
+  shape as every Pass 32 finding. **Verified live** in all three cases
+  (cross-team, same-team, empty destination).
+- **`OrderDetails`' short-pull badge was inverted.** `wasShort` keyed only on
+  `Status == "Cancelled"`, but `ReportShortPull` flips a corrected line to
+  `"Corrected"` — so the badge reading "Short — reissued separately" showed
+  *before* any reissue existed and **vanished** once it did, leaving a Cancelled
+  order with an unannotated line and nothing pointing at the replacement. Split
+  into two real states ("needs correction" red / "reissued separately" amber).
+  **Verified live** by driving a genuine short pull end to end.
+- **`DeleteItem`/`DeleteVariant` ignored open `TransferRequests`.** Both gate on
+  on-hand units and Pending orders; neither knew about an undecided transfer. The
+  variant case is the sharp one: `ResolveTransferTeam` fails OPEN on a variant it
+  can't find, so deleting the stack a live request names doesn't merely orphan the
+  request — it silently converts a team-gated request into an ungated one any
+  Engineer on the Line can approve out of any team's stock.
+- **`ApproveTransfer` guarded on raw shelf quantity** while `GetAvailableQuantity`
+  nets out Pending orders, so approving a transfer could drain units already
+  promised to an order and turn someone else's clean pickup into a short pull.
+  Now allocation-aware, and `RequestTransfer` caps the ask the same way instead of
+  against nothing at all. **Verified live**: with Ninja's single CCR-0029 unit
+  committed to a pending order, a real Approve click was refused with "1 requested,
+  0 free across Ninja's locations (units already committed to a pending order are
+  excluded)", transaction rolled back clean.
+- **Modify Stock now says whose stock you're about to touch — warn, don't refuse.**
+  A team filter sits beside the variant picker (client-side only, no `name`, so it
+  can never post), greyed out unless the item is genuinely split, and a note fires
+  when the selected stack isn't one of yours. Membership is read as a **list**, so
+  someone on two teams is warned about neither of their slices and lands on "All
+  teams" rather than being guessed at. Deliberately no server-side gate: a runner
+  correcting a miscount doesn't belong to the team that owns the shelf, and
+  refusing that would break a real workflow to close a theoretical hole.
+- **Delivery photos can finally be opened.** The board rendered a 160px
+  `object-fit: cover` band of a stored **1600px** JPEG with no click target, no
+  anchor and no modal anywhere in the app — a tracking number near an edge was
+  simply not visible, and never had been since Pass 25. Pure UI: the file was
+  already served at `/delivery-photos/{guid}.jpg`. The thumb is now a real
+  `<button>` (tab-reachable, announced) opening one shared modal for the whole
+  board, with an "open full size in new tab" link so a phone can pinch-zoom the
+  original. **Verified live** against the real 281KB delivery photo: 275x160
+  cropped became 1138x640 contained, and 359px wide with no horizontal page
+  overflow at 375px mobile.
+
+**Two bugs introduced during this pass were caught by running it, not by building
+it** — both are new Traps entries above. Clearing the photo modal's `src` on
+`hidden.bs.modal` raced the next open and left it permanently blank on the
+*second* click; and forcing `.modal-content` dark put the light-theme
+`.modal-title` colour on it at ~1.1:1. A clean build reported neither. Worth
+recording because the whole pass exists to argue that reading beats assuming, and
+these are the counterexample: the fixes themselves needed exercising too.
+
+**The real database is now on the Pass 29-32 schema.** Up to this point every one
+of those passes had been verified only against `inventory.dev.db` — the host had
+been running pre-Pass-29 code against a db still at 36 migrations, so
+`AddOrderSplitLineage`, `AddTransferRequests` and `AddPerTeamQuantityOwnership`
+had never touched real data, and the third of those carries a raw
+`UPDATE ... FROM` correlated-subquery backfill. I stopped the host, handed the db
+over as a clean single file (no `-wal`/`-shm` — `journal_mode` was already
+`delete`), and it was **rehearsed on a throwaway copy first** before anything real
+was written, on the Pass 5 principle that a migration which silently half-applies
+is the worst failure this project has had. Rehearsal and real run matched exactly:
+492 items / 513 variants / 605 logs / 53 users / 218 compressor units / 4
+deliveries all preserved, `integrity_check ok`, **513 of 513 active variants
+backfilled to their item's Team with zero mismatches**, zero NULL-Team rows (which
+would have violated the new `NOT NULL`), and zero dev artifacts carried across.
+Applied with `dotnet ef database update --connection` rather than by starting the
+app, so no page load or session could write a stray row into it. `inventory.dev.db`
+was then re-seeded from the migrated file — my call, over keeping the old one — so
+dev starts from current real stock and stays isolated. **Consequence to know: real
+data now has ZERO split items**, which is correct (the backfill gives every variant
+its family Team; nothing splits until someone uses Modify Stock's Team picker on
+purpose), but it also means the per-team paths have no test fixture on either db
+any more. Reproducing a per-team bug means rebuilding that split by hand first.
+
+**Also corrected in this pass, in this file:** the Deployed-state counts had sat
+at 487 items / 51 users while both databases said 492 / 53; the known-issues build
+warning line claimed "unchanged shape through Pass 13" long after `CS8714` and
+`CA1416` joined it (14 is the real baseline); and the "worth knowing" note further
+up still described the `vis-dev` profile as pointing at production, which Pass 29
+ended. That last one matters most — it's the note someone would read before
+deciding whether a local run is safe.
+
+**Released to the host the same day** as a self-contained `win-x64` publish to
+`C:\VIS_Host\august28threlease`, with the migrated `inventory.db` hand-copied
+across separately (a publish never carries the database — see the corrected note
+above). Commit `7f96a1f`.
