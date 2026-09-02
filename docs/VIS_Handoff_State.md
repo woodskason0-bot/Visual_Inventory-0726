@@ -35,185 +35,113 @@ only confirmed by static reading and a clean build, and the difference is spelle
 
 ---
 
-## OPEN AS OF 2026-09-02 — read this before touching any database
+## OPEN AS OF 2026-09-02 (evening) — read this before touching any database
 
 Everything below is live state that isn't recoverable from code or git history.
 It is the one part of this file that goes stale by the hour rather than by the
 pass; if the dates here are old, confirm against the real files before acting.
 
-### There is a host repull pending, and it cuts both ways
+### The host repull happened. Nothing is pending. ✅
 
-The host laptop has been **running and in use** since the 2026-08-30 handoff, so
-its `inventory.db` now holds real activity that exists nowhere locally — Kason
-reported new team memberships, a new user added to a team, and an intake of 4
-item ids. The local copy has no idea about any of it.
+The divergence this section warned about all day is **resolved**. Kason pulled
+the host db to `D:\Releases\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) and
+it was merged the same evening.
 
-Meanwhile the **local** `C:\VIS_Inventory\inventory.db` holds six org changes
-made on 2026-09-01 that exist nowhere on the host (see below).
+The host turned out to be a **strict superset of local except the six org
+changes** — nothing existed only on local. So the merge took the host pull as
+the base and re-applied the six on top, which is the direction that loses
+nothing. Every host-only row was preserved and verified present afterward:
+3 compressor registrations (`CCR-0256/0257/0258`), `CCL-0036`, Gavin's 4 EEV
+stock additions, the new user DeCory Thomas, 11 team memberships, delivery #6.
 
-So the two files have diverged in **both directions**, and neither is a superset:
+Applied to that merged file, in one transaction each:
 
-- Copying local → host **destroys the host's new activity**.
-- Pulling host → local **destroys the six org changes**.
-
-The plan agreed with Kason: he re-pulls the host db, hands it over, and the six
-org changes are re-applied to that fresh copy. Do not copy anything onto the host
-until that has happened. If you're a fresh session reading this and the repull
-has already been done, this whole section should have been rewritten — if it
-wasn't, verify before trusting it.
-
-### The six org changes to re-apply to any fresh host pull
-
-Made by direct SQL against the real db on 2026-09-01, each with a
-`TransactionLogs` audit row, none of them in git because they are data:
-
-1. Branch **`Lab Operations`** created (`Branches`, IsActive 1) — the 4th Branch.
-2. Line **`Shipping/Receiving`** created under it (`OrgLines`, IsActive 1).
-3. **Shelly Naugle** (L4) → `Line = 'Shipping/Receiving'`, Branch left NULL.
-4. **Chris Wagoner** (L3) → `Line = 'Shipping/Receiving'`, Branch left NULL.
-5. **Luis Zapata** → `AccessLevel 5 → 4`.
-6. **Luis Zapata** → `Branch = 'Lab Operations'`, `Line = NULL`.
-
-Why they matter beyond the org chart: 3+4 are what make the delivery routing rule
-reach Chris when Shelly is named (Pass 34) — without them that pair routes to
-nobody. And 5+6 drop the org to **two Admins** (Kason, Derek) and cut Luis's
-visible inventory from 492 items to 40, because nothing is stocked on
-Shipping/Receiving yet and a Branch scope resolves to its Lines plus blank-Line
-items.
-
-### Two duplicate deletes, decided 2026-09-02, ALSO pending — apply in the same batch
-
-Decided but **deliberately not written anywhere yet**, on Kason's call, so they
-land on the fresh host pull alongside the six above rather than becoming a
-seventh and eighth thing to re-apply. Nothing below has been done to any
-database — `inventory.db` is still `3f3921ea…` and untouched.
-
-**The finding.** `POL688.80/STD` (Siemens Climatix controller) is registered
-three times. The audit trail says exactly how:
-
-| When | What |
+| | |
 |---|---|
-| `2026-07-13 18:03:45` | Go-live import mints **CCL-0001** with **16** units (Samurai, `RLB.MTOE.SMRI`), named `POL`**`668`**`.80/STD` — a typo; everything else says **688**. Same second, **CCL-0029** lands with 75 (Ninja, `RLB.MTOE.MZA4`). |
-| `2026-07-14 15:31:23` | CCL-0001's 16 units logged as **`Scrap`** — *"Scrapped 16 unit(s)"*. |
-| `2026-07-14 15:32:51` | **88 seconds later**, **CCL-0034** created with **16** units, name corrected to **688**, but its `Description` still carries the old typo `668.80/STD - Climatix`. |
-| `2026-07-16 14:53:58` | CCL-0029 pulls 1 on Order #1: 75 → **74**. |
+| The six org changes | re-applied (Lab Operations, Shipping/Receiving, Shelly + Chris, Luis 5→4 + Branch) |
+| `CCL-0034` | deleted — the phantom 16, zeroed **as a correction, never a Scrap** |
+| `CCL-0001` | deleted at qty 0 — the husk |
+| 25 Coil items | retyped: 19 `Tubing Components`, 6 `Control` |
+| 185 variants | `FdaString` normalized `PATS.LEAN-TO` → `PATS.Lean-To` |
 
-So CCL-0034 was a **rename-by-scrap-and-re-register** of CCL-0001, and CCL-0001
-was left behind as a zero-quantity husk still typed **Coil** — which is why it
-heads a Type = Coil filter. **The quiet error is that the rename was logged as a
-`Scrap`**: `ExportToCsv` sums `Scrap` rows into its `ScrappedQty` column, so
-Samurai's scrap total reads 16 units high for a disposal that never happened.
+Result: **494 items / 519 variants / 54 users / 651 logs**, `integrity_check ok`,
+zero orphan variants, zero remaining FdaString-vs-column mismatches.
 
-**The decision (Kason, 2026-09-02): the 16 are a phantom double-count of the
-74 — delete them, keep CCL-0029's 74.** Both deletes to run against the fresh
-host pull:
+### Things that came out of the merge and are still open
 
-1. **CCL-0034** (item Id 310, variant Id 319, qty **16**, Samurai,
-   `RLB.MTOE.SMRI.CTRLS.2`) — remove item + variant. It carries real quantity,
-   so the app's own Delete Item gate (total must be 0) does **not** pass; this
-   is a deliberate SQL exception, not a UI action. **Zero it as a correction,
-   never as a `Scrap`** — scrapping is precisely the mislabel that created this
-   mess, and repeating it would inflate `ScrappedQty` by another 16.
-2. **CCL-0001** (item Id 35, variant Id 35, qty **0**) — the husk. Already 0, so
-   this one genuinely satisfies the Delete Item gate.
+- **`CCL-0036` (`POL96U.00/STD`, Siemens, 27 units) has no Team** — item and
+  variant both blank, registered via Intake 2026-08-31 with the log literally
+  reading "Registered to Commercial/**no team**". This is **not** the Pass 32
+  phantom-shortfall bug (that needs item-team-set + variant-team-blank, and
+  there are **zero** such rows in the database). Both being blank is
+  self-consistent and fails open, so it is orderable by anyone — but it is 27
+  units claimed by nobody. Assign a team when convenient.
+- **The 6 items retyped to `Control` are now LOANABLE.** `IsControlType` is
+  `EndsWith("control")`, so `LoanableQuantity` returns their full quantity and
+  they enter the Done Using flow expecting a return. Deliberate — Kason chose
+  singular `Control` over the engineer's plural "Controls" knowing this — but it
+  will show up on the loan bench and nobody has exercised it yet.
+- **119 items / 128 variants still carry a blank Team** org-wide. Pre-existing
+  and unrelated to this merge; noted because the sweep counted it.
 
-**Check before either delete** (the same gates `DeleteItem`/`DeleteVariant`
-enforce, plus the one Pass 33 added): no On-Hand `CompressorUnit`/`MotorUnit`
-rows against variants 319/35, no `Pending` order line naming them, and no
-undecided `TransferRequest`. Both are Controls, so units are unlikely — check
-anyway rather than assuming. **All four gates were checked clear on the local
-`inventory.db` on 2026-09-02** (0 units, 0 pending lines, 0 transfer requests;
-1 log row on CCL-0034, 2 on CCL-0001, all of which survive the delete). **Re-run
-them on the host pull before deleting** — the host has been in use and holds
-activity this copy has never seen, so a clear result here is not a clear result
-there. Item/variant row Ids (310/319, 35/35) are from this copy too; match on
-`ItemId` rather than trusting those numbers.
+### Why the FdaString normalization was not merely cosmetic
 
-**Leave the historical `Scrap` log row alone.** It records what the app actually
-did on 2026-07-14; rewriting it would be inventing history rather than
-correcting data. Note it in the new deletion log instead. `TransactionLogs` for
-both ItemIds keep reading under the now-defunct ids, the same soft-hide
-treatment every prior delete in this project has used.
+`CommitIntake` matches an existing stack with `v.FdaString == fda` — exact
+string equality — while the generator builds `fda` from the Rack **column**.
+The column was uniformly `Lean-To`; 185 stored strings said `LEAN-TO`. A future
+intake at Plant Test Cells/Lean-To would therefore have failed to match and
+minted a **second variant at the same physical shelf**. There were zero
+duplicate stacks at the time of the fix, so this closed a latent path rather
+than cleaning up damage.
 
-**Not acted on, flagged only:** four OD Motor pairs (`COR-0001/0009`,
-`COR-0002/0005`, `COR-0003/0007`, `COR-0004/0008`) are same model, same Team,
-same Line and the **same shelf** (`ETRD.CNEA.CNE6`), separated only by a
-`(Split)` suffix, all minted in the same go-live second. That suffix looks like
-a deliberate spec distinction someone typed, so they were left untouched — but
-they are the only other exact-name collisions in the catalog. The three other
-near-collisions (`CFR-0002/0003`, `CEV-0013/0014`, `CEV-0015/0016`) are
-genuinely different parts.
+### Backups taken during the merge — keep until the host is confirmed healthy
 
-### The Coil retype batch, decided 2026-09-02 — same pending batch
+In `C:\VIS_Inventory\`:
+- `inventory.db.hostpull-untouched-20260902-165353` — the host pull, pristine,
+  md5 `3b500df5…`. **This is the fallback if the merge is ever doubted.**
+- `inventory.db.pre-hostmerge-backup-20260902-165353` — local production as it
+  was before the merge, md5 `3f3921ea…`.
+- `inventory.db.pre-fdanormalize-backup-20260902-*` — after the merge, before
+  the 185-row FdaString fix.
 
-From the engineer's review of all 26 `Type = Coil` items (`CadenCheck.xlsx`,
-returned 2026-09-02). **Type changes only — the CORRECT Item Name column came
-back entirely blank, so nothing is renamed.** Not written to any database yet;
-applies with the six org changes and the two deletes.
+### Which database file is which, as of 2026-09-02 (evening)
 
-| New `Type` | Count | ItemIds |
+| File | md5 | Notes |
 |---|---|---|
-| `Tubing Components` (new value) | **19** | CCL-0002/03/04/05, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 25, **26** |
-| `Control` | **6** | CCL-0006, 17, 18, 19, 23, 24 |
-| *(deleted, not retyped)* | 1 | CCL-0001 |
+| `C:\VIS_Inventory\inventory.db` | `5be3f996…` | **Local production, and the merged truth.** 494 items / 519 variants / 54 users / 651 logs, 4 Branches, 39 migrations. |
+| `D:\VIS_Release_20260902\database\inventory.db` | `5be3f996…` | Byte-identical copy on USB `LESLISGIFT`, staged for the host. |
+| `D:\Releases\VIS_Inventory\inventory.db` | `3b500df5…` | The RAW host pull Kason copied over BEFORE the merge. Left untouched on purpose. |
+| `C:\VIS_Inventory\inventory.dev.db` | `ee99b633…` | Dev sandbox — **now stale**, still the pre-merge 492-item shape. Re-seed from production before the next dev test. |
+| `…\Downloads\VisualStorageTerminal\…\inventory.db` | `36c42cd4…` | Pre-migration host handoff, 2026-08-28, **36 migrations**. Keep as the deep fallback. |
 
-CCL-0006 (`EBV309H001`) came back as `?` and is an **EEV Harness** — Kason's
-call, filed under Control. CCL-0026 was **absent from the returned sheet**
-(26 rows sent, 25 came back — it is the only Coil stored outside the RD Lab
-mezzanine, which is likely why it was missed); assigned `Tubing Components` on
-Kason's call, matching how every other Parker solenoid valve on the sheet was
-classified.
-
-**The engineer wrote "Controls" (plural); it goes in as `Control` (singular),
-deliberately.** `InventoryService.IsControlType` is
-`type.EndsWith("control")` — **`"Controls"` does not match it.** Singular keeps
-one Control type in the catalog instead of two near-duplicates, and matches the
-9 existing Siemens rows exactly.
-
-**Consequence, accepted knowingly: those 6 items become loanable.**
-`LoanableQuantity` returns the full quantity for a Control type, so they enter
-the Done Using flow and `LoanOutstanding` starts expecting them back. They are
-non-loanable today as `Coil`. The 19 `Tubing Components` items are non-loanable
-before and after — that half is behaviour-neutral.
-
-**ItemIds do not change and must not be "fixed" later.** `BuildPrefix` is
-`Group[0] + Type[0] + Type[last]` and runs **only** when an id is minted, so all
-25 keep their `CCL-` ids, the same frozen-id rule Group already follows. Note
-what that means going forward: a *newly registered* `Tubing Components` item
-mints `CTS-`, so the catalog will legitimately hold `CCL-` and `CTS-` items of
-the same type. (`Control` mints `CCL-`, so that half stays self-consistent —
-a second small reason singular was the right pick. `"Controls"` would have
-minted `CCS-`.)
-
-**After this batch there are zero `Type = Coil` items left** — 25 retyped, 1
-deleted, out of 26. Worth knowing before anything keys off that Type existing.
-
-Log each retype the way the app itself would: an `"Edit Details"`
-`TransactionLog` row per item carrying the real `ItemId`/`ItemName`, matching
-what `ModifyStock`'s Edit Details branch writes.
-
-### Which database file is which, as of 2026-09-02
-
-| File | md5 | Migrations | Notes |
-|---|---|---|---|
-| `C:\VIS_Inventory\inventory.db` | `3f3921ea…` | 39 | Local production. Has the six org changes. **Not** the host's current data. |
-| `C:\VIS_Inventory\inventory.dev.db` | `ee99b633…` | 39 | Dev sandbox. Re-seeded from production, then used for Pass 34/35 testing and restored. Differs from production only in a theme column. |
-| `…\Downloads\VisualStorageTerminal\VisualStorageTerminal\VIS_Inventory\inventory.db` | `36c42cd4…` | **36** | The untouched pre-migration host handoff from 2026-08-28. Keep until the host is confirmed healthy on the migrated schema. |
-
-All three: 492 items, 53 users. `integrity_check ok`. The first two carry the
-4-Branch structure; the Downloads copy still has 3.
-
-**Backups made during those sessions lived in a session-scoped scratchpad and are
-gone.** The Downloads copy above is the durable pre-migration fallback. Take a
-fresh backup before any db write rather than assuming one exists.
+`integrity_check ok` on production. Take a fresh backup before any db write
+rather than assuming one exists.
 
 ### Release state
 
-Commit `4644467` (Pass 35) is the head and is pushed. Everything through Pass 35
-is committed. **Not yet published to the host** — the last release Kason built was
-`C:\VIS_Host\august28threlease`, which predates Passes 33-follow-up, 34 and 35.
-A republish is pending and was deliberately deferred until the db question above
-is settled, since the two move independently (a publish never carries a database).
+Head is pushed. **A release IS built and staged, but has NOT been installed on
+the host yet** — that is the one outstanding action.
+
+- Built: `C:\VIS_Host\september2ndrelease\` — self-contained `win-x64`,
+  544 files, ~132 MB. Carries Passes 36 and 37 plus the Pass 35 follow-up.
+- Staged on USB `LESLISGIFT` at **`D:\VIS_Release_20260902\`** — `app\` (the
+  build), `database\inventory.db` (the merged db), and `README_FIRST.txt` with
+  the deploy steps. Both the exe and the db were md5-verified after copying.
+- Deliberately kept separate from `D:\Releases\VIS_Inventory\` on the same
+  drive, which is Kason's raw pre-merge pull.
+- **Smoke-tested for real**: the published binary was run against the merged
+  production db, confirmed 494 items, the org changes in the feed, Coil gone
+  from the Type dropdown, and the rebuilt Export Wizard filters returning
+  correct counts. All 25 tables were then diffed row-for-row against a
+  pre-run copy — **zero differences**, so the smoke test wrote nothing.
+- Note for the drive: VIS/inventory content is assigned to `MARK2_5` in
+  `DRIVE_DISTRIBUTION_PLAN.md`, not `LESLISGIFT`. Kason explicitly chose
+  LESLISGIFT because MARK2_5 is at the house. Not an error — a deliberate
+  override, recorded so the plan and the drive don't silently disagree.
+
+**Host deploy still to do:** stop the running exe first (a live process holds a
+file lock), copy `app\`, then copy the db to `C:\VIS_Inventory\inventory.db`
+separately — a publish never carries a database.
 
 ### Reference artifacts from these sessions
 
@@ -237,7 +165,9 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  in Pass 30/31 without it being updated. Count Migrations/,
                  don't trust this number. All 39 are now applied to the REAL
                  db as well, not just the code -- see Pass 33.)
-Items           492   (was 487 through Pass 16; this line sat stale at 487 until
+Items           494   (2026-09-02 post-merge: 496 came off the host, minus
+                 CCL-0034 and CCL-0001. Was 492 before the host pull.
+                 Was 487 through Pass 16; this line sat stale at 487 until
                  Pass 33 counted the real db. Compressor ownership reconciled
                  against real claim sheets; leftover test-fixture rows removed;
                  one exact duplicate merged; 63 Residential OD compressors
@@ -256,10 +186,13 @@ Lines            11   managed alongside Branches, same place. Shipping/Receiving
                  added 2026-09-01 under a new 4th Branch, Lab Operations --
                  the first Branch that isn't an air-handling product line.
 Branches (again)  4   Residential Air, Commercial Air, Sustaining, Lab Operations
-Users            53   (9 added in Pass 14; this line sat stale at 51 until
+Users            54   (DeCory Thomas added on the host 2026-08-31.
+                 9 added in Pass 14; this line sat stale at 51 until
                  Pass 33 counted the real db -- see Pass log)
-Variants        513   active, all carrying a Team as of the Pass 33 backfill
-                 (Samurai 256 / Ninja 130 / blank 127; blank fails OPEN)
+Variants        519   post-merge. NOT all carry a Team any more -- the Pass 33
+                 backfill was a point-in-time fix, and 128 active variants /
+                 119 items are blank again as of 2026-09-02 (blank fails OPEN;
+                 zero are the damaging item-set/variant-blank mismatch)
 ```
 
 Publishes **self-contained** (`-r win-x64 --self-contained`) to `C:\VIS_Publish` on the

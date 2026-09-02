@@ -11,6 +11,35 @@ landed, when."
 
 ## 2026-09-02
 
+### Pass 38 — host merge, the queued data batch applied, FdaString normalized, release staged
+Data + docs, no code change. The host repull finally landed
+(`D:\Releases\VIS_Inventory\inventory.db`, USB LESLISGIFT) and the all-day
+divergence is resolved. The host was a **strict superset of local except the six
+org changes** — nothing existed only on local — so the merge took the host as the
+base and re-applied the six on top, the direction that loses nothing. Every
+host-only row verified preserved: CCR-0256/0257/0258, CCL-0036, Gavin's 4 EEV
+stock additions, DeCory Thomas, 11 team memberships, delivery #6.
+Applied on top: the six org changes; `CCL-0034` deleted (phantom 16, zeroed as a
+**correction, never a Scrap**); `CCL-0001` deleted at qty 0; 25 Coil items
+retyped (19 `Tubing Components`, 6 `Control`). Result 494 items / 519 variants /
+54 users / 651 logs, integrity ok, zero orphan variants.
+**Also fixed the Lean-To mismatch, which was not purely cosmetic.** 185 variants
+stored `FdaString = 'PATS.LEAN-TO'` while their Rack column said `Lean-To`;
+`CommitIntake` matches an existing stack by exact `FdaString` equality against a
+string built from that column, so a future intake there would have minted a
+second variant at the same physical shelf. Normalized to `PATS.Lean-To`; a full
+sweep confirms **zero** remaining FdaString-vs-column mismatches (an earlier
+FLOOR/Floor hit was a false positive — that row has Rack `FLOOR` and Row `Floor`
+and is correct).
+Released to `C:\VIS_Host\september2ndrelease` and staged on USB at
+`D:\VIS_Release_20260902\` (`app\`, `database\`, `README_FIRST.txt`), kept
+separate from Kason's raw pre-merge pull on the same drive. The published binary
+was smoke-tested against the merged db, then all 25 tables diffed row-for-row
+against a pre-run copy — zero differences, so the test wrote nothing.
+*Still open:* host install not done; `CCL-0036` carries no Team (27 units); the 6
+new `Control` items are now loanable; `inventory.dev.db` is stale pre-merge.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### Pass 37 — Export Wizard location filter rebuilt on real columns; dead Group option removed
 No migration, no schema change. Found by auditing Export Wizard before the
 re-release, on Kason's hunch that it looked more complex than the other modals.
