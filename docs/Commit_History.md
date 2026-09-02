@@ -11,6 +11,43 @@ landed, when."
 
 ## 2026-09-02
 
+### Pass 37 — Export Wizard location filter rebuilt on real columns; dead Group option removed
+No migration, no schema change. Found by auditing Export Wizard before the
+re-release, on Kason's hunch that it looked more complex than the other modals.
+**The location filter silently returned an empty CSV whenever a level was
+skipped.** Its five controls carried no `name`; they fed a hidden `exportFda`
+that `site.js`'s `updateFda()` built by dot-joining only the NON-EMPTY levels,
+which the server then prefix-matched with `FdaString.StartsWith`. So picking a
+Parent and typing a Rack posted `RLB.RACK 8` and matched nothing, while 29
+variants really sat on that rack — no error, just an empty file. Fully reachable:
+the Rack box is enabled and free-text the moment a Parent is chosen.
+Replaced with the one-`Any()` Parent/Major/Sub COLUMN match Pass 35 built for
+Advanced Filters, extended to Rack/Row, every level independently optional.
+Selects now post stored codes, narrowed client-side by `data-parent`/`data-major`.
+`bindCascadingLocation` is no longer used here (its only job was building that
+string); New Item Registry still uses it. **This retires the last
+`FdaString.StartsWith` in the app.** Correcting the record: the Pass 35 note
+saying this survived "because its input is a free-text term the human typed"
+stopped being true in Pass 23, when Rack/Row suggestions were added to this modal.
+**The Group dropdown offered "International"**, which is a LINE under Commercial
+Air, never a Group (Group is derived by stripping " Air" off the Branch) — it
+always returned zero rows. Now sourced from live data: Commercial, Residential.
+Also fixed a gap the fix itself created: `racksRowsFor` needs the full
+(Parent, Major, Sub) tuple, so it offered NO suggestions in exactly the partial
+states that newly work. Rack/Row suggestions now union across every `rackRowMap`
+entry consistent with the levels picked.
+Verified live against raw SQL: skip-Sub 0 to 29, skip-both 0 to 29, Rack alone 29,
+NWES+FLOOR 0 to 2, Row 1 alone 21 — all matching SQL exactly, with every
+previously-working case (110 / 72 / 29 / 15) byte-identical. Zero console errors.
+*Known and left, not release-blocking:* hidden `expTimeFrame` still posts `30`, so
+ScrappedQty/OwnershipChanges are 30-day-scoped in an Available-only export
+(latent — the one older scrap sits on a zero-qty item); all four status boxes
+unchecked yields a header-only CSV with no warning; CSV escaping strips commas
+but not quotes (36 item names carry inch marks, none leading, so Excel copes).
+*Files:* `Services/InventoryService.cs`, `Controllers/HomeController.cs`,
+`Views/Home/SearchCenter.cshtml`, `docs/VIS_Handoff_State.md`,
+`docs/Commit_History.md`
+
 ### Pass 35 follow-up — Search Center top row on one line, quick filters centered
 View + docs only, no C# change, no migration. Refines what Pass 35 laid out.
 **All six filter boxes now sit on one row** (two groups of three, 353px each,

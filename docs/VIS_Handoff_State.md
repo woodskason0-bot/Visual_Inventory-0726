@@ -144,6 +144,54 @@ they are the only other exact-name collisions in the catalog. The three other
 near-collisions (`CFR-0002/0003`, `CEV-0013/0014`, `CEV-0015/0016`) are
 genuinely different parts.
 
+### The Coil retype batch, decided 2026-09-02 — same pending batch
+
+From the engineer's review of all 26 `Type = Coil` items (`CadenCheck.xlsx`,
+returned 2026-09-02). **Type changes only — the CORRECT Item Name column came
+back entirely blank, so nothing is renamed.** Not written to any database yet;
+applies with the six org changes and the two deletes.
+
+| New `Type` | Count | ItemIds |
+|---|---|---|
+| `Tubing Components` (new value) | **19** | CCL-0002/03/04/05, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 25, **26** |
+| `Control` | **6** | CCL-0006, 17, 18, 19, 23, 24 |
+| *(deleted, not retyped)* | 1 | CCL-0001 |
+
+CCL-0006 (`EBV309H001`) came back as `?` and is an **EEV Harness** — Kason's
+call, filed under Control. CCL-0026 was **absent from the returned sheet**
+(26 rows sent, 25 came back — it is the only Coil stored outside the RD Lab
+mezzanine, which is likely why it was missed); assigned `Tubing Components` on
+Kason's call, matching how every other Parker solenoid valve on the sheet was
+classified.
+
+**The engineer wrote "Controls" (plural); it goes in as `Control` (singular),
+deliberately.** `InventoryService.IsControlType` is
+`type.EndsWith("control")` — **`"Controls"` does not match it.** Singular keeps
+one Control type in the catalog instead of two near-duplicates, and matches the
+9 existing Siemens rows exactly.
+
+**Consequence, accepted knowingly: those 6 items become loanable.**
+`LoanableQuantity` returns the full quantity for a Control type, so they enter
+the Done Using flow and `LoanOutstanding` starts expecting them back. They are
+non-loanable today as `Coil`. The 19 `Tubing Components` items are non-loanable
+before and after — that half is behaviour-neutral.
+
+**ItemIds do not change and must not be "fixed" later.** `BuildPrefix` is
+`Group[0] + Type[0] + Type[last]` and runs **only** when an id is minted, so all
+25 keep their `CCL-` ids, the same frozen-id rule Group already follows. Note
+what that means going forward: a *newly registered* `Tubing Components` item
+mints `CTS-`, so the catalog will legitimately hold `CCL-` and `CTS-` items of
+the same type. (`Control` mints `CCL-`, so that half stays self-consistent —
+a second small reason singular was the right pick. `"Controls"` would have
+minted `CCS-`.)
+
+**After this batch there are zero `Type = Coil` items left** — 25 retyped, 1
+deleted, out of 26. Worth knowing before anything keys off that Type existing.
+
+Log each retype the way the app itself would: an `"Edit Details"`
+`TransactionLog` row per item carrying the real `ItemId`/`ItemName`, matching
+what `ModifyStock`'s Edit Details branch writes.
+
 ### Which database file is which, as of 2026-09-02
 
 | File | md5 | Migrations | Notes |

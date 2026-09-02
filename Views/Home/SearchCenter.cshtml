@@ -76,6 +76,12 @@
     var motorBrands = motorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
         .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
 
+    // Declared page-level, not inside the Advanced Filters form: the Export
+    // Wizard modal further down renders the same three location levels, and a
+    // Razor block's locals aren't visible outside it.
+    var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
+                  (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
+
     // Branch quick-filter graying -- same rule Index.cshtml uses.
     string myBranch = ViewBag.MyBranch as string ?? "";
     bool isAdmin = CurrentUser.Level >= AccessLevels.Admin;
@@ -225,8 +231,6 @@
                 <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
                 <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
                     @{
-                        var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
-                                      (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
                         string selP = (string?)ViewBag.FilterLocParent ?? "";
                         string selM = (string?)ViewBag.FilterLocMajor ?? "";
                         string selS = (string?)ViewBag.FilterLocSub ?? "";
@@ -1121,11 +1125,18 @@
                     <div class="row g-2 mb-3">
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-light-gray">Group</label>
+                            @* Sourced from real data, not a hardcoded three. The old
+                               list offered "International", which is a LINE under
+                               Commercial Air, never a Group -- Group is derived by
+                               stripping " Air" off the Branch, so that option could
+                               never match and always returned an empty CSV. *@
                             <select name="exportGroup" class="form-select form-select-sm">
                                 <option value="">-- Any Group --</option>
-                                <option value="Commercial">Commercial</option>
-                                <option value="Residential">Residential</option>
-                                <option value="International">International</option>
+                                @foreach (var g in allItems.Select(i => i.Group).Where(g => !string.IsNullOrWhiteSpace(g))
+                                                           .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(g => g))
+                                {
+                                    <option value="@g">@g</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-6">
@@ -1154,38 +1165,55 @@
                     <hr class="border-secondary" />
                     <h6 class="text-info fw-bold small mb-2">Location Filter (Cascading)</h6>
 
+                    @* Server-rendered with the stored CODES as values, narrowed
+                       client-side by data-parent/data-major -- the same shape
+                       Advanced Filters uses, and these post real names the server
+                       matches against the Parent/Major/Sub COLUMNS. They used to
+                       be name-valued, nameless, and folded into a hidden dot-joined
+                       "exportFda" that the server prefix-matched against FdaString;
+                       skipping any level produced a string that matched nothing and
+                       returned an empty CSV with no error. *@
                     <div class="row g-2 mb-3">
                         <div class="col-md-4">
-                            <select id="exp-parent" class="form-select form-select-sm">
+                            <select name="exportLocParent" id="exp-parent" class="form-select form-select-sm">
                                 <option value="">Any Parent...</option>
-                                @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
+                                @foreach (var g in locRows.GroupBy(r => new { r.PCode, r.PName }).OrderBy(g => g.Key.PName))
                                 {
-                                    <option value="@lp.Name">@lp.Name</option>
+                                    <option value="@g.Key.PCode">@g.Key.PName</option>
                                 }
                             </select>
                         </div>
                         <div class="col-md-4">
-                            <select id="exp-major" class="form-select form-select-sm" disabled>
+                            <select name="exportLocMajor" id="exp-major" class="form-select form-select-sm">
                                 <option value="">Any Major...</option>
+                                @foreach (var g in locRows.Where(r => r.MCode.Length > 0)
+                                                          .GroupBy(r => new { r.PCode, r.MCode, r.MName }).OrderBy(g => g.Key.MName))
+                                {
+                                    <option value="@g.Key.MCode" data-parent="@g.Key.PCode">@g.Key.MName</option>
+                                }
                             </select>
                         </div>
                         <div class="col-md-4">
-                            <select id="exp-sub" class="form-select form-select-sm" disabled>
+                            <select name="exportLocSub" id="exp-sub" class="form-select form-select-sm">
                                 <option value="">Any Sub...</option>
+                                @foreach (var r in locRows.Where(r => r.SCode.Length > 0)
+                                                          .GroupBy(r => new { r.PCode, r.MCode, r.SCode, r.SName }).OrderBy(g => g.Key.SName))
+                                {
+                                    <option value="@r.Key.SCode" data-parent="@r.Key.PCode" data-major="@r.Key.MCode">@r.Key.SName</option>
+                                }
                             </select>
                         </div>
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-md-6 position-relative">
-                            <input type="text" id="exp-rack" class="form-control form-control-sm" placeholder="Any Rack..." autocomplete="off" />
+                            <input type="text" name="exportRack" id="exp-rack" class="form-control form-control-sm" placeholder="Any Rack..." autocomplete="off" />
                             <div id="exp-rack-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                         </div>
                         <div class="col-md-6 position-relative">
-                            <input type="text" id="exp-row" class="form-control form-control-sm" placeholder="Any Row..." autocomplete="off" />
+                            <input type="text" name="exportRow" id="exp-row" class="form-control form-control-sm" placeholder="Any Row..." autocomplete="off" />
                             <div id="exp-row-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; max-height: 160px; overflow-y: auto; width: calc(100% - 24px);"></div>
                         </div>
                     </div>
-                    <input type="hidden" name="exportFda" id="exp-fda" />
 
                     <hr class="border-secondary" />
                     <h6 class="text-warning fw-bold small mb-2">Include Status (OR Logic)</h6>
@@ -1567,8 +1595,72 @@
         const motorRegistryModal = document.getElementById('motorRegistryModal');
         if (motorRegistryModal) motorRegistryModal.addEventListener('shown.bs.modal', motorApplyFilter);
 
-        // locMap itself is declared earlier, at the top of this page's first
-        // <script> block -- see the comment there for why it can't live here.
-        bindCascadingLocation('exp-parent', 'exp-major', 'exp-sub', 'exp-rack', 'exp-row', 'exp-fda', 'exp-rack-list', 'exp-row-list');
+        /* Export Wizard location filter. No longer bindCascadingLocation() --
+           that helper's whole job was building the dot-joined "exportFda" this
+           form no longer posts, and it was the source of the empty-CSV bug:
+           it dropped blank levels before joining, so Parent + Rack became
+           "RLB.RACK 8" and prefix-matched nothing. These selects now post real
+           codes the server matches against columns, so each level is
+           independently optional. Narrowing is pure show/hide over options
+           already rendered with data-parent/data-major -- the same self-contained
+           approach Advanced Filters uses, deliberately not sharing locMap
+           (name-keyed) or locDecode (a site.js free variable). */
+        (function () {
+            var p = document.getElementById('exp-parent');
+            var m = document.getElementById('exp-major');
+            var s = document.getElementById('exp-sub');
+            var rk = document.getElementById('exp-rack');
+            var rw = document.getElementById('exp-row');
+            if (!p || !m || !s) return;
+
+            function refresh() {
+                Array.prototype.forEach.call(m.options, function (o) {
+                    if (!o.value) return;
+                    var show = !p.value || o.getAttribute('data-parent') === p.value;
+                    o.hidden = !show; o.disabled = !show;
+                    if (o.selected && !show) { o.selected = false; m.value = ''; }
+                });
+                // Sub narrows on BOTH levels: a Sub only means something under
+                // its own Major, and two Majors can hold Subs with the same name.
+                Array.prototype.forEach.call(s.options, function (o) {
+                    if (!o.value) return;
+                    var show = (!p.value || o.getAttribute('data-parent') === p.value)
+                            && (!m.value || o.getAttribute('data-major') === m.value);
+                    o.hidden = !show; o.disabled = !show;
+                    if (o.selected && !show) { o.selected = false; s.value = ''; }
+                });
+            }
+
+            p.addEventListener('change', function () { m.value = ''; s.value = ''; refresh(); });
+            m.addEventListener('change', function () { s.value = ''; refresh(); });
+            refresh();
+
+            /* Rack/Row suggestions keyed off the picked CODES. Two differences
+               from site.js's racksRowsFor: no encodeLoc (these selects already
+               hold codes, so encoding again would build a key matching nothing),
+               and a UNION across every rackRowMap entry consistent with the
+               levels actually chosen. racksRowsFor needs the full
+               (Parent, Major, Sub) tuple, which was fine while a partial pick
+               couldn't be queried anyway -- now that Rack alone is a valid
+               filter, an exact-tuple lookup would leave the box with no
+               suggestions in exactly the states that newly work. */
+            function suggest(which) {
+                var out = [];
+                Object.keys(rackRowMap).forEach(function (key) {
+                    var parts = key.split('|');
+                    if (p.value && parts[0] !== p.value) return;
+                    if (m.value && parts[1] !== m.value) return;
+                    if (s.value && parts[2] !== s.value) return;
+                    (rackRowMap[key][which] || []).forEach(function (v) {
+                        if (v && out.indexOf(v) === -1) out.push(v);
+                    });
+                });
+                return out.sort();
+            }
+            if (rk) bindValueAutocomplete(rk, document.getElementById('exp-rack-list'),
+                function () { return suggest('racks'); });
+            if (rw) bindValueAutocomplete(rw, document.getElementById('exp-row-list'),
+                function () { return suggest('rows'); });
+        })();
     })();
 </script>

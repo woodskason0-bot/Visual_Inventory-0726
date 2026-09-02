@@ -677,11 +677,14 @@ namespace Visual_Inventory_System.Controllers
 
         [HttpGet]
         public IActionResult ExportInventory(
-            string? exportGroup, string? exportTeam, string? exportType, string? exportBrand, string? exportFda,
+            string? exportGroup, string? exportTeam, string? exportType, string? exportBrand,
+            string? exportLocParent, string? exportLocMajor, string? exportLocSub,
+            string? exportRack, string? exportRow,
             bool expAvailable, bool expAlerts, bool expScrap, bool expOwnership, string expTimeFrame)
         {
             var fileBytes = _inventoryService.ExportToCsv(
-                exportGroup, exportTeam, exportType, exportBrand, exportFda,
+                exportGroup, exportTeam, exportType, exportBrand,
+                exportLocParent, exportLocMajor, exportLocSub, exportRack, exportRow,
                 expAvailable, expAlerts, expScrap, expOwnership, expTimeFrame);
 
             var fileName = $"Inventory_Export_{DateTime.Now:yyyyMMdd_HHmm}.csv";

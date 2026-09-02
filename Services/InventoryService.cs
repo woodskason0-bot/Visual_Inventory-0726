@@ -482,7 +482,24 @@ namespace Visual_Inventory_System.Services
             return query.ToList();
         }
 
-        public byte[] ExportToCsv(string? group, string? team, string? type, string? brand, string? fdaString,
+        /// <summary>
+        /// Location filtering here matches the Parent/Major/Sub/Rack/Row COLUMNS,
+        /// not FdaString. It used to take a single dot-joined prefix and run
+        /// FdaString.StartsWith on it, which was wrong for the same reasons
+        /// Search() documents: FdaString comes in 0-, 1-, 2- and 4-dot forms
+        /// (older rows compressed empty levels out, newer ones pad with "0") and
+        /// in "PATS.LEAN-TO" the second segment is a Rack, not a Major. The
+        /// wizard's own cascade made it worse by dropping blank levels before
+        /// joining, so picking a Parent and a Rack posted "RLB.RACK 8" -- which
+        /// prefix-matched nothing, and silently returned an EMPTY CSV while 29
+        /// variants really sat on that rack. The Pass 35 note claiming this
+        /// survived "because its input is a free-text term the human typed"
+        /// stopped being true in Pass 23, when Rack/Row cascade suggestions were
+        /// added to this modal.
+        /// </summary>
+        public byte[] ExportToCsv(string? group, string? team, string? type, string? brand,
+                                  string? locParent, string? locMajor, string? locSub,
+                                  string? rack, string? row,
                                   bool expAvailable, bool expAlerts, bool expScrap, bool expOwnership, string expTimeFrame)
         {
             var query = ApplyLineVisibility(_db.InventoryItems.AsNoTracking()
@@ -501,7 +518,29 @@ namespace Visual_Inventory_System.Services
                     || i.Variants.Any(v => !v.IsRetired && v.Team.ToLower() == team.ToLower()));
             if (!string.IsNullOrWhiteSpace(type)) query = query.Where(i => i.Type.ToLower().Contains(type.ToLower()));
             if (!string.IsNullOrWhiteSpace(brand)) query = query.Where(i => i.Brand.ToLower().Contains(brand.ToLower()));
-            if (!string.IsNullOrWhiteSpace(fdaString)) query = query.Where(i => i.Variants.Any(v => !v.IsRetired && v.FdaString.StartsWith(fdaString)));
+
+            // ONE Any() carrying every level, deliberately -- the same rule
+            // Search() uses. Chained Any() calls would let an item qualify by
+            // matching the Parent on one variant and the Rack on a different
+            // one, which is not "stock at this location" in any sense a human
+            // means. Each level is independently optional, so skipping Major or
+            // Sub now narrows correctly instead of matching nothing.
+            // .ToLower() rather than string.Equals(.., StringComparison), per the
+            // Pass 29 EF-translation trap.
+            string lp = (locParent ?? "").Trim().ToLower();
+            string lm = (locMajor ?? "").Trim().ToLower();
+            string ls = (locSub ?? "").Trim().ToLower();
+            string lrk = (rack ?? "").Trim().ToLower();
+            string lrw = (row ?? "").Trim().ToLower();
+            if (lp.Length > 0 || lm.Length > 0 || ls.Length > 0 || lrk.Length > 0 || lrw.Length > 0)
+            {
+                query = query.Where(i => i.Variants.Any(v => !v.IsRetired
+                    && (lp == "" || v.Parent.ToLower() == lp)
+                    && (lm == "" || v.Major.ToLower() == lm)
+                    && (ls == "" || v.Sub.ToLower() == ls)
+                    && (lrk == "" || v.Rack.ToLower() == lrk)
+                    && (lrw == "" || v.Row.ToLower() == lrw)));
+            }
 
             var items = query.ToList();
             var itemIds = items.Select(i => i.ItemId).ToList();
