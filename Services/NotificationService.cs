@@ -72,6 +72,67 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
+        /// Fan out to every active user at ONE access level whose Line falls inside
+        /// `lines`. Neither CreateForLevel nor CreateForSubscribers could express
+        /// this -- the first filters on level alone, the second on a category
+        /// opt-in -- so delivery routing needed a third shape rather than a
+        /// workaround. Pass a single-element list for a Line, or a whole Branch's
+        /// Lines (OrgStructure.BranchLines) for a Branch-scoped recipient.
+        ///
+        /// `exclude` is deliberately a SET, not the single name CreateForLevel
+        /// takes: a delivery has two people to leave out at once -- whoever logged
+        /// it, and the named recipient, who gets their own differently-worded
+        /// notification. Without both, naming an Engineer who sits on the very Line
+        /// being fanned out sends that person two notifications for one delivery.
+        ///
+        /// Returns how many were actually written, so the caller can say something
+        /// true in the toast instead of guessing.
+        /// </summary>
+        public int CreateForLine(IEnumerable<string> lines, int level, string category,
+                                 string message, string? linkUrl = null, params string[] exclude)
+        {
+            var wanted = (lines ?? Enumerable.Empty<string>())
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(l => l.Trim().ToLower())
+                .Distinct()
+                .ToList();
+            if (wanted.Count == 0) return 0;
+
+            var skip = new HashSet<string>(
+                (exclude ?? Array.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+
+            // ToLower(), not string.Equals(.., StringComparison) -- EF Core cannot
+            // translate the StringComparison overload against a live IQueryable
+            // (Pass 29 found this the hard way, at query-execution time).
+            var recipients = _db.Users
+                .Where(u => u.IsActive
+                    && u.AccessLevel == level
+                    && u.Line != null
+                    && wanted.Contains(u.Line.ToLower()))
+                .Select(u => u.UserName)
+                .ToList();
+
+            var now = DateTime.UtcNow;
+            int written = 0;
+            foreach (var name in recipients)
+            {
+                if (skip.Contains(name)) continue;
+                _db.Notifications.Add(new Notification
+                {
+                    RecipientUserName = name,
+                    Category = category,
+                    Message = message,
+                    LinkUrl = linkUrl,
+                    CreatedAt = now
+                });
+                written++;
+            }
+            if (written > 0) _db.SaveChanges();
+            return written;
+        }
+
+        /// <summary>
         /// Fan out to everyone individually subscribed to this category (via the
         /// Settings checkbox), regardless of AccessLevel. Use this instead of
         /// CreateForLevel for anything that should be a personal opt-in rather

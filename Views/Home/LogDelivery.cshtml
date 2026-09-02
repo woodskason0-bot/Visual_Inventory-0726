@@ -84,14 +84,36 @@
 
             <div class="mb-3">
                 <label class="form-label small fw-bold text-light-gray">Send To <span class="text-danger">*</span></label>
+                @* Grouped by tier rather than one flat list of 44 names, engineers
+                   first -- they're both the most common pick and the people who
+                   actually work a delivery. Each name's Line rides along in the
+                   label so the person logging can see who else it will reach. *@
                 <select name="recipientUserName" class="form-select" required>
                     <option value="" selected disabled>Choose a person, or Unknown Delivery...</option>
-                    <option value="__UNKNOWN__">Unknown Delivery — notify all managers/supervisors</option>
-                    @foreach (var r in recipients)
+                    <option value="__UNKNOWN__">Unknown Delivery — notify every engineer</option>
+                    @foreach (var grp in new[] {
+                        (Lvl: Visual_Inventory_System.Services.AccessLevels.Engineer,   Label: "Engineers"),
+                        (Lvl: Visual_Inventory_System.Services.AccessLevels.Management, Label: "Managers"),
+                        (Lvl: Visual_Inventory_System.Services.AccessLevels.Admin,      Label: "Admins") })
                     {
-                        <option value="@r.UserName">@r.DisplayName</option>
+                        var inGroup = recipients.Where(r => (int)r.AccessLevel == grp.Lvl).ToList();
+                        if (inGroup.Count > 0)
+                        {
+                            <optgroup label="@grp.Label">
+                                @foreach (var r in inGroup)
+                                {
+                                    string scope = !string.IsNullOrWhiteSpace((string?)r.Line) ? (string)r.Line
+                                                 : !string.IsNullOrWhiteSpace((string?)r.Branch) ? $"{r.Branch} (whole branch)"
+                                                 : "no line — reaches only them";
+                                    <option value="@r.UserName">@r.DisplayName — @scope</option>
+                                }
+                            </optgroup>
+                        }
                     }
                 </select>
+                <div class="form-text text-light-gray" style="font-size:11px;">
+                    Naming someone also notifies the engineers on their line, so the box gets picked up.
+                </div>
             </div>
 
             <button type="submit" class="btn btn-danger fw-bold w-100"><i class="bi bi-send-fill me-1"></i>Submit Delivery</button>

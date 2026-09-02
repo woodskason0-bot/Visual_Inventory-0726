@@ -1792,6 +1792,13 @@ fix just never got extended to the other two. Extended the same selector list in
   heads-up alongside the existing PN check — before the next family-wide-`N/A` model
   gets registered twice for real.
 - **Motors: only the TC subset is tracked (deliberate).**
+- **No "your delivery was claimed" notification (Pass 34, parked).** When an
+  engineer claims a delivery routed to them via their Line, the named recipient
+  hears nothing — they only learn it was handled by opening the board and finding
+  it gone. Cheap to add (`NotificationService.Create` in `ClaimDelivery`, one
+  line), deliberately left out because nobody asked for it and every notification
+  added is noise until it isn't. Revisit if recipients start asking whether their
+  box was picked up.
 - **No split item exists on either database any more (Pass 33).** The
   `AddPerTeamQuantityOwnership` backfill gives every variant its item's family
   Team, so real data has zero items spanning more than one team — correct, but it
@@ -2635,3 +2642,86 @@ Verified on the dev-only db and restored byte-for-byte afterward (synthetic test
 photo deleted from `C:\VIS_Image-Uploads\` too); production `inventory.db` never
 opened. L2 confirmed still bounced off the board with no nav link, L3 reaching it,
 L4 unchanged.
+
+**Pass 34 (2026-08-30) — a named delivery now also reaches the engineers on that
+person's Line.** Scoped in full before any file was opened (spiterate), built and
+verified live the same session. No migration, no schema change. Trigger: a manager
+told me most L4 supervisors don't have the time or the duty to watch for deliveries,
+so addressing a box to one was a dead end in practice.
+
+**The rule, one sentence:** naming someone always notifies them; if they carry a
+Line it also notifies every **L3 engineer** on that Line; if they carry only a
+Branch it notifies the L3s across that Branch's Lines; if they carry neither it
+stops with them. `__UNKNOWN__` is untouched — still exactly L3, all lines, because
+an unlabelled box has no Line to narrow to.
+
+| Recipient carries | Reaches | Live numbers |
+|---|---|---|
+| a Line | L3s on it | Kevin Ray → 13 · Shelly → 1 |
+| Branch only | L3s across its Lines | Karthig → 20 · Sachin → 8 · Luis → 1 |
+| neither | nobody but them | Christina, Derek |
+
+**What the scoping turned up, and why the build is bigger than "one more
+notification":**
+
+- **`NotificationService` could not express this at all.** `CreateForLevel`
+  filters on an access-level band; `CreateForSubscribers` filters on a category
+  opt-in. Neither can say "L3s whose Line is X." New method `CreateForLine(lines,
+  level, category, message, linkUrl, params exclude)` — takes a LIST of lines so
+  one method serves both the Line case and the Branch fallback, and returns how
+  many it actually wrote so the toast can say something true instead of guessing.
+- **The exclude parameter had to become a set.** `CreateForLevel` takes a single
+  `excludeUserName`; a delivery has two people to leave out at once — whoever
+  logged it, and the named recipient, who gets their own differently-worded
+  message. Without both, naming an engineer who sits on the very Line being fanned
+  out sends that person **two** notifications for one box. Verified live: naming
+  Chris Wagoner, the only L3 on Shipping/Receiving, produces exactly one
+  notification and no fan-out.
+- **Two messages, not one.** The recipient reads *"A delivery was logged for
+  you"*; the line reads *"Delivery for Kevin Ray, logged by ..."*. Thirteen people
+  receiving the second-person wording would each think the box was theirs.
+- **The board had to widen in the same commit.** `Deliveries` gained a third
+  clause — `Unknown || recipient == me || recipient is someone whose audience
+  includes my Line`. Without it the fan-out notifies 13 people and lands them on an
+  empty board, which is the identical trap Pass 32 and the L3 follow-up each had to
+  close. Only L3s get the clause; Management and Admin are not part of any Line's
+  audience, so widening it for them would show them boxes nobody routed to them.
+
+**`AudienceLinesFor` and `RecipientsReaching` are inverses and must stay that way**
+(`HomeController`). The first answers "who does this recipient reach," used when a
+delivery is logged; the second answers "whose deliveries reach me," used to build
+the board. They are the two halves of one rule, and the whole class of bug this
+project keeps hitting is two halves disagreeing — the comment above them says so.
+`RecipientsReaching` pre-computes a username list and hands it to `Contains` rather
+than joining, because `Delivery.RecipientUserName` has no FK to `Users`; that
+translates to a SQL `IN`, the same shape `ApplyLineVisibility` already uses.
+Line comparison is `.ToLower()`, not `string.Equals(.., StringComparison)`, per the
+Pass 29 trap about EF translation.
+
+**Also in this pass:** the recipient dropdown widened from Management+ to
+**Engineer+** (44 names) and is now grouped into Engineers / Managers / Admins with
+each person's Line shown in the label, so the logger can see who else a pick will
+reach. L1/L2 stay out and a direct POST naming one is refused — they cannot open
+the board, so addressing them strands the box. And a **live copy bug was
+corrected**: the Unknown option still read "notify all managers/supervisors" months
+after that stopped being true, and now reads "notify every engineer."
+
+**Verified live on the dev-only db, restored byte-for-byte afterward** (5 synthetic
+photos deleted from `C:\VIS_Image-Uploads\` too; the real `inventory.db` was never
+opened). Five routing cases exercised end to end — Line, Branch fallback, neither,
+the Shelly/Chris pair, and an engineer named onto his own line — with notification
+rows counted by recipient and access level rather than trusted from the level
+constant: 39 rows total, 34 fan-out (all L3, zero L4/L5) and 5 recipient, actor
+never notified, nobody notified twice for one box. Then the board checked from five
+seats, confirming it agrees with the fan-out in every case: a Commercial
+Packaged/Splits engineer sees both the Line-routed and Branch-routed boxes, a
+Residential OD engineer sees neither, and both L4 recipients see only their own.
+
+**Worth knowing before this ships:** existing open deliveries become visible to the
+line's engineers the moment it does — the board clause reads the recipient's
+*current* Line, so it applies retroactively to anything still Open or Claimed. That
+is the intended behaviour, not a migration artifact, but it means the board will
+look busier on day one than it did the day before.
+
+**Not built, deliberately:** a claim notification back to the recipient ("your box
+was collected"). Parked as a backlog line — see below.

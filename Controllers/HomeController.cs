@@ -1583,14 +1583,73 @@ namespace Visual_Inventory_System.Controllers
         // still Management+ (see LogDelivery below). "Anyone Engineer+ can pick up
         // an unlabelled box" and "who can a box be assigned to by name" are
         // deliberately two different questions.
+        // ============================
+        // DELIVERY ROUTING -- TWO HALVES OF ONE RULE
+        // ============================
+        // The rule: a named recipient's delivery also reaches the L3 engineers on
+        // their Line; failing that, on their Branch's Lines; failing that, nobody.
+        //
+        // These two helpers are inverses of each other and MUST stay that way.
+        // AudienceLinesFor answers "who does THIS recipient reach" (used when the
+        // delivery is logged); RecipientsReaching answers "whose deliveries reach
+        // ME" (used to build the board). If they disagree, a notification points at
+        // a board that doesn't show the delivery -- the exact failure shape Pass 32
+        // and the L3 follow-up both had to close. Change one, change the other.
+
+        /// <summary>Lines whose L3s a delivery for this recipient should reach. Empty = nobody but the recipient.</summary>
+        private static string[] AudienceLinesFor(string? line, string? branch)
+        {
+            var l = (line ?? "").Trim();
+            if (l.Length > 0) return new[] { l };
+
+            // Branch fallback: only reachable for someone carrying a Branch and no
+            // Line. Line always wins, so no line-scoped user is affected by this.
+            var b = (branch ?? "").Trim();
+            if (b.Length > 0 && OrgStructure.BranchLines.TryGetValue(b, out var lines)) return lines;
+
+            return Array.Empty<string>();
+        }
+
+        /// <summary>
+        /// UserNames whose deliveries this viewer should see -- the inverse of
+        /// AudienceLinesFor. Someone reaches me when their own Line is mine, or
+        /// when they carry no Line but the Branch that owns my Line.
+        /// </summary>
+        private List<string> RecipientsReaching(string? myLine)
+        {
+            var mine = (myLine ?? "").Trim();
+            if (mine.Length == 0) return new List<string>();
+            string mineLower = mine.ToLower();
+            string myBranch = (OrgStructure.BranchFor(mine) ?? "").Trim();
+
+            return _db.Users.AsNoTracking()
+                .Where(u => u.IsActive
+                    && ((u.Line != null && u.Line.ToLower() == mineLower)
+                        || ((u.Line == null || u.Line == "")
+                            && myBranch != "" && u.Branch != null && u.Branch == myBranch)))
+                .Select(u => u.UserName)
+                .ToList();
+        }
+
         [RequireLevel(AccessLevels.Engineer)]
         public IActionResult Deliveries()
         {
             string mine = _currentUser.Name;
 
+            // Third clause (delivery routing): an L3 sees deliveries addressed to
+            // anyone whose audience includes their Line. Without it the fan-out
+            // notifies 13 people and lands them on an empty board. Only L3s get it
+            // -- Management and Admin are not part of any Line's audience, so
+            // widening it for them would show them boxes nobody routed to them.
+            var reaching = _currentUser.Level == AccessLevels.Engineer
+                ? RecipientsReaching(_currentUser.Line)
+                : new List<string>();
+
             var rows = _db.Deliveries.AsNoTracking()
                 .Where(d => d.Status != "Done"
-                    && (d.RecipientUserName == Delivery.UnknownRecipient || d.RecipientUserName == mine))
+                    && (d.RecipientUserName == Delivery.UnknownRecipient
+                        || d.RecipientUserName == mine
+                        || reaching.Contains(d.RecipientUserName)))
                 .OrderBy(d => d.LoggedAt)
                 .ToList();
 
@@ -1623,15 +1682,18 @@ namespace Visual_Inventory_System.Controllers
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult LogDelivery()
         {
-            // Still Management+ on purpose, even though the Unknown bucket moved to
-            // Engineer+ in the Pass 33 follow-up. Naming a recipient is assigning a
-            // box to a person; the Unknown bucket is "whoever gets to it first."
-            // Widening this list too would put all 29 Engineers in a dropdown that
-            // exists to route to someone accountable for it.
+            // Engineer+ now, not Management+. Naming a manager stopped meaning "you
+            // go deal with this" once a named delivery started also reaching that
+            // person's Line -- so the list can widen to everyone who can actually
+            // work a delivery. L1/L2 stay out: they cannot open the board at all,
+            // and addressing someone who can't see it strands the box.
+            // AccessLevel rides along so the view can group the list -- 44 flat
+            // names is a scroll, three labelled sections is a glance.
             ViewBag.Recipients = _db.Users.AsNoTracking()
-                .Where(u => u.IsActive && u.AccessLevel >= AccessLevels.Management)
-                .OrderBy(u => u.DisplayName)
-                .Select(u => new { u.UserName, u.DisplayName })
+                .Where(u => u.IsActive && u.AccessLevel >= AccessLevels.Engineer)
+                .OrderByDescending(u => u.AccessLevel)
+                .ThenBy(u => u.DisplayName)
+                .Select(u => new { u.UserName, u.DisplayName, u.AccessLevel, u.Line, u.Branch })
                 .ToList();
             return View();
         }
@@ -1663,7 +1725,10 @@ namespace Visual_Inventory_System.Controllers
             }
 
             bool isUnknown = recipientUserName == Delivery.UnknownRecipient;
-            if (!isUnknown && !_db.Users.Any(u => u.UserName == recipientUserName && u.IsActive && u.AccessLevel >= AccessLevels.Management))
+            // Matches the dropdown exactly (Engineer+). A direct POST naming an
+            // L1/L2 is refused rather than accepted-and-stranded: they cannot open
+            // the Deliveries board, so the box would have no reachable owner.
+            if (!isUnknown && !_db.Users.Any(u => u.UserName == recipientUserName && u.IsActive && u.AccessLevel >= AccessLevels.Engineer))
             {
                 TempData["Error"] = "That recipient isn't valid.";
                 return RedirectToAction("LogDelivery");
@@ -1690,18 +1755,52 @@ namespace Visual_Inventory_System.Controllers
                 + (IsNa(brandOfItem) ? "" : $" — {brandOfItem}")
                 + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})");
 
+            string extra = "";
             if (isUnknown)
+            {
                 // EXACTLY L3, not Engineer-and-up -- the maxLevel arg is what that
                 // second parameter is for. Handling an unlabelled box is an Engineer
                 // job, so Management and Admin deliberately stop being pinged for it
                 // (was Management+, which pinged 15 people and no Engineers at all).
                 // They can still open the board and pitch in if one sits; they just
-                // don't get the notification.
+                // don't get the notification. Deliberately NOT line-aware: an
+                // unlabelled box has no Line to narrow to.
                 _notifications.CreateForLevel(AccessLevels.Engineer, AccessLevels.Engineer, "DeliveryReceived", message, "/Home/Deliveries", _currentUser.Name);
+            }
             else
-                _notifications.Create(recipientUserName, "DeliveryReceived", message, "/Home/Deliveries");
+            {
+                // The recipient always hears about it, in the second person.
+                _notifications.Create(recipientUserName, "DeliveryReceived",
+                    $"A delivery was logged for you by {_currentUser.Name}"
+                    + (IsNa(brandOfItem) ? "" : $" — {brandOfItem}")
+                    + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})"),
+                    "/Home/Deliveries");
 
-            TempData["Success"] = "Delivery logged.";
+                // ...and so do the engineers on their Line, because a manager being
+                // named is "this is yours" rather than "go collect it" -- the whole
+                // point of the change. Third person on purpose: 13 people reading
+                // "a delivery was logged for you" would each think it was theirs.
+                var recip = _db.Users.AsNoTracking().FirstOrDefault(u => u.UserName == recipientUserName);
+                if (recip != null)
+                {
+                    string who = string.IsNullOrWhiteSpace(recip.DisplayName) ? recipientUserName : recip.DisplayName;
+                    int reached = _notifications.CreateForLine(
+                        AudienceLinesFor(recip.Line, recip.Branch),
+                        AccessLevels.Engineer,
+                        "DeliveryReceived",
+                        $"Delivery for {who}, logged by {_currentUser.Name}"
+                        + (IsNa(brandOfItem) ? "" : $" — {brandOfItem}")
+                        + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})"),
+                        "/Home/Deliveries",
+                        // Both, not one: the logger never notifies themself, and the
+                        // recipient already has their own message above.
+                        _currentUser.Name, recipientUserName);
+                    if (reached > 0)
+                        extra = $" {who} and {reached} engineer{(reached == 1 ? "" : "s")} on their line were notified.";
+                }
+            }
+
+            TempData["Success"] = "Delivery logged." + extra;
             return RedirectToAction("LogDelivery");
         }
 
