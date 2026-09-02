@@ -12,7 +12,10 @@ VIS-specific supplement to the global one (stack mechanics only).
 
 Before doing anything else, also read both of these in full:
 - `docs/VIS_Handoff_State.md` — architecture, current deployed state, load-bearing
-  facts, known traps, backlog. Authoritative for code/schema.
+  facts, known traps, backlog. Authoritative for code/schema. **Start with its
+  "OPEN AS OF …" section near the top** — that's live state (pending database
+  moves, un-republished work) which goes stale by the hour, not by the pass, and
+  is the one part that can cause real data loss if acted on blind.
 - `docs/vis-addendum-consolidated.md` — stakeholders, hosting/security decisions,
   working method, everything that doesn't live in the code itself.
 

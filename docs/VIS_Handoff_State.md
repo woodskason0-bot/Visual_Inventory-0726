@@ -35,6 +35,88 @@ only confirmed by static reading and a clean build, and the difference is spelle
 
 ---
 
+## OPEN AS OF 2026-09-02 — read this before touching any database
+
+Everything below is live state that isn't recoverable from code or git history.
+It is the one part of this file that goes stale by the hour rather than by the
+pass; if the dates here are old, confirm against the real files before acting.
+
+### There is a host repull pending, and it cuts both ways
+
+The host laptop has been **running and in use** since the 2026-08-30 handoff, so
+its `inventory.db` now holds real activity that exists nowhere locally — Kason
+reported new team memberships, a new user added to a team, and an intake of 4
+item ids. The local copy has no idea about any of it.
+
+Meanwhile the **local** `C:\VIS_Inventory\inventory.db` holds six org changes
+made on 2026-09-01 that exist nowhere on the host (see below).
+
+So the two files have diverged in **both directions**, and neither is a superset:
+
+- Copying local → host **destroys the host's new activity**.
+- Pulling host → local **destroys the six org changes**.
+
+The plan agreed with Kason: he re-pulls the host db, hands it over, and the six
+org changes are re-applied to that fresh copy. Do not copy anything onto the host
+until that has happened. If you're a fresh session reading this and the repull
+has already been done, this whole section should have been rewritten — if it
+wasn't, verify before trusting it.
+
+### The six org changes to re-apply to any fresh host pull
+
+Made by direct SQL against the real db on 2026-09-01, each with a
+`TransactionLogs` audit row, none of them in git because they are data:
+
+1. Branch **`Lab Operations`** created (`Branches`, IsActive 1) — the 4th Branch.
+2. Line **`Shipping/Receiving`** created under it (`OrgLines`, IsActive 1).
+3. **Shelly Naugle** (L4) → `Line = 'Shipping/Receiving'`, Branch left NULL.
+4. **Chris Wagoner** (L3) → `Line = 'Shipping/Receiving'`, Branch left NULL.
+5. **Luis Zapata** → `AccessLevel 5 → 4`.
+6. **Luis Zapata** → `Branch = 'Lab Operations'`, `Line = NULL`.
+
+Why they matter beyond the org chart: 3+4 are what make the delivery routing rule
+reach Chris when Shelly is named (Pass 34) — without them that pair routes to
+nobody. And 5+6 drop the org to **two Admins** (Kason, Derek) and cut Luis's
+visible inventory from 492 items to 40, because nothing is stocked on
+Shipping/Receiving yet and a Branch scope resolves to its Lines plus blank-Line
+items.
+
+### Which database file is which, as of 2026-09-02
+
+| File | md5 | Migrations | Notes |
+|---|---|---|---|
+| `C:\VIS_Inventory\inventory.db` | `3f3921ea…` | 39 | Local production. Has the six org changes. **Not** the host's current data. |
+| `C:\VIS_Inventory\inventory.dev.db` | `ee99b633…` | 39 | Dev sandbox. Re-seeded from production, then used for Pass 34/35 testing and restored. Differs from production only in a theme column. |
+| `…\Downloads\VisualStorageTerminal\VisualStorageTerminal\VIS_Inventory\inventory.db` | `36c42cd4…` | **36** | The untouched pre-migration host handoff from 2026-08-28. Keep until the host is confirmed healthy on the migrated schema. |
+
+All three: 492 items, 53 users. `integrity_check ok`. The first two carry the
+4-Branch structure; the Downloads copy still has 3.
+
+**Backups made during those sessions lived in a session-scoped scratchpad and are
+gone.** The Downloads copy above is the durable pre-migration fallback. Take a
+fresh backup before any db write rather than assuming one exists.
+
+### Release state
+
+Commit `4644467` (Pass 35) is the head and is pushed. Everything through Pass 35
+is committed. **Not yet published to the host** — the last release Kason built was
+`C:\VIS_Host\august28threlease`, which predates Passes 33-follow-up, 34 and 35.
+A republish is pending and was deliberately deferred until the db question above
+is settled, since the two move independently (a publish never carries a database).
+
+### Reference artifacts from these sessions
+
+Neither is load-bearing; both are snapshots that will drift as the roster changes.
+
+- **Delivery Routing Map** — every addressable name and who else each one notifies:
+  `https://claude.ai/code/artifact/828db2b0-65fa-4d78-82a6-232ffe0c6123`
+- **VIS Access Tiers** — every capability mapped to the level that unlocks it,
+  audited from the code at commit `6015ead`:
+  `https://claude.ai/code/artifact/0b45049e-e074-4f9b-b4c3-ea04de9c0307`
+
+
+---
+
 ## Deployed state
 
 ```
