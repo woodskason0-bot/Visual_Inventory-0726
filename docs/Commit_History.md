@@ -9,6 +9,65 @@ landed, when."
 
 ---
 
+## 2026-09-02
+
+### Pass 35 — search filters on real columns, precise map links, invisible-button sweep, Search Center relayout
+No migration, no schema change. Four asks sharing one root: things that looked
+right because the data hadn't yet produced the case that breaks them.
+**Type and Brand became dropdowns** (14 types / 21 brands, sourced from the
+already-Line-scoped `allItems`, still `Contains` so "Motor" returns ID/OD Motor
+too). **"FDA Term" became a three-level location cascade** matching the
+`Parent`/`Major`/`Sub` **columns**, not `FdaString` — that string comes in 0-,
+1-, 2- and 4-dot forms with a case split, and in `PATS.LEAN-TO` its second
+segment is a *Rack*, so prefix-matching it would silently miss and mis-level
+rows. All three levels match inside ONE `Any()` so an item can't qualify by
+matching the Parent on one variant and the Major on another. `Search()`'s
+`notes` param removed as fully superseded rather than left dead.
+**Description joined omni search** — it swept nine fields and never touched
+Description (only 3 of 492 items have one today, but it's one line).
+**The map's location links were loose text matches**: zone pins and Location List
+rows used `omniSearch=<code>`, zone-menu drill-downs used `filterNotes`. Parents
+happened to be correct (186/88/127/111) but rack `15` returned 36 items instead
+of 2 and rack `2` returned 305 instead of 43 — the same flaw the Quick Filter
+branch buttons had before 2026-08-21, which the map never got. All three link
+types now carry real location params.
+**Two classes of invisible button, both fixed at the causing rule.** `.btn-close`
+carries an unconditional `filter: invert(1)`, correct on dark cards and invisible
+once `--vis-card` is `#FFFFFF` — 10 bare instances across 5 views, only the three
+`btn-close-white` ones ever fixed, individually by id. Scoped by SURFACE, not
+blanket: a blanket revert was tried and regressed the `bg-primary` header to
+3.6:1. Untinted + `.holo-header` now 21:1 light; `bg-warning`/`.alert` get a dark
+× in *both* themes, fixing an unreported white-on-amber 1.9:1 in dark mode;
+`bg-primary`/`bg-dark` keep the white ×; New Item Registry's inline-tinted header
+got a `.modal-header-tinted` hook. Separately `.btn-outline-light` (Bootstrap's
+for-dark-backgrounds variant) was **1.05:1 in both checked and unchecked states**
+on white across 10 call sites — one light-theme rule takes unchecked to 3.18:1
+and checked to a dark fill at 16.88:1, dark mode untouched.
+**Search Center relaid out**: Advanced Filters 2/3 and Omni Search 1/3 of the top
+row (measured 2.04:1); Export Wizard, Modify Stock and View Cart became an
+Actions row in Command Center's Quick Actions language; Quick Filters split into
+two labelled boxes on their real axis (type vs branch). `.cc-card`,
+`.cc-quick-btn` and `.cc-section-title` moved from CommandCenter's own `<style>`
+into `site.css` so both pages share one definition; `.sc-action-row` is its own
+3-column rule so it can't reflow Command Center's 4 (re-verified unchanged).
+All ten filter combinations verified against raw SQL exactly; zero console
+errors; no database writes.
+**Touched:** `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/SearchCenter.cshtml`, `Views/Home/CommandCenter.cshtml`,
+`Views/Home/_NewItemRegistryPartial.cshtml`, `Views/Home/LogDelivery.cshtml`,
+`wwwroot/css/site.css`. No migration.
+
+**Outside git, same window — org structure changed on the real db.** A 4th Branch
+**Lab Operations** and its first Line **Shipping/Receiving**; Shelly Naugle (L4)
+and Chris Wagoner (L3) assigned to that Line; Luis Zapata moved L5 → L4 with
+Branch = Lab Operations. Consequence worth knowing: Luis's visible inventory went
+from 492 items to 40, since nothing is stocked on Shipping/Receiving yet and a
+Branch scope resolves to that Line plus blank-Line items — and the org is down to
+two Admins (Kason, Derek). Each change backed up first and written with an audit
+row.
+
+---
+
 ## 2026-08-29
 
 ### `6015ead` — Pass 33 follow-up: Unknown Delivery routes to exactly L3, not Management+

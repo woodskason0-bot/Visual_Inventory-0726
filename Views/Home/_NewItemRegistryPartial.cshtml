@@ -6,7 +6,7 @@
         <div class="modal-content">
             <form asp-controller="Home" asp-action="CreateItem" method="post" id="create-frm">
                 @Html.AntiForgeryToken()
-                <div class="modal-header" style="background: var(--vis-green);">
+                <div class="modal-header modal-header-tinted" style="background: var(--vis-green);">
                     <h5 class="modal-title text-white fw-bold">New Item Registry</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>

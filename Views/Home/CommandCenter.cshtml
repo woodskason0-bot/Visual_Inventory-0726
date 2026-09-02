@@ -1,4 +1,4 @@
-@using Visual_Inventory_System.Services
+﻿@using Visual_Inventory_System.Services
 @inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @{
     ViewData["Title"] = "Command Center";
@@ -68,21 +68,9 @@
         margin: 0 auto;
     }
 
-    .cc-section-title {
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: .05em;
-        color: var(--vis-text-muted);
-        margin: 0 0 10px 2px;
-    }
-
-    .cc-card {
-        background: var(--vis-card);
-        border: 1px solid var(--vis-card-border);
-        border-radius: 12px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-    }
+    /* .cc-section-title and .cc-card moved to site.css -- Search Center
+       reuses both for its Actions row, and two copies of a shared visual
+       language is how they drift. */
 
     /* KPI strip */
     .cc-kpi-row {
@@ -237,31 +225,8 @@
         margin-bottom: 28px;
     }
 
-    .cc-quick-btn {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-        cursor: pointer;
-        text-align: left;
-        text-decoration: none;
-    }
-
-        .cc-quick-btn:hover {
-            border-color: var(--vis-red);
-        }
-
-        .cc-quick-btn i {
-            font-size: 20px;
-            color: var(--vis-red);
-        }
-
-        .cc-quick-btn span {
-            font-size: 13px;
-            font-weight: 700;
-            color: var(--vis-text);
-        }
+    /* .cc-quick-btn moved to site.css alongside .cc-card -- Search Center's
+       Actions row uses it too. */
 
     /* Bottom row */
     .cc-bottom-row {
@@ -592,7 +557,8 @@
                               data-ny="@z.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
                               data-nw="@z.W.ToString(System.Globalization.CultureInfo.InvariantCulture)"
                               data-nh="@z.H.ToString(System.Globalization.CultureInfo.InvariantCulture)"
-                              href="/Home/SearchCenter?mode=Omni&omniSearch=@z.Code" title="@z.Name" />
+                              data-code="@z.Code"
+                              href="/Home/SearchCenter?mode=Filter&filterLocParent=@z.Code" title="@z.Name" />
                     }
                 </map>
             </div>
@@ -604,7 +570,7 @@
                 @foreach (var z in (List<(string Name, string Code, double X, double Y, double W, double H)>)(ViewBag.MapZones ?? new List<(string, string, double, double, double, double)>()))
                 {
                     <li>
-                        <a class="cc-loc-row" data-zone-title="@z.Name" href="/Home/SearchCenter?mode=Omni&omniSearch=@z.Code">
+                        <a class="cc-loc-row" data-zone-title="@z.Name" href="/Home/SearchCenter?mode=Filter&filterLocParent=@z.Code">
                             <span>@z.Name</span>
                             <span class="cc-loc-count" data-loc-count></span>
                         </a>
@@ -884,7 +850,7 @@
                 for (let major in data.Majors) {
                     let mData = data.Majors[major];
                     let mAlert = mData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
-                    let majorLink = `/Home/SearchCenter?mode=Filter&filterNotes=${encodeURIComponent(major)}`;
+                    let majorLink = `/Home/SearchCenter?mode=Filter&filterLocParent=${encodeURIComponent(a.dataset.code || "")}&filterLocMajor=${encodeURIComponent(major)}`;
                     let subKeys = mData.Subs ? Object.keys(mData.Subs) : [];
 
                     if (subKeys.length > 0) {
@@ -897,7 +863,7 @@
                             let sData = mData.Subs[sub];
                             let sAlert = sData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
                             subsHTML += `
-                                <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='/Home/SearchCenter?mode=Filter&filterNotes=${encodeURIComponent(sub)}'">
+                                <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='/Home/SearchCenter?mode=Filter&filterLocParent=${encodeURIComponent(a.dataset.code || '')}&filterLocMajor=${encodeURIComponent(major)}&filterLocSub=${encodeURIComponent(sub)}'">
                                     <span><i class="bi bi-box me-2"></i>${locDecode(sub)} ${sAlert}</span>
                                     <span class="badge">${sData.Rows}</span>
                                 </button>`;

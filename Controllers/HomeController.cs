@@ -110,7 +110,8 @@ namespace Visual_Inventory_System.Controllers
         // dark-themed/unstyled on purpose -- the visual match to the sidebar's
         // new look is Phase 4, not this pass (Command Center picked that up
         // early in 2c/2d; this page is still waiting on it).
-        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterNotes, string? filterBranch, string? mode, string? stockView)
+        public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterBranch, string? mode, string? stockView,
+            string? filterLocParent, string? filterLocMajor, string? filterLocSub)
         {
             var allItems = _inventoryService.GetAll().ToList();
             PopulateSearchViewBag(allItems);
@@ -148,7 +149,8 @@ namespace Visual_Inventory_System.Controllers
             }
             else if (mode != "None")
             {
-                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterNotes, filterBranch);
+                var foundItems = _inventoryService.Search(omniSearch, filterRheem, filterType, filterBrand, filterBranch,
+                    filterLocParent, filterLocMajor, filterLocSub);
                 searchResult.Items = foundItems;
 
                 if (!string.IsNullOrEmpty(omniSearch)) searchResult.Mode = "Omni";
@@ -157,6 +159,22 @@ namespace Visual_Inventory_System.Controllers
 
             ViewBag.SearchResult = searchResult;
             ViewBag.InventoryService = _inventoryService;
+
+            // Type and Brand are free text in the schema but a closed set in
+            // practice (14 types, 21 brands across 492 items), so the filter can
+            // offer what actually exists instead of asking someone to guess the
+            // spelling. Built off allItems, which is already materialized and
+            // already Line-scoped -- so the options match what this viewer can
+            // actually see, rather than advertising a brand on a Line they can't
+            // reach. Still a Contains match on the server, so picking "Motor"
+            // deliberately also returns ID Motor and OD Motor.
+            ViewBag.FilterTypeOptions = allItems.Select(i => i.Type)
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
+            ViewBag.FilterBrandOptions = allItems.Select(i => i.Brand)
+                .Where(b => !string.IsNullOrWhiteSpace(b))
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
+            ViewBag.LocationFilterRows = BuildLocationFilterRows();
 
             // Pass 30 (Request Transfer): itemsList (built by PopulateSearchViewBag,
             // off GetAll()) is Line-scoped -- that's correct for Add to Cart/Handle
@@ -193,7 +211,9 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.FilterRheem = filterRheem ?? "";
             ViewBag.FilterType = filterType ?? "";
             ViewBag.FilterBrand = filterBrand ?? "";
-            ViewBag.FilterNotes = filterNotes ?? "";
+            ViewBag.FilterLocParent = filterLocParent ?? "";
+            ViewBag.FilterLocMajor = filterLocMajor ?? "";
+            ViewBag.FilterLocSub = filterLocSub ?? "";
             ViewBag.FilterBranch = filterBranch ?? "";
 
             return View();
@@ -745,6 +765,42 @@ namespace Visual_Inventory_System.Controllers
         // { "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja", ...] }, ... }
         // Friendly names only -- the client derives codes with its own copy of the
         // same rule, which is why the shapes must stay identical.
+        /// <summary>
+        /// Flat (Parent, Major, Sub) rows carrying BOTH the code and the display
+        /// name at every level, for Search Center's location filter. A third
+        /// projection of the same managed Locations table BuildLocationTree
+        /// (name-keyed) and BuildLocationHierarchyCoded (code-keyed) already
+        /// read -- not a fourth hardcoded copy of the vocabulary, which is the
+        /// thing this project keeps finding. It exists because the filter needs
+        /// both halves at once: the code is what ItemVariant.Parent/Major/Sub
+        /// actually store and what gets posted, the name is what a human reads.
+        /// Rendering it flat lets the three selects filter each other with data
+        /// attributes and no JS dependency on the Modify Stock partial's
+        /// locHierarchyData -- which is declared at that partial's own top level,
+        /// so redeclaring it here would be a duplicate const in shared global
+        /// scope, i.e. a SyntaxError that kills the whole block.
+        /// </summary>
+        private List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)> BuildLocationFilterRows()
+        {
+            var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
+            var rows = new List<(string, string, string, string, string, string)>();
+            foreach (var p in all.Where(l => l.Level == LocationLevel.Parent).OrderBy(l => l.Name))
+            {
+                string pc = LocationCodec.Encode(p.Name);
+                var majors = all.Where(l => l.Level == LocationLevel.Major && l.ParentId == p.Id).OrderBy(l => l.Name).ToList();
+                if (majors.Count == 0) { rows.Add((pc, p.Name, "", "", "", "")); continue; }
+                foreach (var m in majors)
+                {
+                    string mc = LocationCodec.Encode(m.Name);
+                    var subs = all.Where(l => l.Level == LocationLevel.Sub && l.ParentId == m.Id).OrderBy(l => l.Name).ToList();
+                    if (subs.Count == 0) { rows.Add((pc, p.Name, mc, m.Name, "", "")); continue; }
+                    foreach (var s in subs)
+                        rows.Add((pc, p.Name, mc, m.Name, LocationCodec.Encode(s.Name), s.Name));
+                }
+            }
+            return rows;
+        }
+
         private Dictionary<string, Dictionary<string, List<string>>> BuildLocationTree()
         {
             var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();

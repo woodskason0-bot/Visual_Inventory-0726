@@ -63,6 +63,14 @@ Superseded, not merely outdated:
 
 1. **Location vocabulary is not fixed.** Pass 7C replaced four hand-kept copies with a
    managed `Locations` table; Pass 9 found three more. 18 locations, editable in Settings.
+1b. **There are FOUR Branches as of 2026-09-01, not three.** `Lab Operations`
+   joined Residential Air / Commercial Air / Sustaining, holding a single Line,
+   `Shipping/Receiving` (Shelly Naugle L4, Chris Wagoner L3). It is the first
+   Branch that isn't an air-handling product line, and the first whose Line
+   carries no inventory -- which matters because a Branch-scoped user resolves
+   to their Branch's Lines plus blank-Line items, so Luis Zapata (moved L5 → L4,
+   Branch = Lab Operations) sees 40 items where an Admin saw 492. Anything
+   asserting "three Branches" is stale.
 2. **Branch/Line vocabulary is not fixed either, as of Pass 13.** It used to be a
    hardcoded 2-Branch structure; it's now a managed `Branches`/`OrgLines` pair, same
    Settings-editable pattern as Teams and Locations. Anything describing the org

@@ -157,6 +157,30 @@
         display: flex;
         flex-direction: column;
     }
+    /* Three across, unlike Command Center's four -- .cc-quick-row is left at
+       repeat(4,1fr) so changing it here can't reflow that page. Collapses to
+       one column below the same 992px breakpoint the sidebar uses. */
+    .sc-action-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+    }
+
+    @@media (max-width: 991.98px) {
+        .sc-action-row { grid-template-columns: 1fr; }
+    }
+
+    /* The action cards carry a second line of explanatory text, which Command
+       Center's four do not -- so the muted style is scoped here, not added to
+       the shared .cc-quick-btn. */
+    .sc-action-row .cc-quick-btn small {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--vis-text-muted);
+        line-height: 1.3;
+        text-transform: none;
+        letter-spacing: 0;
+    }
 </style>
 
 <div class="container-fluid py-3">
@@ -164,26 +188,126 @@
 
     <div class="row g-3 mb-3">
         <!-- Advanced Filters -->
-        <div class="col-lg-5">
+        <div class="col-lg-8">
             <div class="grid-card h-100">
                 <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
                 <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
                     <div class="filter-grid mb-2">
                         <input name="filterRheem" placeholder="Rheem Part #" class="form-control" value="@ViewBag.FilterRheem" />
-                        <input name="filterType" placeholder="Type" class="form-control" value="@ViewBag.FilterType" />
-                        <input name="filterBrand" placeholder="Brand" class="form-control" value="@ViewBag.FilterBrand" />
-                        <input name="filterNotes" placeholder="FDA Term" class="form-control" value="@ViewBag.FilterNotes" />
+                        @* Type and Brand were free-text boxes you had to spell right.
+                           Both are closed sets in practice, so offer what exists. *@
+                        <select name="filterType" class="form-select">
+                            <option value="">Any type</option>
+                            @foreach (var t in (List<string>)(ViewBag.FilterTypeOptions ?? new List<string>()))
+                            {
+                                <option value="@t" selected="@(string.Equals((string?)ViewBag.FilterType, t, StringComparison.OrdinalIgnoreCase))">@t</option>
+                            }
+                        </select>
+                        <select name="filterBrand" class="form-select">
+                            <option value="">Any brand</option>
+                            @foreach (var b in (List<string>)(ViewBag.FilterBrandOptions ?? new List<string>()))
+                            {
+                                <option value="@b" selected="@(string.Equals((string?)ViewBag.FilterBrand, b, StringComparison.OrdinalIgnoreCase))">@b</option>
+                            }
+                        </select>
+                    </div>
+                    @* Replaces the old free-text "FDA Term". That box asked people to
+                       type a machine string ("ETRD.CNEA.CNE6") and matched it as
+                       loose text, so a rack called "2" pulled back 305 items instead
+                       of 43. These post the stored Parent/Major/Sub CODES while
+                       showing the real names, and the server matches the columns. *@
+                    @{
+                        var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
+                                      (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
+                        string selP = (string?)ViewBag.FilterLocParent ?? "";
+                        string selM = (string?)ViewBag.FilterLocMajor ?? "";
+                        string selS = (string?)ViewBag.FilterLocSub ?? "";
+                    }
+                    <div class="filter-grid mb-2" id="loc-filter-grid">
+                        <select name="filterLocParent" id="flt-loc-parent" class="form-select">
+                            <option value="">Any location</option>
+                            @foreach (var g in locRows.GroupBy(r => new { r.PCode, r.PName }).OrderBy(g => g.Key.PName))
+                            {
+                                <option value="@g.Key.PCode" selected="@(selP == g.Key.PCode)">@g.Key.PName</option>
+                            }
+                        </select>
+                        <select name="filterLocMajor" id="flt-loc-major" class="form-select">
+                            <option value="">Any area</option>
+                            @foreach (var g in locRows.Where(r => r.MCode.Length > 0)
+                                                      .GroupBy(r => new { r.PCode, r.MCode, r.MName }).OrderBy(g => g.Key.MName))
+                            {
+                                <option value="@g.Key.MCode" data-parent="@g.Key.PCode" selected="@(selM == g.Key.MCode)">@g.Key.MName</option>
+                            }
+                        </select>
+                        <select name="filterLocSub" id="flt-loc-sub" class="form-select">
+                            <option value="">Any spot</option>
+                            @foreach (var r in locRows.Where(r => r.SCode.Length > 0)
+                                                      .GroupBy(r => new { r.PCode, r.MCode, r.SCode, r.SName }).OrderBy(g => g.Key.SName))
+                            {
+                                <option value="@r.Key.SCode" data-parent="@r.Key.PCode" data-major="@r.Key.MCode" selected="@(selS == r.Key.SCode)">@r.Key.SName</option>
+                            }
+                        </select>
                     </div>
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary w-100 fw-bold">Apply Filters</button>
                         <a href="/Home/SearchCenter" class="btn btn-outline-secondary text-white fw-bold">Clear</a>
                     </div>
                 </form>
+                <script>
+                    /* Self-contained on purpose: every option is already rendered
+                       server-side with data-parent/data-major, so narrowing is just
+                       show/hide. No use of locHierarchyData (declared in the Modify
+                       Stock partial -- redeclaring it here would be a duplicate
+                       const in shared global scope) and no locDecode (which reads a
+                       free variable resolved in site.js's own scope). Deferred to
+                       DOMContentLoaded so it never queries markup that hasn't
+                       parsed yet -- the failure that silently killed site.js's
+                       sidebar wiring for three commits. */
+                    document.addEventListener('DOMContentLoaded', function () {
+                        var p = document.getElementById('flt-loc-parent');
+                        var m = document.getElementById('flt-loc-major');
+                        var s = document.getElementById('flt-loc-sub');
+                        if (!p || !m || !s) return;
+
+                        function narrow(sel, attr, want, dependentReset) {
+                            var keptSelected = false;
+                            Array.prototype.forEach.call(sel.options, function (o) {
+                                if (!o.value) return;                    // the "Any ..." row always stays
+                                var show = !want || o.getAttribute(attr) === want;
+                                o.hidden = !show;
+                                o.disabled = !show;
+                                if (o.selected && !show) { o.selected = false; dependentReset = true; }
+                                if (o.selected && show) keptSelected = true;
+                            });
+                            if (!keptSelected && dependentReset) sel.value = '';
+                            return dependentReset;
+                        }
+
+                        function refresh() {
+                            narrow(m, 'data-parent', p.value, true);
+                            // Sub narrows on BOTH levels: a Sub only means something
+                            // under its own Major, and two Majors can hold Subs with
+                            // the same display name.
+                            Array.prototype.forEach.call(s.options, function (o) {
+                                if (!o.value) return;
+                                var show = (!p.value || o.getAttribute('data-parent') === p.value)
+                                        && (!m.value || o.getAttribute('data-major') === m.value);
+                                o.hidden = !show;
+                                o.disabled = !show;
+                                if (o.selected && !show) { o.selected = false; s.value = ''; }
+                            });
+                        }
+
+                        p.addEventListener('change', function () { m.value = ''; s.value = ''; refresh(); });
+                        m.addEventListener('change', function () { s.value = ''; refresh(); });
+                        refresh();   // honour whatever came back on the query string
+                    });
+                </script>
             </div>
         </div>
 
         <!-- Omni Search -->
-        <div class="col-lg-3">
+        <div class="col-lg-4">
             <div class="grid-card h-100">
                 <label class="text-bright-white fw-bold mb-2">Omni Search</label>
                 <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
@@ -193,54 +317,69 @@
                 </form>
             </div>
         </div>
-
-        <!-- Export + Modify Stock quick launch -->
-        <div class="col-lg-2">
-            <div class="grid-card h-100 d-flex flex-column">
-                <label class="text-bright-white fw-bold d-block mb-1" style="font-size: 14px;">Export Wizard</label>
-                <small class="d-block text-muted mb-2" style="font-size: 10px; line-height: 1.2;">Options: Group, Team, Type, Brand, Location</small>
-                <button type="button" class="btn btn-sm btn-dark w-100 py-2 fw-bold mt-auto" data-bs-toggle="modal" data-bs-target="#exportWizardModal">
-                    <i class="bi bi-file-earmark-arrow-down"></i> CSV
-                </button>
-            </div>
-        </div>
-        <div class="col-lg-2">
-            <div class="grid-card h-100 d-flex flex-column">
-                <label class="text-bright-white fw-bold d-block mb-1">Modify Stock</label>
-                <small class="d-block text-light-gray mb-2" style="line-height: 1.3;">Add, Scrap, Adjust, Transfer, Edit Details</small>
-                @if (CurrentUser.Level >= AccessLevels.Standard)
-                {
-                    <button type="button" class="btn btn-outline-primary w-100 py-2 fw-bold mt-auto" data-bs-toggle="modal" data-bs-target="#modifyStockModal">
-                        <i class="bi bi-tools-fill"></i> Transactions
-                    </button>
-                }
-                else
-                {
-                    <button type="button" class="btn btn-outline-secondary w-100 py-2 fw-bold mt-auto" disabled title="Requires Standard access">
-                        <i class="bi bi-lock-fill"></i> View Only
-                    </button>
-                }
-            </div>
-        </div>
     </div>
 
-    <!-- Quick Filters -->
-    <div class="grid-card mb-3">
-        <label class="small fw-bold border-bottom mb-2 p-1 d-block">Quick Filters</label>
-        <div class="d-flex flex-wrap gap-2">
-            <a href="/Home/SearchCenter?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
-            <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
-            <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
-            <span class="mx-1"></span>
-            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Commercial%20Air" class="@branchBtnClass("Commercial Air")">Commercial</a>
-            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Residential%20Air" class="@branchBtnClass("Residential Air")">Residential</a>
-            <a href="/Home/SearchCenter?mode=Filter&filterBranch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
-            @if (CurrentUser.Level >= AccessLevels.Standard)
-            {
-                <a href="/Home/SearchCenter?mode=Ledger" class="btn btn-sm btn-info text-white py-2 ms-auto">
-                    <i class="bi bi-cart3 me-1"></i> View Cart
-                </a>
-            }
+    @* Export, Modify Stock and View Cart are ACTIONS -- things you do -- so they
+       read as Command Center's Quick Actions rather than as filter cards. View
+       Cart moved here off the Quick Filters strip for the same reason: opening a
+       cart isn't a way of narrowing the list. *@
+    <div class="cc-section-title">Actions</div>
+    <div class="sc-action-row mb-3">
+        @if (CurrentUser.Level >= AccessLevels.Standard)
+        {
+            <button type="button" class="cc-card cc-quick-btn" data-bs-toggle="modal" data-bs-target="#modifyStockModal">
+                <i class="bi bi-tools"></i>
+                <span>Modify Stock</span>
+                <small>Add, Scrap, Adjust, Transfer, Edit Details</small>
+            </button>
+        }
+        else
+        {
+            <div class="cc-card cc-quick-btn" style="opacity:.5;" title="Requires Standard access">
+                <i class="bi bi-lock-fill"></i>
+                <span>Modify Stock</span>
+                <small>View only at your access level</small>
+            </div>
+        }
+        <button type="button" class="cc-card cc-quick-btn" data-bs-toggle="modal" data-bs-target="#exportWizardModal">
+            <i class="bi bi-file-earmark-arrow-down"></i>
+            <span>Export Wizard</span>
+            <small>Group, Team, Type, Brand, Location → CSV</small>
+        </button>
+        @if (CurrentUser.Level >= AccessLevels.Standard)
+        {
+            <a href="/Home/SearchCenter?mode=Ledger" class="cc-card cc-quick-btn">
+                <i class="bi bi-cart3"></i>
+                <span>View Cart</span>
+                <small>Review and submit your order</small>
+            </a>
+        }
+    </div>
+
+    @* Two boxes, not one strip: these are two different axes, not six variations
+       of one thing. Type answers "what kind of part", Branch answers "whose
+       stock" -- and the Branch three gray out for branches you're not on, which
+       the Type three never do. *@
+    <div class="row g-3 mb-3">
+        <div class="col-lg-6">
+            <div class="grid-card h-100">
+                <label class="small fw-bold border-bottom mb-2 p-1 d-block">Filter by type</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="/Home/SearchCenter?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="grid-card h-100">
+                <label class="small fw-bold border-bottom mb-2 p-1 d-block">Filter by branch</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="/Home/SearchCenter?mode=Filter&filterBranch=Commercial%20Air" class="@branchBtnClass("Commercial Air")">Commercial</a>
+                    <a href="/Home/SearchCenter?mode=Filter&filterBranch=Residential%20Air" class="@branchBtnClass("Residential Air")">Residential</a>
+                    <a href="/Home/SearchCenter?mode=Filter&filterBranch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>
+                </div>
+            </div>
         </div>
     </div>
 </div>

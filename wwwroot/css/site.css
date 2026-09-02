@@ -715,6 +715,38 @@ body {
 :root[data-theme="light"] #compressorRegistryModal .btn-close-white,
 :root[data-theme="light"] #motorRegistryModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }
 
+/* The × was invisible in light mode on every modal and on the search overlay.
+   `.btn-close { filter: invert(1) }` above is unconditional -- it flips
+   Bootstrap's dark icon white, which is right on this app's dark cards and
+   exactly wrong once --vis-card resolves to #FFFFFF. Ten bare .btn-close
+   elements across five views were affected; only the three -white ones above
+   had ever been fixed, and those individually, by id.
+   Fixed at the rule that causes it -- but scoped by SURFACE, not blanket. A
+   plain `[data-theme=light] .btn-close { filter:none }` also repaints the ×
+   on the tinted headers, and those don't change with the theme, so a
+   theme-relative override is exactly wrong for them (it put a dark × on the
+   bg-primary blue at ~3.6:1). Same trap as .comp-row/.filter-bar-dark. */
+
+/* Surfaces that are light in BOTH themes: amber headers carry .text-dark, and
+   Bootstrap alerts are light-tinted always -- so their × must be dark in both.
+   This also fixes a bug nobody had reported: white-on-amber was ~1.9:1 in dark
+   mode too, the × just happened to sit where no one looked for it. */
+.modal-header.bg-warning .btn-close,
+.alert .btn-close { filter: none; }
+
+/* Surfaces that FOLLOW the theme: an untinted .modal-header and .holo-header
+   both paint from --vis-card (#1C1E24 dark, #FFFFFF light), so the base
+   invert(1) is right on one and invisible on the other. bg-primary and bg-dark
+   headers are deliberately excluded -- they stay dark in both themes and keep
+   the white ×. The three id-scoped rules above still win on specificity.
+   .modal-header-tinted is the hook for a header coloured by CSS rather than a
+   Bootstrap bg- class (New Item Registry paints itself --vis-green inline, so
+   the class test alone would wrongly treat it as theme-following). Mark any
+   future hand-tinted header with it rather than adding another id here -- a
+   by-name list is what let this bug sit unnoticed in the first place. */
+:root[data-theme="light"] .modal-header:not([class*="bg-"]):not(.modal-header-tinted) .btn-close,
+:root[data-theme="light"] .holo-header .btn-close { filter: none; }
+
 /* Sidebar brand text ("Visual Inventory System") and the top bar's signed-in
    user name both carry Bootstrap's .text-white, inherited from when the
    sidebar/top bar were always dark (pre-Pass-27). Both now sit on
@@ -921,4 +953,82 @@ body {
     .sidebar-footer {
         display: none;
     }
+}
+
+
+/* ============================================================
+   SHARED CARD LANGUAGE (Pass 27 sidebar redesign, Pass 28 2c)
+   Lived in CommandCenter.cshtml's own <style> until Search Center's
+   Actions row needed the same look. One definition, two pages -- the
+   alternative is the drift this project keeps finding in copied
+   vocabulary (locations x9, close buttons x10).
+   ============================================================ */
+.cc-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--vis-text-muted);
+    margin: 0 0 10px 2px;
+}
+
+.cc-card {
+    background: var(--vis-card);
+    border: 1px solid var(--vis-card-border);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+
+.cc-quick-btn {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+    text-align: left;
+    text-decoration: none;
+    background: var(--vis-card);
+}
+
+    .cc-quick-btn:hover {
+        border-color: var(--vis-red);
+    }
+
+    .cc-quick-btn i {
+        font-size: 20px;
+        color: var(--vis-red);
+    }
+
+    .cc-quick-btn span {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--vis-text);
+    }
+
+
+/* Bootstrap's .btn-outline-light is built for DARK backgrounds -- its border is
+   #f8f9fa, and when a btn-check selects it, it fills #f8f9fa too. On this app's
+   dark cards that reads at 15.8:1; the moment --vis-card resolves to #FFFFFF it
+   is 1.05:1 in BOTH the checked and unchecked state, so the button has no shape
+   at all and a toggle pair gives no clue which half is selected. The label text
+   stays readable (16:1), which is why it never looked obviously broken.
+   Ten call sites use it -- the Rheem PN "Has a Part #" toggles, LogDelivery's
+   four "Have it" toggles, AllItems' back link, and three in Settings -- so this
+   is fixed once here rather than by editing each one, the same by-name list
+   that let the .btn-close bug sit unnoticed.
+   Unchecked: real grey edge on white. Checked/hover: dark fill, white text --
+   unmistakably "this one", and distinct from .btn-outline-secondary's grey fill
+   so the two halves of a pair never look alike. */
+:root[data-theme="light"] .btn-outline-light {
+    color: #1A1D23 !important;
+    border-color: #8B9198 !important;
+}
+
+:root[data-theme="light"] .btn-check:checked + .btn-outline-light,
+:root[data-theme="light"] .btn-outline-light:hover,
+:root[data-theme="light"] .btn-outline-light:focus {
+    background-color: #1A1D23 !important;
+    border-color: #1A1D23 !important;
+    color: #FFFFFF !important;
 }

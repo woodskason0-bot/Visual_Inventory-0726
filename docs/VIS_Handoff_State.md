@@ -59,7 +59,10 @@ Teams             8   Samurai, Ninja, Falcon, Polaris, Hurricane, T-Rex, Spartan
                  Sustaining (all 7 real names now exist as rows, plus Sustaining)
 Branches          3   Residential Air, Commercial Air, Sustaining -- now managed
                  in Settings, not hardcoded (see Pass 13)
-Lines            10   managed alongside Branches, same place
+Lines            11   managed alongside Branches, same place. Shipping/Receiving
+                 added 2026-09-01 under a new 4th Branch, Lab Operations --
+                 the first Branch that isn't an air-handling product line.
+Branches (again)  4   Residential Air, Commercial Air, Sustaining, Lab Operations
 Users            53   (9 added in Pass 14; this line sat stale at 51 until
                  Pass 33 counted the real db -- see Pass log)
 Variants        513   active, all carrying a Team as of the Pass 33 backfill
@@ -1234,6 +1237,28 @@ against it), and letting the surrounding chrome theme normally took the title
 to 16.66:1 dark / 16.88:1 light for free. Check any new fixed-colour surface
 in BOTH themes with computed values, not by eye.
 
+**Toggling `data-theme` and reading `getComputedStyle` in the same evaluation
+does not reliably reflect the new theme (Pass 35).** The style recalc lags the
+attribute change, so a read can return the PREVIOUS theme's computed values.
+This produced a false "1.01:1 in dark mode" contrast reading on Log Delivery and
+a false all-clear elsewhere in the same session -- both chased as if they were
+real defects. The reliable method is the one a user actually takes: POST
+`SetTheme` (persists the cookie, so the server stamps `<html data-theme>`),
+re-fetch the page, and measure against that stamp. Treat any contrast figure in
+this doc gathered by in-page toggling -- including some in the 2d.1 and Pass 33
+entries -- as indicative rather than proof.
+
+**FdaString is NOT a consistent shape, so never prefix-match it (Pass 35).**
+Real data holds 0-, 1-, 2- and 4-dot forms (`NWES`, `PATS.LEAN-TO`,
+`ETRD.CNEA.CNE6`, `RLB.MTOE.SMRI.RACK 8.Row 1`), because older rows compressed
+out empty levels instead of padding with `0`, plus a case split
+(`PATS.LEAN-TO` x185 vs `PATS.Lean-To` x1). And the segments do not reliably map
+to the hierarchy: in `PATS.LEAN-TO` the second segment is a **Rack**, not a
+Major. Filter on the `Parent`/`Major`/`Sub` COLUMNS instead -- they are clean
+(4 Parents, 3 Majors, zero rows with a Sub set but no Major). `ExportToCsv`'s
+`FdaString.StartsWith` predates this and survives only because its input is a
+free-text term the human typed, not a level from a cascade.
+
 **EF Core cannot translate `string.Equals(a, b, StringComparison.X)` against a
 live `IQueryable` (Pass 29).** It works fine against an already-materialized
 `List<T>` (plain LINQ-to-Objects), but the identical expression run directly
@@ -1258,6 +1283,15 @@ unique index enforces, plain `==` is usually the more correct comparison anyway
   host laptop. Git history keeps the old value even after a change, so rotating matters more
   than removing the line.
 - **`encodeLoc()` is duplicated** in `Index.cshtml` and `Intake.cshtml`, plus the C# original.
+- **Fix theme/contrast bugs at the CAUSING RULE, not with a list of ids.** Both
+  Pass 35 button bugs (`.btn-close` x10, `.btn-outline-light` x10) existed
+  because an earlier fix enumerated the two or three known-broken elements by
+  id instead of correcting the rule that broke them, so every later use
+  inherited the bug. When a fix needs a by-name list, that list is the defect.
+  Scope by SURFACE instead: a surface that follows the theme (`--vis-card`)
+  needs a theme-relative override; one that does not (`bg-primary`,
+  `bg-warning`, an inline-tinted header) must be excluded from it, or the
+  "fix" becomes the next regression.
 - **`Type` is free text** — no vocabulary. `IsControlType` matches only items literally typed
   `Control`; EEV, VFD and Valve are uncovered.
 - **`newGroup`** is a dead parameter on `ModifyStock`, accepted and ignored.
@@ -2725,3 +2759,145 @@ look busier on day one than it did the day before.
 
 **Not built, deliberately:** a claim notification back to the recipient ("your box
 was collected"). Parked as a backlog line — see below.
+
+**Pass 35 (2026-08-30/09-02) — search filters rebuilt on real columns, the map's
+location links made precise, a whole class of invisible buttons fixed, and Search
+Center relaid out.** No migration, no schema change. Four separate asks that
+turned out to share one root: things that *looked* right because the data hadn't
+yet produced the case that breaks them.
+
+---
+
+**1. Filters: Type and Brand became dropdowns, "FDA Term" became a real location
+cascade.**
+
+Type and Brand were free-text boxes you had to spell correctly; both are closed
+sets in practice (14 types, 21 brands across 492 items). They're now `<select>`s
+built from `allItems` — which is already materialized and already Line-scoped, so
+the options match what that viewer can actually see rather than advertising a
+brand on a Line they can't reach. Still a `Contains` match server-side, so
+picking "Motor" deliberately also returns ID Motor and OD Motor (124 items).
+
+The "FDA Term" box asked people to type a machine string and matched it as loose
+text. It's replaced by three cascading selects — location / area / spot —
+showing real names and posting the stored codes.
+
+**The load-bearing decision here: the filter matches the Parent/Major/Sub
+COLUMNS, not FdaString.** FdaString is not a consistent shape in real data. It
+comes in 0-, 1-, 2- and 4-dot forms (`NWES`, `PATS.LEAN-TO`, `ETRD.CNEA.CNE6`,
+`RLB.MTOE.SMRI.RACK 8.Row 1`) because older rows compressed out empty levels
+instead of padding them with `0`, and it carries a case split too
+(`PATS.LEAN-TO` x185 alongside `PATS.Lean-To` x1). Worse, in `PATS.LEAN-TO` the
+second segment is a **Rack**, not a Major — so a Major-level prefix match would
+silently return nothing. The columns have none of those problems: 4 Parents, 3
+Majors, and zero rows where a Sub is set without its Major. Anyone tempted to
+"simplify" this back to a `FdaString.StartsWith` should re-read this paragraph.
+
+Implementation notes worth keeping: the three levels are matched inside **one**
+`Any()`, deliberately — three chained `Any()` calls would let an item qualify by
+matching the Parent on one variant and the Major on a *different* one, which is
+not "stock at this location" in any sense a human means. Comparison is
+`.ToLower()` rather than `string.Equals(.., StringComparison)`, per the Pass 29
+EF-translation trap.
+
+`Search()`'s `notes` parameter is **gone**, fully superseded rather than left as
+dead weight: its Description half moved into the omni sweep, its FdaString half
+became this filter. That mattered because `filterNotes` had a second consumer
+nobody would have thought to check — see below.
+
+**2. Description joined omni search.** Omni swept nine fields (ItemId, Rheem PN,
+ItemName, Brand, Type, FdaString, Team, Group, ProjectCode) and never touched
+Description; only the retired `notes` filter reached it. Only **3 of 492 items**
+have a description today (`460V ~ 1050 RPM ~ 1 HP`, `Siemens POL224.00 -
+Climatix Eco`, `668.80/STD - Climatix`), so this changes little now — but it's
+one line, both sides are already `ToLower()`, and the field will fill as people
+use it.
+
+**3. The facility map was doing loose text matching, and it was luck that it
+worked.** Every zone pin and Location List row linked to
+`?mode=Omni&omniSearch=<code>` — a *text* search for the location code across
+nine fields — and the zone-menu Major/Sub drill-downs used `filterNotes`, which
+matched Description-or-FdaString by `Contains`.
+
+I expected to find this returning wrong results and it wasn't: PATS/NWES/ETRD/RLB
+returned 186/88/127/111, exactly matching a real location filter. Those
+four-letter codes simply don't collide with anything. **But two codes already in
+use prove the fragility** — rack `15` returned **36 items instead of 2**, and
+rack `2` returned **305 instead of 43**, because short and numeric codes match
+part numbers, model names and project codes. This is the identical flaw the Quick
+Filter branch buttons had before the 2026-08-21 fix; the map never got that fix.
+All three link types now carry the real location params, so the drill-downs are
+exact rather than coincidentally correct.
+
+**4. Buttons invisible in light mode — two separate root causes, both fixed at
+the rule rather than by name.**
+
+*Close buttons.* `.btn-close { filter: invert(1) }` is unconditional. It flips
+Bootstrap's dark icon white, which is right on this app's dark cards and exactly
+wrong once `--vis-card` resolves to `#FFFFFF`. **Ten bare `.btn-close` elements
+across five views** were affected; only the three `btn-close-white` ones had ever
+been fixed, individually by id — and that by-name list is precisely why this sat
+unnoticed. Fixed at the causing rule but **scoped by surface**: a blanket
+`[data-theme=light] .btn-close { filter:none }` was tried first and was a
+regression, putting a dark × on the `bg-primary` blue at 3.6:1. Untinted headers
+and `.holo-header` follow the theme and get the revert (invisible → **21:1**);
+`bg-primary`/`bg-dark` keep the white ×; `bg-warning` and `.alert` are light in
+*both* themes so they get a dark × in both — which also fixed a bug nobody had
+reported, white-on-amber at ~1.9:1 in **dark** mode. New Item Registry's header
+is tinted by an inline `style`, not a `bg-` class, so it got a
+`.modal-header-tinted` hook rather than a fourth id in a list.
+
+*Outline-light buttons.* Bootstrap's `.btn-outline-light` is built for dark
+backgrounds — border `#f8f9fa`, and a `btn-check` selecting it fills `#f8f9fa`
+too. On dark cards that reads 15.8:1; on white it was **1.05:1 in both the
+checked and unchecked state**, so the button had no shape at all and a toggle
+pair gave no clue which half was selected. The label text stayed readable
+(16:1), which is exactly why it never looked obviously broken. Ten call sites —
+the Rheem PN "Has a Part #" toggles, LogDelivery's four "Have it" toggles,
+AllItems' back link, three in Settings. One light-theme rule fixes all of them:
+unchecked now a real grey edge (**3.18:1**), checked a dark fill with white text
+(**16.88:1**), dark mode untouched at 15.8:1.
+
+**5. Search Center relaid out.** Advanced Filters to 2/3 of the top row
+(747px at 1440), Omni Search to 1/3 (365px) — measured 2.04:1. Export Wizard,
+Modify Stock and View Cart left their filter-cards and became an **Actions** row
+in Command Center's Quick Actions language; View Cart moved off the Quick Filters
+strip because opening a cart isn't a way of narrowing a list. Quick Filters split
+into two labelled boxes on their real axis — **Filter by type** (Units,
+Compressors, Motors) and **Filter by branch** (Commercial, Residential,
+Sustaining), which is a genuine distinction: the branch three gray out for
+branches you're not on, the type three never do.
+
+`.cc-card`, `.cc-quick-btn` and `.cc-section-title` **moved from
+CommandCenter.cshtml's own `<style>` into site.css** so both pages share one
+definition — same call 2d.1 made for `.modal-content label`, and the alternative
+is the drift this project keeps finding (locations x9, close buttons x10).
+`.sc-action-row` is deliberately its own 3-column rule so it can never reflow
+Command Center's 4; Command Center re-verified unchanged afterward (4 columns at
+259.5px, same padding/radius/red icons).
+
+---
+
+**Verified live throughout, against raw SQL rather than by eye.** All ten filter
+combinations matched the database exactly: PATS/NWES/ETRD/RLB 186/88/127/111,
+ETRD+CNEA 116, ETRD+CNEA+CNE6 116, RLB+MTOE+SMRI 73, Compressor 250, Motor 124,
+RLB+Compressor 0. Map links confirmed carrying full location paths with zero
+`omniSearch`/`filterNotes` remaining. Description search confirmed on all three
+real items, case-insensitive both directions. Layout measured at 1440px and at
+375px mobile (no horizontal overflow). Zero console errors. **No database writes
+at all this pass** beyond a theme toggle that was set back afterward.
+
+**A methodology correction worth recording, because it invalidates a technique
+used earlier in this project.** Toggling `data-theme` and reading
+`getComputedStyle` **within a single evaluation** does not reliably reflect the
+new theme — the style recalc lags, and a read can return the *previous* theme's
+values. It produced a false "1.01:1 in dark mode" reading on LogDelivery, and a
+false clean result elsewhere. The reliable method is to set the theme the way a
+user does (POST `SetTheme`, which persists the cookie and makes the server stamp
+`<html data-theme>`), then re-fetch the page and measure against that stamp.
+Any contrast figure in this doc gathered by in-page toggling should be treated as
+indicative, not proof — the Pass 35 numbers above were re-taken the reliable way.
+
+**Also corrected:** the Log Delivery recipient dropdown still read "Unknown
+Delivery — notify all managers/supervisors" months after the Pass 33 follow-up
+made it exactly L3. Now reads "notify every engineer".

@@ -374,7 +374,27 @@ namespace Visual_Inventory_System.Services
         // NOTE: the old "name" filter slot is now the Rheem Part # filter
         // (leadership: PN is a primary identifier). Item NAME is still
         // reachable through omni-search.
-        public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand, string? notes, string? branch = null)
+        /// <summary>
+        /// The `notes` parameter this used to take (Description OR FdaString, both
+        /// Contains) is gone as of Pass 35, fully superseded: Description joined
+        /// the omni sweep below, and the FdaString half became the real
+        /// locParent/locMajor/locSub filter -- which reads the Parent/Major/Sub
+        /// COLUMNS, not the FdaString.
+        ///
+        /// That column choice is load-bearing. FdaString is not a consistent
+        /// shape in real data: it comes in 0-, 1-, 2- and 4-dot forms
+        /// ("NWES", "PATS.LEAN-TO", "ETRD.CNEA.CNE6",
+        /// "RLB.MTOE.SMRI.RACK 8.Row 1") because older rows compressed out the
+        /// empty levels instead of padding them with "0", and it carries a case
+        /// split too ("PATS.LEAN-TO" x185 vs "PATS.Lean-To" x1). Prefix-matching
+        /// that string would silently miss rows and mis-level others -- in
+        /// "PATS.LEAN-TO" the second segment is a RACK, not a Major. The columns
+        /// have none of those problems: 4 Parents, 3 Majors, zero rows where a
+        /// Sub is set without its Major.
+        /// </summary>
+        public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand,
+                                          string? branch = null,
+                                          string? locParent = null, string? locMajor = null, string? locSub = null)
         {
             // Include variants: results feed the holoviewer, which reads the
             // Quantity/location pass-throughs -- without variants loaded those
@@ -409,12 +429,19 @@ namespace Visual_Inventory_System.Services
                 query = query.Where(i => i.Brand.ToLower().Contains(brand.ToLower()));
                 isFilterActive = true;
             }
-            if (!string.IsNullOrWhiteSpace(notes))
+            if (!string.IsNullOrWhiteSpace(locParent))
             {
-                // FdaString now lives on the variants (item.FdaString is NotMapped
-                // and cannot be used in an EF query) -- match any active variant.
-                query = query.Where(i => i.Description.ToLower().Contains(notes.ToLower()) ||
-                                         i.Variants.Any(v => !v.IsRetired && v.FdaString.ToLower().Contains(notes.ToLower())));
+                // ONE Any() carrying all three levels, deliberately -- three
+                // chained Any() calls would let an item qualify by matching the
+                // Parent on one variant and the Major on a different one, which
+                // is not "stock at this location" in any sense a human means.
+                string p = locParent.Trim().ToLower();
+                string m = (locMajor ?? "").Trim().ToLower();
+                string s2 = (locSub ?? "").Trim().ToLower();
+                query = query.Where(i => i.Variants.Any(v => !v.IsRetired
+                    && v.Parent.ToLower() == p
+                    && (m == "" || v.Major.ToLower() == m)
+                    && (s2 == "" || v.Sub.ToLower() == s2)));
                 isFilterActive = true;
             }
             if (!string.IsNullOrWhiteSpace(branch) && OrgStructure.BranchLines.TryGetValue(branch, out var branchLines))
@@ -435,6 +462,11 @@ namespace Visual_Inventory_System.Services
                     i.ItemName.ToLower().Contains(s) ||
                     i.Brand.ToLower().Contains(s) ||
                     i.Type.ToLower().Contains(s) ||
+                    // Description was the one identity field omni never swept --
+                    // only the old `notes` filter reached it, and that field is
+                    // gone now. Case-insensitive by construction (both sides
+                    // ToLower'd), same as every other clause here.
+                    i.Description.ToLower().Contains(s) ||
                     i.Variants.Any(v => !v.IsRetired && v.FdaString.ToLower().Contains(s)) ||
                     i.Team.ToLower().Contains(s) ||
                     i.Group.ToLower().Contains(s) ||
