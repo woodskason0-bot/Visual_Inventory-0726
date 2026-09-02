@@ -1830,7 +1830,8 @@ every write, not just through the app's own re-fetch.
   nor `SetDefaultThreshold` writes a `TransactionLog` entry, unlike every
   other Settings/admin action — threshold changes don't show up in the
   Activity Feed or View Logs. Worth a look if that audit trail gap ever
-  matters.
+  matters. **CLOSED 2026-09-02 — see the Pass 36 entry at the end of this
+  file.**
 - **Dark-mode contrast anomaly: still could not reproduce, now from a
   second independent session.** Tried three ways — the real theme toggle,
   a fresh page load while already in dark mode (server-side cookie, not
@@ -2983,3 +2984,65 @@ indicative, not proof — the Pass 35 numbers above were re-taken the reliable w
 **Also corrected:** the Log Delivery recipient dropdown still read "Unknown
 Delivery — notify all managers/supervisors" months after the Pass 33 follow-up
 made it exactly L3. Now reads "notify every engineer".
+
+**Pass 36 (2026-09-02) — the two threshold actions finally write a
+`TransactionLog` row, and the Activity Feed stopped mislabelling item actions
+it didn't recognise.** No migration, no schema change. Small pass: closing the
+audit-trail gap the Pass 28 (2d.2) entry above flagged as a side observation
+and never fixed.
+
+This started as a bigger idea — a superuser audit section that read logs as
+actions and reconciled them against live db state. I scoped it, then dropped
+it, because the premise didn't hold: `SettingsController` has **zero
+`try`/`catch` in all 1,178 lines**, so a bad write there isn't swallowed
+anywhere — it throws, the console logs the full exception, and the host's
+`UseExceptionHandler("/Home/Error")` shows the error page. The terminal window
+already is that audit surface. What was actually missing wasn't error
+detection, it was two *successful* writes nobody recorded.
+
+- **`UpdateAlertThreshold` logs `"Alert Threshold Changed"`** with the real
+  `ItemId`/`ItemName`, `Details = "Alert threshold: 0 -> 5."` — an item action,
+  so it takes the Activity Feed's item-lookup path and `ApplyLogVisibility`
+  correctly scopes it by Line, same as any other item log. **Logged only on a
+  real change**: the Alert Rules modal gets opened to read a threshold as often
+  as to set one and Save fires either way, so an unconditional write would fill
+  the trail with `0 -> 0`. Same reason `UpdateAccessLevel` returns early on a
+  no-op instead of recording `Engineer -> Engineer`.
+- **`SetDefaultThreshold` logs `"Alert Threshold Bulk Set"`** with `ItemId = ""`
+  (the Pass 14 non-item discriminator), `Details = "Alert threshold set to 3 for
+  492 item(s) (all teams); 492 value(s) actually changed."` — scope, value, size
+  and true effect in one line. **Unlike the per-item path this logs even when
+  nothing changed**, because "Apply to all" is a confirmed overwrite of every
+  threshold in scope: the click is the event worth recording, and `0 changed` is
+  a real answer rather than noise. That asymmetry is deliberate, not an
+  oversight.
+- **The Activity Feed's item-action title chain ended in a `"Stock Adjusted"`
+  catch-all**, so any `ActionType` not in its eight-name list rendered as a
+  stock change it wasn't. Found because the new per-item row came up labelled
+  "Stock Adjusted" live. Six item ActionTypes hit that default in real data and
+  **only one of them (`Adjustment`) was actually a stock adjustment** — `Edit
+  Details`, `Unit Logged`, `Stack Deleted` and `Loan Scrap` had all been
+  mislabelled since the chain was written. Fixed at the rule, not by adding a
+  ninth name: `Adjustment` became explicit and the fallback is now
+  `log.ActionType` itself, exactly what the non-item branch beside it has done
+  since Pass 14. A new item ActionType now reads correctly with nothing to
+  update — which is the whole point, and the same "when a fix needs a by-name
+  list, that list is the defect" lesson as the Pass 35 close-button sweep.
+
+**Verified live on the dev-only db, restored byte-for-byte afterward.** Four
+cases driven through the real Alert Rules modal and its real POSTs, each
+checked by reading `TransactionLogs` directly rather than trusting the toast:
+CCR-0001 `0 -> 5` wrote exactly one row with the right ItemId/ItemName; saving
+`5` again wrote **nothing** (the no-op guard); "Apply to all" at 3 wrote one row
+reading `492 item(s) (all teams); 492 value(s) actually changed`; applying 3 a
+second time wrote a row reading `0 value(s) actually changed`. Both rows then
+confirmed rendering correctly on View Logs *and* the Activity Feed — the
+per-item one under its own name after the fallback fix, the bulk one through the
+blank-`ItemId` non-item path. Zero console errors. `inventory.dev.db` restored
+to md5 `ee99b633…` (492 items, 609 logs, all thresholds back to 0); production
+`C:\VIS_Inventory\inventory.db` was never opened and is still `3f3921ea…`, both
+`integrity_check ok`. Build baseline unchanged at 14 warnings.
+
+**Does not change the OPEN state at the top of this file.** No database move,
+no publish — the host repull and the six org changes are still pending exactly
+as described there.

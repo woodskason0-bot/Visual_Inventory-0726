@@ -682,7 +682,14 @@
                         log.ActionType == "New Registry" ? "New Item" :
                         log.ActionType == "Order Picked Up" ? "Order Picked Up" :
                         log.ActionType == "Item Deleted" ? "Item Deleted" :
-                        "Stock Adjusted";
+                        log.ActionType == "Adjustment" ? "Stock Adjusted" :
+                        // Falls back to the action's own name, the same way the
+                        // non-item branch above already does (Pass 14) -- a new
+                        // item ActionType reads correctly here with nothing to
+                        // update. "Stock Adjusted" used to be this default, which
+                        // silently mislabelled Edit Details, Unit Logged, Stack
+                        // Deleted and Loan Scrap as stock changes they aren't.
+                        log.ActionType;
 
                     var localTs = log.Timestamp.ToLocalTime();
                     string timeDisplay = localTs.Date == DateTime.Today ?

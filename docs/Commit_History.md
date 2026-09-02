@@ -11,6 +11,34 @@ landed, when."
 
 ## 2026-09-02
 
+### Pass 36 — alert-threshold changes finally reach the audit trail
+No migration, no schema change. Closes the gap the Pass 28 (2d.2) session
+flagged and left: `UpdateAlertThreshold` and `SetDefaultThreshold` were the only
+two admin-shaped writes in the app that recorded nothing, so a bulk overwrite of
+all 492 thresholds left no trace in View Logs or the Activity Feed.
+`UpdateAlertThreshold` now writes `"Alert Threshold Changed"` with the real
+ItemId/ItemName and a `0 -> 5` detail, **only when the value actually changes**
+(the modal is opened to read as often as to set, and Save fires either way —
+same no-op reasoning as `UpdateAccessLevel`). `SetDefaultThreshold` writes
+`"Alert Threshold Bulk Set"` with `ItemId = ""` (the Pass 14 non-item
+discriminator) recording scope, value, item count and how many values genuinely
+changed — and logs **even on a no-op**, deliberately, because "Apply to all" is
+a confirmed overwrite and `0 changed` is itself the audit answer.
+Also fixed while verifying: Command Center's Activity Feed ended its item-action
+title chain in a `"Stock Adjusted"` catch-all, so six ActionTypes in real data
+hit it and only one (`Adjustment`) was actually a stock adjustment — `Edit
+Details`, `Unit Logged`, `Stack Deleted` and `Loan Scrap` had been mislabelled
+since it was written. Fixed at the rule rather than by adding a ninth name:
+`Adjustment` made explicit, fallback now `log.ActionType`, matching what the
+non-item branch beside it has done since Pass 14.
+Verified live on `inventory.dev.db` across all four cases (change, no-op change,
+bulk, bulk no-op) by reading `TransactionLogs` directly; dev db restored
+byte-for-byte to md5 `ee99b633…`, production never opened. 14-warning baseline
+unchanged.
+*Files:* `Services/InventoryService.cs`, `Views/Home/CommandCenter.cshtml`,
+`docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+
 ### Pass 35 — search filters on real columns, precise map links, invisible-button sweep, Search Center relayout
 No migration, no schema change. Four asks sharing one root: things that looked
 right because the data hadn't yet produced the case that breaks them.

@@ -894,7 +894,27 @@ namespace Visual_Inventory_System.Services
             var item = _db.InventoryItems.FirstOrDefault(i => i.ItemId == itemId);
             if (item != null)
             {
+                int oldThreshold = item.AlertThreshold;
                 item.AlertThreshold = threshold;
+
+                // Logged only on a real change: the Alert Rules modal is opened to
+                // READ a threshold as often as to set one, and Save fires either
+                // way -- same reason UpdateAccessLevel returns early on a no-op
+                // rather than recording "Engineer -> Engineer".
+                if (oldThreshold != threshold)
+                {
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        ActionType = "Alert Threshold Changed",
+                        ItemId = item.ItemId,
+                        ItemName = item.ItemName,
+                        QuantityChange = 0,
+                        Details = $"Alert threshold: {oldThreshold} -> {threshold}.",
+                        User = _currentUser.Name
+                    });
+                }
+
                 _db.SaveChanges();
             }
         }
@@ -911,8 +931,28 @@ namespace Visual_Inventory_System.Services
                 q = q.Where(i => teams.Contains(i.Team));
 
             var items = q.ToList();
+            int changed = items.Count(it => it.AlertThreshold != threshold);
             foreach (var it in items)
                 it.AlertThreshold = threshold;
+
+            // ItemId = "" because this isn't about one item -- the Activity Feed
+            // reads a blank ItemId as the discriminator for a non-item action
+            // (Pass 14) and renders ActionType/Details instead of looking one up.
+            // Unlike the per-item path above this logs even when nothing changed:
+            // "Apply to all" is a confirmed overwrite of every threshold in scope,
+            // so the click is the event worth recording, and "0 changed" is a real
+            // answer rather than noise.
+            string scope = (teams != null && teams.Count > 0) ? string.Join("/", teams) : "all teams";
+            _db.TransactionLogs.Add(new TransactionLog
+            {
+                Timestamp = DateTime.UtcNow,
+                ActionType = "Alert Threshold Bulk Set",
+                ItemId = "",
+                QuantityChange = 0,
+                Details = $"Alert threshold set to {threshold} for {items.Count} item(s) ({scope}); {changed} value(s) actually changed.",
+                User = _currentUser.Name
+            });
+
             _db.SaveChanges();
             return items.Count;
         }
