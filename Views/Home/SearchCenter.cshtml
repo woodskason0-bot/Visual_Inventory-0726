@@ -181,6 +181,38 @@
         text-transform: none;
         letter-spacing: 0;
     }
+
+    /* Six filter boxes on ONE row -- the three attribute filters, then the three
+       location levels beside them -- instead of two stacked rows of three. Two
+       effects, both wanted: each box is a third of its group rather than half
+       (site.css's shared .filter-grid is 1fr 1fr, so three children wrapped 2+1
+       and every box ran long), and the card drops from three rows tall to two.
+       That second one is what closes the dead space under Omni Search: .grid-card
+       is h-100, so the Omni card stretches to whatever THIS card's height is --
+       the gap was never Omni's own layout, it was this card being tall.
+       Overridden here rather than in site.css because Search Center is the only
+       consumer of .filter-grid; a page that adopts it later still gets the
+       shared 2-up default. */
+    .sc-filter-cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .sc-filter-cols .filter-grid {
+        grid-template-columns: repeat(3, 1fr);
+        margin-bottom: 0;
+    }
+
+    /* Six across needs real width. Below ~1200 the two groups stack (back to two
+       rows of three), and on a phone each group goes single-column. */
+    @@media (max-width: 1199.98px) {
+        .sc-filter-cols { grid-template-columns: 1fr; }
+    }
+
+    @@media (max-width: 575.98px) {
+        .sc-filter-cols .filter-grid { grid-template-columns: 1fr; }
+    }
 </style>
 
 <div class="container-fluid py-3">
@@ -192,7 +224,15 @@
             <div class="grid-card h-100">
                 <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
                 <form asp-action="SearchCenter" method="get" class="d-flex flex-column">
-                    <div class="filter-grid mb-2">
+                    @{
+                        var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
+                                      (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
+                        string selP = (string?)ViewBag.FilterLocParent ?? "";
+                        string selM = (string?)ViewBag.FilterLocMajor ?? "";
+                        string selS = (string?)ViewBag.FilterLocSub ?? "";
+                    }
+                    <div class="sc-filter-cols mb-2">
+                    <div class="filter-grid">
                         <input name="filterRheem" placeholder="Rheem Part #" class="form-control" value="@ViewBag.FilterRheem" />
                         @* Type and Brand were free-text boxes you had to spell right.
                            Both are closed sets in practice, so offer what exists. *@
@@ -216,14 +256,7 @@
                        loose text, so a rack called "2" pulled back 305 items instead
                        of 43. These post the stored Parent/Major/Sub CODES while
                        showing the real names, and the server matches the columns. *@
-                    @{
-                        var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
-                                      (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
-                        string selP = (string?)ViewBag.FilterLocParent ?? "";
-                        string selM = (string?)ViewBag.FilterLocMajor ?? "";
-                        string selS = (string?)ViewBag.FilterLocSub ?? "";
-                    }
-                    <div class="filter-grid mb-2" id="loc-filter-grid">
+                    <div class="filter-grid" id="loc-filter-grid">
                         <select name="filterLocParent" id="flt-loc-parent" class="form-select">
                             <option value="">Any location</option>
                             @foreach (var g in locRows.GroupBy(r => new { r.PCode, r.PName }).OrderBy(g => g.Key.PName))
@@ -247,6 +280,7 @@
                                 <option value="@r.Key.SCode" data-parent="@r.Key.PCode" data-major="@r.Key.MCode" selected="@(selS == r.Key.SCode)">@r.Key.SName</option>
                             }
                         </select>
+                    </div>
                     </div>
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary w-100 fw-bold">Apply Filters</button>
@@ -364,7 +398,7 @@
         <div class="col-lg-6">
             <div class="grid-card h-100">
                 <label class="small fw-bold border-bottom mb-2 p-1 d-block">Filter by type</label>
-                <div class="d-flex flex-wrap gap-2">
+                <div class="d-flex flex-wrap gap-2 justify-content-center">
                     <a href="/Home/SearchCenter?mode=Filter&filterType=Unit" class="btn btn-sm btn-outline-primary py-2">Units</a>
                     <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('compressorRegistryModal')).show()">Compressors</button>
                     <button type="button" class="btn btn-sm btn-outline-primary py-2" onclick="new bootstrap.Modal(document.getElementById('motorRegistryModal')).show()">Motors (TC @totalTcOnHand on hand@(totalTcOnLoan > 0 ? $", {totalTcOnLoan} out" : ""))</button>
@@ -374,7 +408,7 @@
         <div class="col-lg-6">
             <div class="grid-card h-100">
                 <label class="small fw-bold border-bottom mb-2 p-1 d-block">Filter by branch</label>
-                <div class="d-flex flex-wrap gap-2">
+                <div class="d-flex flex-wrap gap-2 justify-content-center">
                     <a href="/Home/SearchCenter?mode=Filter&filterBranch=Commercial%20Air" class="@branchBtnClass("Commercial Air")">Commercial</a>
                     <a href="/Home/SearchCenter?mode=Filter&filterBranch=Residential%20Air" class="@branchBtnClass("Residential Air")">Residential</a>
                     <a href="/Home/SearchCenter?mode=Filter&filterBranch=Sustaining" class="@branchBtnClass("Sustaining")">Sustaining</a>

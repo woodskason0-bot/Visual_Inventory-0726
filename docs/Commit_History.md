@@ -11,6 +11,32 @@ landed, when."
 
 ## 2026-09-02
 
+### Pass 35 follow-up — Search Center top row on one line, quick filters centered
+View + docs only, no C# change, no migration. Refines what Pass 35 laid out.
+**All six filter boxes now sit on one row** (two groups of three, 353px each,
+every box 114px). Root cause of the long boxes: site.css's shared `.filter-grid`
+is `1fr 1fr`, so three children wrapped **2+1**. Overridden page-locally via a
+new `.sc-filter-cols` wrapper rather than in site.css, since Search Center is
+that class's only consumer.
+**Dead space under Omni Search: 129px to 15px.** The gap was never Omni's own
+layout — `.grid-card` is `h-100`, so Omni stretched to match Advanced Filters,
+and that card went 276px to 162px once the filters stopped stacking. The 15px
+left is its bottom padding.
+**Both quick-filter rows centered** (equal 77/77 and 107/107 gaps).
+**Branch buttons verified against raw SQL**, each returning only its own
+branch's Lines: Commercial 389, Residential 63, Sustaining 0 (Sustaining's zero
+is real — all four of its Lines hold no stock). Flagged, not changed: the three
+buttons are a hardcoded list while Branches have been managed vocabulary since
+Pass 13, so the 4th branch (Lab Operations, added 2026-09-01) has no button.
+Verified live at 1440 / 1100 / 375px, zero horizontal overflow, location cascade
+still working, zero console errors.
+**Also: the OPEN section gained the two duplicate deletes** decided this session
+(CCL-0034's phantom 16 and the CCL-0001 husk) — scoped, gate-checked, and
+deliberately written to NO database so they land on the fresh host pull beside
+the six org changes. See that section for the audit trail that found them.
+*Files:* `Views/Home/SearchCenter.cshtml`, `docs/VIS_Handoff_State.md`,
+`docs/Commit_History.md`
+
 ### Pass 36 — alert-threshold changes finally reach the audit trail
 No migration, no schema change. Closes the gap the Pass 28 (2d.2) session
 flagged and left: `UpdateAlertThreshold` and `SetDefaultThreshold` were the only

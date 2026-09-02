@@ -81,6 +81,69 @@ visible inventory from 492 items to 40, because nothing is stocked on
 Shipping/Receiving yet and a Branch scope resolves to its Lines plus blank-Line
 items.
 
+### Two duplicate deletes, decided 2026-09-02, ALSO pending — apply in the same batch
+
+Decided but **deliberately not written anywhere yet**, on Kason's call, so they
+land on the fresh host pull alongside the six above rather than becoming a
+seventh and eighth thing to re-apply. Nothing below has been done to any
+database — `inventory.db` is still `3f3921ea…` and untouched.
+
+**The finding.** `POL688.80/STD` (Siemens Climatix controller) is registered
+three times. The audit trail says exactly how:
+
+| When | What |
+|---|---|
+| `2026-07-13 18:03:45` | Go-live import mints **CCL-0001** with **16** units (Samurai, `RLB.MTOE.SMRI`), named `POL`**`668`**`.80/STD` — a typo; everything else says **688**. Same second, **CCL-0029** lands with 75 (Ninja, `RLB.MTOE.MZA4`). |
+| `2026-07-14 15:31:23` | CCL-0001's 16 units logged as **`Scrap`** — *"Scrapped 16 unit(s)"*. |
+| `2026-07-14 15:32:51` | **88 seconds later**, **CCL-0034** created with **16** units, name corrected to **688**, but its `Description` still carries the old typo `668.80/STD - Climatix`. |
+| `2026-07-16 14:53:58` | CCL-0029 pulls 1 on Order #1: 75 → **74**. |
+
+So CCL-0034 was a **rename-by-scrap-and-re-register** of CCL-0001, and CCL-0001
+was left behind as a zero-quantity husk still typed **Coil** — which is why it
+heads a Type = Coil filter. **The quiet error is that the rename was logged as a
+`Scrap`**: `ExportToCsv` sums `Scrap` rows into its `ScrappedQty` column, so
+Samurai's scrap total reads 16 units high for a disposal that never happened.
+
+**The decision (Kason, 2026-09-02): the 16 are a phantom double-count of the
+74 — delete them, keep CCL-0029's 74.** Both deletes to run against the fresh
+host pull:
+
+1. **CCL-0034** (item Id 310, variant Id 319, qty **16**, Samurai,
+   `RLB.MTOE.SMRI.CTRLS.2`) — remove item + variant. It carries real quantity,
+   so the app's own Delete Item gate (total must be 0) does **not** pass; this
+   is a deliberate SQL exception, not a UI action. **Zero it as a correction,
+   never as a `Scrap`** — scrapping is precisely the mislabel that created this
+   mess, and repeating it would inflate `ScrappedQty` by another 16.
+2. **CCL-0001** (item Id 35, variant Id 35, qty **0**) — the husk. Already 0, so
+   this one genuinely satisfies the Delete Item gate.
+
+**Check before either delete** (the same gates `DeleteItem`/`DeleteVariant`
+enforce, plus the one Pass 33 added): no On-Hand `CompressorUnit`/`MotorUnit`
+rows against variants 319/35, no `Pending` order line naming them, and no
+undecided `TransferRequest`. Both are Controls, so units are unlikely — check
+anyway rather than assuming. **All four gates were checked clear on the local
+`inventory.db` on 2026-09-02** (0 units, 0 pending lines, 0 transfer requests;
+1 log row on CCL-0034, 2 on CCL-0001, all of which survive the delete). **Re-run
+them on the host pull before deleting** — the host has been in use and holds
+activity this copy has never seen, so a clear result here is not a clear result
+there. Item/variant row Ids (310/319, 35/35) are from this copy too; match on
+`ItemId` rather than trusting those numbers.
+
+**Leave the historical `Scrap` log row alone.** It records what the app actually
+did on 2026-07-14; rewriting it would be inventing history rather than
+correcting data. Note it in the new deletion log instead. `TransactionLogs` for
+both ItemIds keep reading under the now-defunct ids, the same soft-hide
+treatment every prior delete in this project has used.
+
+**Not acted on, flagged only:** four OD Motor pairs (`COR-0001/0009`,
+`COR-0002/0005`, `COR-0003/0007`, `COR-0004/0008`) are same model, same Team,
+same Line and the **same shelf** (`ETRD.CNEA.CNE6`), separated only by a
+`(Split)` suffix, all minted in the same go-live second. That suffix looks like
+a deliberate spec distinction someone typed, so they were left untouched — but
+they are the only other exact-name collisions in the catalog. The three other
+near-collisions (`CFR-0002/0003`, `CEV-0013/0014`, `CEV-0015/0016`) are
+genuinely different parts.
+
 ### Which database file is which, as of 2026-09-02
 
 | File | md5 | Migrations | Notes |
