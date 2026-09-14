@@ -2257,15 +2257,25 @@ namespace Visual_Inventory_System.Controllers
                 return View();
             }
 
-            // Normalize capitalization to First.Last
+            // Normalize capitalization to First.Last. This is only a fallback for a
+            // name that ISN'T on the roster -- it flattens interior capitals, and
+            // real names have them (DeCory, McDonald, O'Brien).
             var parts = name.Split('.');
             string normalized = string.Join(".",
                 parts.Select(p => char.ToUpper(p[0]) + p.Substring(1).ToLower()));
 
-            _currentUser.Set(normalized);
+            // Case-INSENSITIVE, because SQLite compares TEXT with BINARY collation by
+            // default: "DeCory.Thomas" != "Decory.Thomas", so the flattened form missed
+            // its own roster row and fell through to Viewer on every single sign-in.
+            // ToLower() rather than a StringComparison overload -- EF Core can't
+            // translate the latter (same reason NotificationService says so).
+            string lookup = normalized.ToLower();
+            var known = _db.Users.FirstOrDefault(u => u.UserName.ToLower() == lookup && u.IsActive);
 
-            // Pull their access tier from the roster; unknown names get Viewer.
-            var known = _db.Users.FirstOrDefault(u => u.UserName == normalized && u.IsActive);
+            // The roster's spelling wins outright: Notifications, Deliveries and the
+            // UserTeams join all match on this string, so a session name that merely
+            // looks right isn't good enough -- it has to be the stored one.
+            _currentUser.Set(known?.UserName ?? normalized);
             _currentUser.SetLevel(known?.AccessLevel ?? AccessLevels.Viewer);
             _currentUser.SetTheme(known?.Theme ?? "dark");
             _currentUser.SetLine(known?.Line ?? "");
