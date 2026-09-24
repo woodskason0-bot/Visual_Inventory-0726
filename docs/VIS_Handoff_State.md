@@ -35,113 +35,91 @@ only confirmed by static reading and a clean build, and the difference is spelle
 
 ---
 
-## OPEN AS OF 2026-09-02 (evening) — read this before touching any database
+## OPEN AS OF 2026-09-24 — read this before touching any database
 
 Everything below is live state that isn't recoverable from code or git history.
 It is the one part of this file that goes stale by the hour rather than by the
 pass; if the dates here are old, confirm against the real files before acting.
 
-### The host repull happened. Nothing is pending. ✅
+### The host is ahead of every local copy of production
 
-The divergence this section warned about all day is **resolved**. Kason pulled
-the host db to `D:\Releases\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) and
-it was merged the same evening.
+The Sept 2 staged release was superseded before it was installed. I built
+`C:\VIS_Host\september10threlease\` on 2026-09-10 and **that** is what the host
+runs, against the merged Sept 2 db. The host has taken three weeks of real
+writes since. Local production has taken none.
 
-The host turned out to be a **strict superset of local except the six org
-changes** — nothing existed only on local. So the merge took the host pull as
-the base and re-applied the six on top, which is the direction that loses
-nothing. Every host-only row was preserved and verified present afterward:
-3 compressor registrations (`CCR-0256/0257/0258`), `CCL-0036`, Gavin's 4 EEV
-stock additions, the new user DeCory Thomas, 11 team memberships, delivery #6.
+The 9/10 build appears to already include `a9e30f1` (case-insensitive sign-in),
+even though that commit is dated 9/13 — it was built from the working tree
+before it was committed. The evidence is in the host's own data: DeCory's 9/10
+actions are logged as `DeCory.Thomas`, a spelling the pre-fix code could never
+produce (it flattened every name to `Decory.Thomas`). Treat it as deployed, not
+proven.
 
-Applied to that merged file, in one transaction each:
-
-| | |
-|---|---|
-| The six org changes | re-applied (Lab Operations, Shipping/Receiving, Shelly + Chris, Luis 5→4 + Branch) |
-| `CCL-0034` | deleted — the phantom 16, zeroed **as a correction, never a Scrap** |
-| `CCL-0001` | deleted at qty 0 — the husk |
-| 25 Coil items | retyped: 19 `Tubing Components`, 6 `Control` |
-| 185 variants | `FdaString` normalized `PATS.LEAN-TO` → `PATS.Lean-To` |
-
-Result: **494 items / 519 variants / 54 users / 651 logs**, `integrity_check ok`,
-zero orphan variants, zero remaining FdaString-vs-column mismatches.
-
-### Things that came out of the merge and are still open
-
-- **`CCL-0036` (`POL96U.00/STD`, Siemens, 27 units) has no Team** — item and
-  variant both blank, registered via Intake 2026-08-31 with the log literally
-  reading "Registered to Commercial/**no team**". This is **not** the Pass 32
-  phantom-shortfall bug (that needs item-team-set + variant-team-blank, and
-  there are **zero** such rows in the database). Both being blank is
-  self-consistent and fails open, so it is orderable by anyone — but it is 27
-  units claimed by nobody. Assign a team when convenient.
-- **The 6 items retyped to `Control` are now LOANABLE.** `IsControlType` is
-  `EndsWith("control")`, so `LoanableQuantity` returns their full quantity and
-  they enter the Done Using flow expecting a return. Deliberate — Kason chose
-  singular `Control` over the engineer's plural "Controls" knowing this — but it
-  will show up on the loan bench and nobody has exercised it yet.
-- **119 items / 128 variants still carry a blank Team** org-wide. Pre-existing
-  and unrelated to this merge; noted because the sweep counted it.
-
-### Why the FdaString normalization was not merely cosmetic
-
-`CommitIntake` matches an existing stack with `v.FdaString == fda` — exact
-string equality — while the generator builds `fda` from the Rack **column**.
-The column was uniformly `Lean-To`; 185 stored strings said `LEAN-TO`. A future
-intake at Plant Test Cells/Lean-To would therefore have failed to match and
-minted a **second variant at the same physical shelf**. There were zero
-duplicate stacks at the time of the fix, so this closed a latent path rather
-than cleaning up damage.
-
-### Backups taken during the merge — keep until the host is confirmed healthy
-
-In `C:\VIS_Inventory\`:
-- `inventory.db.hostpull-untouched-20260902-165353` — the host pull, pristine,
-  md5 `3b500df5…`. **This is the fallback if the merge is ever doubted.**
-- `inventory.db.pre-hostmerge-backup-20260902-165353` — local production as it
-  was before the merge, md5 `3f3921ea…`.
-- `inventory.db.pre-fdanormalize-backup-20260902-*` — after the merge, before
-  the 185-row FdaString fix.
-
-### Which database file is which, as of 2026-09-02 (evening)
+### Which database file is which, as of 2026-09-24
 
 | File | md5 | Notes |
 |---|---|---|
-| `C:\VIS_Inventory\inventory.db` | `5be3f996…` | **Local production, and the merged truth.** 494 items / 519 variants / 54 users / 651 logs, 4 Branches, 39 migrations. |
-| `D:\VIS_Release_20260902\database\inventory.db` | `5be3f996…` | Byte-identical copy on USB `LESLISGIFT`, staged for the host. |
-| `D:\Releases\VIS_Inventory\inventory.db` | `3b500df5…` | The RAW host pull Kason copied over BEFORE the merge. Left untouched on purpose. |
-| `C:\VIS_Inventory\inventory.dev.db` | `ee99b633…` | Dev sandbox — **now stale**, still the pre-merge 492-item shape. Re-seed from production before the next dev test. |
-| `…\Downloads\VisualStorageTerminal\…\inventory.db` | `36c42cd4…` | Pre-migration host handoff, 2026-08-28, **36 migrations**. Keep as the deep fallback. |
+| `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | **Newest copy of the host**, pulled 9/23. 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
+| `C:\VIS_Inventory\inventory.dev.db` | `4b989780…` | Dev sandbox = that 9/23 host copy, minus the stale `Decory1.Thomas` user, plus a few dev-only test logs from Pass 39 (a net-zero Adjustment round trip on CEV-0027). **Current — the right file to test against.** |
+| `E:\VIS_Return_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | Return package for the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted. `README_FIRST.txt` beside it. |
+| `C:\VIS_Inventory\inventory.db` | `5be3f996…` | Local production — **still the Sept 2 merge state, three weeks behind the host** (494 items / 519 variants / 651 logs). Do not treat as current. |
 
-`integrity_check ok` on production. Take a fresh backup before any db write
+`integrity_check ok` on all of them. Take a fresh backup before any db write
 rather than assuming one exists.
 
-### Release state
+### Still to do
 
-Head is pushed. **A release IS built and staged, but has NOT been installed on
-the host yet** — that is the one outstanding action.
+- **Delete `Decory1.Thomas` on the host.** A stale second account (Id 76,
+  inactive, no teams, no subscriptions) I made on 9/10 while sorting out
+  DeCory's access. Deleted in dev; the host still has it. The return package
+  does it, but **only if the host db hasn't changed since 9/23**: check the
+  host's `C:\VIS_Inventory\inventory.db` md5 is `6B128AAEDBAF9839CA817C51DDF09B1E`
+  first. Anything else means the host took writes since, and copying over it
+  would erase them — bring the new db back and redo the delete on it instead.
+  The two log rows that mention it ("User Added", "IsActive -> False") stay as
+  history either way.
+- **Catch local production up** once the host is settled — copying the return
+  package's db (or a fresh host pull) over `C:\VIS_Inventory\inventory.db`,
+  after a backup.
+- **Pass 39 is committed and pushed (`9238179`) but not released.** Nothing in
+  it reaches the lab until the next publish. No migration in it, so the db
+  needs no move for it.
+- **Orphan notification subscription:** `NotificationSubscriptions` row 9
+  points at `UserId 72`, which doesn't exist (a `PickupRequested` subscription).
+  Present in every copy including the Sept 2 one, so it long predates this
+  session — most likely left behind when a user was removed by hand in SQL.
+  Harmless unless something joins on it; one-row cleanup whenever.
+- **Carried from Sept 2, still true on the 9/23 host copy:** `CCL-0036`
+  (Siemens, 27 units) still has no Team; the 6 items retyped to `Control` are
+  loanable and nobody has exercised that on the loan bench yet; 119 items /
+  128 active variants carry a blank Team org-wide.
 
-- Built: `C:\VIS_Host\september2ndrelease\` — self-contained `win-x64`,
-  544 files, ~132 MB. Carries Passes 36 and 37 plus the Pass 35 follow-up.
-- Staged on USB `LESLISGIFT` at **`D:\VIS_Release_20260902\`** — `app\` (the
-  build), `database\inventory.db` (the merged db), and `README_FIRST.txt` with
-  the deploy steps. Both the exe and the db were md5-verified after copying.
-- Deliberately kept separate from `D:\Releases\VIS_Inventory\` on the same
-  drive, which is Kason's raw pre-merge pull.
-- **Smoke-tested for real**: the published binary was run against the merged
-  production db, confirmed 494 items, the org changes in the feed, Coil gone
-  from the Type dropdown, and the rebuilt Export Wizard filters returning
-  correct counts. All 25 tables were then diffed row-for-row against a
-  pre-run copy — **zero differences**, so the smoke test wrote nothing.
-- Note for the drive: VIS/inventory content is assigned to `MARK2_5` in
-  `DRIVE_DISTRIBUTION_PLAN.md`, not `LESLISGIFT`. Kason explicitly chose
-  LESLISGIFT because MARK2_5 is at the house. Not an error — a deliberate
-  override, recorded so the plan and the drive don't silently disagree.
+### Backups taken 2026-09-24
 
-**Host deploy still to do:** stop the running exe first (a live process holds a
-file lock), copy `app\`, then copy the db to `C:\VIS_Inventory\inventory.db`
-separately — a publish never carries a database.
+In `C:\VIS_Inventory\`:
+- `inventory.dev.db.pre-reseed-backup-20260924-152116` — the stale pre-merge dev
+  db (md5 `ee99b633…`) before it was replaced with the host copy.
+- `inventory.dev.db.pre-userdelete-backup-20260924-152427` — the host copy in
+  dev, before the `Decory1.Thomas` delete.
+
+The Sept 2 merge backups (`inventory.db.hostpull-untouched-…`,
+`…pre-hostmerge-backup-…`, `…pre-fdanormalize-backup-…`) are still there. The
+host has been running on that merge for two weeks without trouble, so they're
+no longer the live fallback — the 9/23 copy on `MASTER128` is.
+
+### Delivery photos
+
+`C:\VIS_Image-Uploads` had 1 of the host's 6 delivery photos; the other 5 were
+copied in from `MASTER128` (additive, the one existing file byte-matched). Dev
+now renders every delivery photo the host has.
+
+### Drive note
+
+`MASTER128` (119.1 GB exFAT SD) is the full offline backup in
+`DRIVE_DISTRIBUTION_PLAN.md` and normally read-only. It's where I put the host
+copy and the release backups (`MasterBackup\Backup of Releases\`) this time, and
+the return package went at its root beside `Sourcing_Release_20260924`, outside
+`MasterBackup`, so the backup tree itself stays untouched.
 
 ### Reference artifacts from these sessions
 
@@ -165,7 +143,11 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  in Pass 30/31 without it being updated. Count Migrations/,
                  don't trust this number. All 39 are now applied to the REAL
                  db as well, not just the code -- see Pass 33.)
-Items           494   (2026-09-02 post-merge: 496 came off the host, minus
+Items           505   (host, per the 2026-09-23 copy -- 11 registered on the
+                 host since the Sept 2 merge; CCO-0001 was registered as
+                 "Contro" and deleted again on 9/10, the typo Pass 39's Type
+                 gate closes. Local production still reads 494.)
+                494   (2026-09-02 post-merge: 496 came off the host, minus
                  CCL-0034 and CCL-0001. Was 492 before the host pull.
                  Was 487 through Pass 16; this line sat stale at 487 until
                  Pass 33 counted the real db. Compressor ownership reconciled
@@ -186,12 +168,15 @@ Lines            11   managed alongside Branches, same place. Shipping/Receiving
                  added 2026-09-01 under a new 4th Branch, Lab Operations --
                  the first Branch that isn't an air-handling product line.
 Branches (again)  4   Residential Air, Commercial Air, Sustaining, Lab Operations
-Users            54   (DeCory Thomas added on the host 2026-08-31.
+Users            55   on the host (9/23 copy) -- 54 once the stale
+                 Decory1.Thomas is deleted there (see OPEN). Dev is already 54.
+                 (DeCory Thomas added on the host 2026-08-31.
                  9 added in Pass 14; this line sat stale at 51 until
                  Pass 33 counted the real db -- see Pass log)
-Variants        519   post-merge. NOT all carry a Team any more -- the Pass 33
+Variants        532   on the host (9/23 copy); 519 at the Sept 2 merge. NOT all carry a Team any more -- the Pass 33
                  backfill was a point-in-time fix, and 128 active variants /
-                 119 items are blank again as of 2026-09-02 (blank fails OPEN;
+                 119 items are blank again as of 2026-09-02, unchanged on the
+                 9/23 host copy (blank fails OPEN;
                  zero are the damaging item-set/variant-blank mismatch)
 ```
 
@@ -3090,3 +3075,102 @@ to md5 `ee99b633…` (492 items, 609 logs, all thresholds back to 0); production
 **Does not change the OPEN state at the top of this file.** No database move,
 no publish — the host repull and the six org changes are still pending exactly
 as described there.
+
+**Pass 38 follow-up (2026-09-13, `a9e30f1`) — sign-in matches the roster
+case-insensitively.** SQLite compares TEXT with BINARY collation, and the
+sign-in normalizer flattens every name to `First.Last` capitalization — so
+`DeCory.Thomas` typed any way at all became `Decory.Thomas`, missed its own
+roster row, and fell through to Viewer on every sign-in. The lookup is now
+`UserName.ToLower() == lookup` (EF can't translate a `StringComparison`
+overload, same reason `NotificationService` says so), and the session takes
+the roster's **stored** spelling rather than the normalized one, because
+Notifications, Deliveries and the `UserTeams` join all match on that exact
+string. The normalized form is only a fallback now, for a name that isn't on
+the roster. Shipped in the 9/10 host build before the commit existed — see
+OPEN for the evidence.
+
+**Pass 39 (2026-09-24, `9238179`) — Intake Type gate, stock quantity bounds, and
+a measured contrast sweep.** No migration, no schema change. Tested against
+`inventory.dev.db` reseeded from the 9/23 host copy.
+
+- **Intake's Type dropdown clipped at the grid's bottom edge.** The list was
+  `position:absolute` inside `.table-responsive`, whose `overflow-x:auto` also
+  clips vertically, so by the fifth row only half an option showed.
+  `bindValueAutocomplete` gained an opt-in `floating` mode that pins the list
+  to the viewport under the input and opens upward when there's no room below;
+  every other caller is unchanged. Measured on row 5 at the viewport's bottom
+  edge: both options fully on screen and each the topmost element at its own
+  centre. Intake also carried its **own copy** of `bindValueAutocomplete`,
+  which silently shadowed site.js's (site.js loads first since Pass 27, so the
+  page's later declaration won) — deleted.
+- **Type gate on Intake.** A row's Type is accepted only as an existing type
+  (case-insensitive; `control` snaps to the stored `Control`) or as one
+  explicitly added through a "+ Add "X" as a new type" row at the bottom of the
+  list, which sets a per-row `typeNew` flag. Editing the text afterwards drops
+  the flag. A named row with a blank Type is refused too — it used to register
+  typeless under the `CGL-` fallback prefix. Enforced both client-side (Preview
+  and Import blocked, focus jumps to the bad row) and in `SubmitIntake`, which
+  refuses the whole batch before the hold-for-location path, so nothing lands.
+  The type vocabulary is still just "whatever real items carry" — one
+  `KnownItemTypes()` helper now feeds both the page and the gate. This is what
+  let `CCO-0001` happen: "Contro" typed free, minted its own type and its own
+  `CCO-` prefix. I'd already scrapped and deleted that item on the host 9/10
+  (so its Scrap log counts 10 units as scrapped that weren't). **New Item
+  Registry's Type field stays free text, on purpose** — someone who ignores the
+  populated suggestions there owns that.
+- **Modify Stock quantity bounds.** Scrap is capped at the **selected stack's**
+  quantity (one variant, so the item total would over-promise on a split item)
+  and re-caps when the stack changes; Add and Scrap floor at 1. Clamped live,
+  not via `min`/`max` validation, because Execute goes through
+  `executeSubmit()` → `form.submit()`, which skips validation entirely.
+  Server-side, **a negative Scrap used to ADD stock** — `Min(-5, 10)` passes
+  straight through the clamp and `pv.Quantity -= -5` — and a negative Add
+  subtracted. `ModifyStock` now refuses Add/Scrap below 1 outright. The
+  over-Scrap path was already clamped server-side and logs
+  "(15 requested, only 10 were on hand)". **Adjustment is floored at 0** the
+  same clamp-and-say-so way: `-50` on a stack of 5 applies `-5` and logs
+  "(-50 requested, stack only held 5)". Verified with raw posts that bypass the
+  page: negative/zero Scrap and negative Add each refused with stock and log
+  count unchanged; the Adjustment floor verified by a real `-50`/`+5` round trip
+  on CEV-0027's Variant 2 in dev, net zero.
+- **Contrast sweep, measured rather than eyeballed.** Started from one real bug
+  — New Item Registry's name suggestions in light theme showed only the blue
+  ID, because every suggestion row was painted `#1C1E24` inline with a
+  `.text-white` label, and `.modal-content .text-white` flips that label dark in
+  light theme. A script computed the real composited foreground/background of
+  every visible text node and input value on 16 routes, with every modal forced
+  open, every collapse expanded and every autocomplete list populated, against
+  WCAG AA (4.5:1, 3:1 for large text). Root causes found and fixed:
+  - **Bootstrap's `.table` painted every cell `#fff` in dark theme, app-wide.**
+    Nothing ever overrode `--bs-table-bg`, so Logs / All Items / Pickup Queue /
+    the Compressor and Motor unit tables were white slabs in dark mode, and
+    their `#94A3B8` dim text sat on white at 2.6:1 (the yellow "(missing)"
+    serial flag at 1.6:1). Tables now take their card's surface and
+    `--vis-text`. The one page this broke — Orders, a lone `bg-white` card whose
+    cells had been getting Bootstrap's dark text — was caught by the re-run and
+    moved onto `.grid-card`.
+  - Suggestion rows → one theme-following `.vis-suggest-item` class (also the
+    sign-in picker). Page headings still carrying `.text-white` in light (Bulk
+    Intake, All Items, sign-in, Settings unlock: 1.0–1.1:1). Tinted modal headers
+    (`bg-dark` Export Wizard title went dark-on-dark, 1.1:1). Page-local
+    `.text-dim` in light. The FDA/location read-out boxes pinned `#14151A` →
+    `.vis-inset-box`. Bootstrap `.text-muted` ("Cart is empty.", 1.15:1 on the
+    dark holo viewer), `.text-success` ("Available: N", 3.7:1), outline-info /
+    outline-success text on dark (~4.0:1), and `.btn-info`'s white-on-blue label
+    (2.8:1 in both themes → dark label).
+  - **Re-verified the reliable way** (per the Pass 35 methodology note): theme
+    set through a real `SetTheme` POST, each page re-fetched and measured
+    against the server-stamped `<html data-theme>`, all 16 routes in both
+    themes. **Zero failures left outside the brand red.** My theme preference
+    was set back to light afterward.
+  - **Not covered:** Settings itself (behind the superuser passcode — only the
+    unlock card was measured).
+  - **Left for a decision, not changed: Rheem red as text on dark is ~3.4:1**
+    (sidebar active link, Sign Out, outline-primary quick filters and GO TO,
+    the V/I/S in the brand text, `text-danger` labels). It's the brand colour,
+    so it waits on my call. The option on the table is a brighter red for
+    text-on-dark only, with fills keeping the true red.
+
+**Changes the OPEN state at the top of this file** — rewritten for 2026-09-24:
+the host is ahead of local production, dev is current, and the
+`Decory1.Thomas` return package is waiting on an md5 check.

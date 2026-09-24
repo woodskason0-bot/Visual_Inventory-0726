@@ -9,6 +9,51 @@ landed, when."
 
 ---
 
+## 2026-09-24
+
+### docs — Pass 39 and the 9/13 sign-in fix logged; OPEN rewritten for the host being ahead
+Docs only. The handoff's OPEN section rewritten from scratch: the Sept 2 staged
+release was superseded by the 9/10 build the host actually runs, the host has
+three weeks of writes local production doesn't, the dev db was reseeded from the
+9/23 host copy on SD `MASTER128`, and a `Decory1.Thomas` return package waits on
+an md5 check before it can go over the host db. Deployed-state counts updated to
+the host copy (505 items / 532 variants / 55 users). Pass log gained the
+`a9e30f1` entry it never got, and Pass 39.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `9238179` — Pass 39: Intake Type gate, stock quantity bounds, contrast sweep
+No migration, no schema change.
+**Intake:** the Type dropdown no longer clips at the grid's bottom edge (opt-in
+viewport-pinned `floating` mode on `bindValueAutocomplete`, opens upward when
+there's no room); Intake's shadow copy of that function deleted. **Type gate** —
+an existing type (case-insensitive, stored spelling wins) or one explicitly
+added via "+ Add … as a new type", which sets a per-row `typeNew` flag; blank
+Type on a named row refused. Enforced client-side and in `SubmitIntake` via a
+shared `KnownItemTypes()`. Registry's Type stays free text by decision.
+**Modify Stock:** Scrap capped at the selected stack; Add/Scrap floor at 1;
+server refuses Add/Scrap below 1 (**a negative Scrap used to add stock**);
+Adjustment floored at 0 with the requested amount logged.
+**Contrast:** measured per element on 16 routes, every modal/collapse/list open,
+both themes, re-verified via real `SetTheme` + server stamp. Root cause of most:
+Bootstrap `.table` cells were `#fff` in dark theme app-wide. Also suggestion rows,
+light-theme headings/`.text-dim`/tinted headers/inset boxes, dark-theme
+success/info/muted text, `.btn-info` label, Orders' `bg-white` card. Zero
+failures left outside Rheem red on dark (~3.4:1), left for a decision.
+*Files:* `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Views/Home/Intake.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`,
+`Views/Home/_NewItemRegistryPartial.cshtml`, `Views/Home/Identify.cshtml`,
+`Views/Home/Orders.cshtml`, `wwwroot/css/site.css`, `wwwroot/js/site.js`
+
+## 2026-09-13
+
+### `a9e30f1` — Pass 38 follow-up: sign-in matches the roster case-insensitively
+SQLite's BINARY collation plus the `First.Last` normalizer meant `DeCory.Thomas`
+always became `Decory.Thomas`, missed its roster row, and signed in as Viewer.
+Lookup is now case-insensitive (`ToLower()`, EF-translatable) and the session
+takes the roster's stored spelling, since Notifications/Deliveries/`UserTeams`
+match on it. Built into the 9/10 host release before it was committed.
+*Files:* `Controllers/HomeController.cs`
+
 ## 2026-09-02
 
 ### Pass 38 — host merge, the queued data batch applied, FdaString normalized, release staged
