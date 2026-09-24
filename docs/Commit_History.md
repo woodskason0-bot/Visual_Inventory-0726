@@ -11,6 +11,27 @@ landed, when."
 
 ## 2026-09-24
 
+### Pass 40 — the Item Card, top-bar cart button, sidebar brand text
+No migration, no schema change. Search result rows now carry one **Open** entry
+point (row click / Enter too); Add to Cart, Handle Stock, Request Transfer and
+Delete Item moved into a new **Item Card** modal fetched fresh from
+`HomeController.ItemCard`: on hand / available to you / in pending orders /
+out on loan (or "Awaiting Done Using" for compressors), threshold status, every
+stored detail, per-stack locations, compressor serial roster + history or
+TC-motor lab #s, and the last 5 Line-scoped log rows. Card buttons hand off to
+the existing modals via `hidden.bs.modal`; gates unchanged (Viewer read-only,
+other Line → Transfer only). Compressor/Motor registry rows got an Open button,
+placed outside the collapse toggler because Bootstrap 5's delegated handlers run
+in capture phase. Top-bar cart button on every page (red empty, green + live
+count), replacing the Order Mode badge; `AddToCart` returns `cartCount`.
+`LocationCodec.FriendlyPath` now shared, and no longer renders "RRACK 5".
+Sidebar brand text 0.95 → 0.8rem (was clipping at the edge). Brand red on dark
+left as is by decision.
+*Files:* `Controllers/HomeController.cs`, `Services/LocationCodec.cs`,
+`Models/ViewModels/ItemCardViewModel.cs`, `Views/Home/_ItemCardPartial.cshtml`,
+`Views/Home/SearchCenter.cshtml`, `Views/Shared/_Layout.cshtml`,
+`wwwroot/css/site.css`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — Pass 39 and the 9/13 sign-in fix logged; OPEN rewritten for the host being ahead
 Docs only. The handoff's OPEN section rewritten from scratch: the Sept 2 staged
 release was superseded by the 9/10 build the host actually runs, the host has

@@ -1,0 +1,278 @@
+@using Visual_Inventory_System.Services
+@using Visual_Inventory_System.Models
+@model Visual_Inventory_System.Models.ViewModels.ItemCardViewModel
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@*
+    Pass 40 -- the Item Card. Rendered by HomeController.ItemCard and injected
+    into #itemCardModal's .modal-content (SearchCenter.cshtml). Every action
+    button is a data-card-action the page's own script routes to the existing
+    Add to Cart / Modify Stock / Request Transfer / Delete Item modals, after
+    this one has finished hiding -- same hidden.bs.modal chaining as every other
+    modal-to-modal hop, so two Bootstrap modals never stack.
+*@
+@{
+    var it = Model.Item;
+    var vars = it.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
+    bool isStandard = CurrentUser.Level >= AccessLevels.Standard;
+    bool isAdmin = CurrentUser.Level >= AccessLevels.Admin;
+    bool needsPn = string.IsNullOrWhiteSpace(it.RheemPartNumber)
+                   || it.RheemPartNumber.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
+    var teams = vars.Select(v => v.Team).Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    bool split = teams.Count > 1;
+    int tcOnHand = vars.Sum(v => v.ThermocoupledQty);
+    string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
+
+    // Threshold status reads the same way Stock Alerts does: at or under the
+    // threshold is low, zero is out.
+    string thrLabel, thrClass;
+    if (it.AlertThreshold <= 0) { thrLabel = "No alert threshold set"; thrClass = "text-light-gray"; }
+    else if (Model.OnHand == 0) { thrLabel = $"Out of stock (threshold {it.AlertThreshold})"; thrClass = "text-danger fw-bold"; }
+    else if (Model.OnHand <= it.AlertThreshold) { thrLabel = $"Low — {Model.OnHand} on hand, threshold {it.AlertThreshold}"; thrClass = "text-warning fw-bold"; }
+    else { thrLabel = $"OK — {Model.OnHand} on hand, threshold {it.AlertThreshold}"; thrClass = "text-success"; }
+
+    // For a compressor, LoanOutstanding means "picked up, Done Using not
+    // pressed yet" -- compressors are consumed, not returned (see
+    // InventoryService.LoanableQuantity). Label it for what it is.
+    string loanLabel = Model.IsCompressor ? "Awaiting Done Using" : "Out on loan";
+    bool showLoan = Model.IsLoanable || Model.IsCompressor || Model.OutOnLoan > 0;
+
+    var compOnHand = Model.CompressorUnits.Where(u => u.Status == UnitStatus.OnHand).ToList();
+    var compHistory = Model.CompressorUnits.Where(u => u.Status != UnitStatus.OnHand).ToList();
+    var motorOnHand = Model.MotorUnits.Where(u => u.Status == UnitStatus.OnHand).ToList();
+    var motorOut = Model.MotorUnits.Where(u => u.Status == UnitStatus.PickedUp).ToList();
+    string VarLabel(int? variantId)
+    {
+        var v = vars.FirstOrDefault(x => x.Id == variantId);
+        return v == null ? "—" : $"V{v.VariantNumber} · {LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString)}";
+    }
+}
+
+<div class="modal-header">
+    <div class="me-3" style="min-width:0;">
+        @if (!needsPn)
+        {
+            <div class="text-white fw-bold fs-4 lh-sm" style="letter-spacing:.5px;">@it.RheemPartNumber</div>
+        }
+        else
+        {
+            <span class="badge bg-warning text-dark fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>No Rheem PN</span>
+        }
+        <div class="text-white fw-bold fs-5 text-break">@it.ItemName</div>
+        <div class="text-light-gray small">
+            @it.ItemId &middot; @Dash(it.Type) &middot; @Dash(it.Brand)
+        </div>
+    </div>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+
+<div class="modal-body text-white">
+    @* ---- Quantity, as it stands right now ---- *@
+    <div class="ic-stats mb-2">
+        <div class="ic-stat"><div class="ic-stat-val">@Model.OnHand</div><div class="ic-stat-lbl">On hand</div></div>
+        @if (Model.IsOwnLine && isStandard)
+        {
+            <div class="ic-stat"><div class="ic-stat-val text-success">@Model.AvailableToViewer</div><div class="ic-stat-lbl">Available to you</div></div>
+        }
+        <div class="ic-stat"><div class="ic-stat-val">@Model.CommittedToPending</div><div class="ic-stat-lbl">In pending orders</div></div>
+        @if (showLoan)
+        {
+            <div class="ic-stat"><div class="ic-stat-val">@Model.OutOnLoan</div><div class="ic-stat-lbl">@loanLabel</div></div>
+        }
+        @if (Model.IsMotor)
+        {
+            <div class="ic-stat"><div class="ic-stat-val ic-tc">@tcOnHand</div><div class="ic-stat-lbl">TC on hand</div></div>
+        }
+    </div>
+    <div class="small mb-3 @thrClass"><i class="bi bi-bell me-1"></i>@thrLabel</div>
+
+    @if (Model.InCartQty > 0)
+    {
+        <div class="alert alert-success py-2 small mb-3">
+            <i class="bi bi-cart-check-fill me-1"></i><strong>@Model.InCartQty</strong> already in your cart.
+            <a href="/Home/SearchCenter?mode=Ledger" class="alert-link ms-1">View cart</a>
+        </div>
+    }
+    @if (!Model.IsOwnLine)
+    {
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-signpost-split me-1"></i>Not your Line &mdash; you can request a transfer, not order it directly.
+        </div>
+    }
+
+    @* ---- What VIS stores about it ---- *@
+    <div class="ic-section-title">Details</div>
+    <dl class="ic-details mb-3">
+        <dt>Description</dt><dd class="text-break">@Dash(it.Description)</dd>
+        <dt>Line</dt><dd>@(string.IsNullOrWhiteSpace(it.Line) ? "Unassigned" : it.Line)@(Model.Branch.Length > 0 ? $" ({Model.Branch})" : "")</dd>
+        <dt>Team</dt><dd>@(teams.Count > 0 ? string.Join(", ", teams) : Dash(it.Team))@(split ? " — split across teams" : "")</dd>
+        <dt>Group</dt><dd>@Dash(it.Group)</dd>
+        <dt>Project code</dt><dd>@Dash(it.ProjectCode)</dd>
+        <dt>Registered</dt><dd>@(it.RegisteredAt.HasValue ? it.RegisteredAt.Value.ToLocalTime().ToString("MMM d, yyyy") : "unknown")</dd>
+        <dt>Last updated</dt><dd>@(it.LastUpdated.HasValue ? it.LastUpdated.Value.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : "—")@(string.IsNullOrWhiteSpace(it.UpdatedBy) ? "" : $" by {it.UpdatedBy.Replace('.', ' ')}")</dd>
+    </dl>
+
+    @* ---- Where it physically is ---- *@
+    <div class="ic-section-title">Stacks (@vars.Count)</div>
+    @if (!vars.Any())
+    {
+        <p class="text-light-gray small">No active stacks.</p>
+    }
+    else
+    {
+        <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0" style="min-width:420px;">
+                <thead><tr><th>#</th><th>Location</th>@if (split || teams.Count == 1) {<th>Team</th>}<th class="text-end">Qty</th>@if (Model.IsMotor) {<th class="text-end">TC</th>}</tr></thead>
+                <tbody>
+                    @foreach (var v in vars)
+                    {
+                        <tr>
+                            <td class="text-light-gray">V@(v.VariantNumber)</td>
+                            <td>@LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString)</td>
+                            @if (split || teams.Count == 1) {<td>@Dash(v.Team)</td>}
+                            <td class="text-end fw-bold">@v.Quantity</td>
+                            @if (Model.IsMotor) {<td class="text-end">@v.ThermocoupledQty</td>}
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* ---- Individual units (compressors / TC motors) -- view only ---- *@
+    @if (Model.IsCompressor)
+    {
+        int withSerial = compOnHand.Count(u => !string.IsNullOrWhiteSpace(u.SerialNumber));
+        <div class="ic-section-title">Units on hand <span class="text-light-gray fw-normal">(@withSerial of @Model.OnHand have a serial recorded)</span></div>
+        @if (!compOnHand.Any())
+        {
+            <p class="text-light-gray small">No units logged yet &mdash; serials get recorded as units are registered or picked up.</p>
+        }
+        else
+        {
+            <div class="table-responsive mb-2">
+                <table class="table table-sm align-middle mb-0" style="min-width:420px;">
+                    <thead><tr><th>Serial #</th><th>Lab #</th><th>Stack</th></tr></thead>
+                    <tbody>
+                        @foreach (var u in compOnHand)
+                        {
+                            <tr>
+                                <td class="@(string.IsNullOrWhiteSpace(u.SerialNumber) ? "text-warning" : "")">@(string.IsNullOrWhiteSpace(u.SerialNumber) ? "(missing)" : u.SerialNumber)</td>
+                                <td>@Dash(u.LabNumber)</td>
+                                <td class="text-light-gray small">@VarLabel(u.ItemVariantId)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        @if (compHistory.Any())
+        {
+            <details class="mb-3">
+                <summary class="small text-light-gray">History (@compHistory.Count picked up / scrapped)</summary>
+                <div class="table-responsive mt-2">
+                    <table class="table table-sm align-middle mb-0" style="min-width:420px;">
+                        <thead><tr><th>Serial #</th><th>Status</th><th>When</th><th>By</th></tr></thead>
+                        <tbody>
+                            @foreach (var u in compHistory)
+                            {
+                                var who = string.IsNullOrWhiteSpace(u.PickedUpBy) ? u.RecordedBy : u.PickedUpBy;
+                                <tr>
+                                    <td>@(string.IsNullOrWhiteSpace(u.SerialNumber) ? "(missing)" : u.SerialNumber)</td>
+                                    <td><span class="badge @(u.Status == UnitStatus.Scrapped ? "bg-danger" : "bg-warning text-dark")">@u.Status</span></td>
+                                    <td class="text-light-gray small">@((u.PickedUpAt ?? u.RecordedAt).ToLocalTime().ToString("MMM d, yyyy"))</td>
+                                    <td class="text-light-gray small">@((who ?? "").Replace('.', ' '))</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        }
+    }
+    else if (Model.IsMotor && (motorOnHand.Any() || motorOut.Any() || tcOnHand > 0))
+    {
+        <div class="ic-section-title">TC units <span class="text-light-gray fw-normal">(lab #s are recorded, not assigned)</span></div>
+        <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0" style="min-width:360px;">
+                <thead><tr><th>Lab #</th><th>Status</th><th>Stack</th></tr></thead>
+                <tbody>
+                    @foreach (var u in motorOnHand)
+                    {
+                        <tr><td>@Dash(u.LabNumber)</td><td><span class="badge bg-secondary">On Hand</span></td><td class="text-light-gray small">@VarLabel(u.ItemVariantId)</td></tr>
+                    }
+                    @foreach (var u in motorOut)
+                    {
+                        <tr><td>@Dash(u.LabNumber)</td><td><span class="badge bg-warning text-dark">Out on loan</span></td><td class="text-light-gray small">@((u.PickedUpBy ?? "").Replace('.', ' '))</td></tr>
+                    }
+                    @if (!motorOnHand.Any() && !motorOut.Any())
+                    {
+                        <tr><td colspan="3" class="text-light-gray small">@tcOnHand TC on hand, none logged individually yet.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* ---- Recent activity (Line-scoped, same as View Logs) ---- *@
+    <div class="ic-section-title">Recent activity</div>
+    @if (!Model.RecentLogs.Any())
+    {
+        <p class="text-light-gray small mb-0">Nothing recorded that you can see.</p>
+    }
+    else
+    {
+        <ul class="list-unstyled small mb-0 ic-activity">
+            @foreach (var log in Model.RecentLogs)
+            {
+                <li>
+                    <span class="text-light-gray">@log.Timestamp.ToLocalTime().ToString("MMM d, h:mm tt")</span>
+                    &middot; <strong>@log.ActionType</strong>
+                    @if (log.QuantityChange != 0)
+                    {
+                        <span class="@(log.QuantityChange > 0 ? "text-success" : "text-danger") fw-bold">@(log.QuantityChange > 0 ? "+" : "")@log.QuantityChange</span>
+                    }
+                    &middot; <span class="text-light-gray">@((log.User ?? "").Replace('.', ' '))</span>
+                    @if (!string.IsNullOrWhiteSpace(log.Details))
+                    {
+                        <div class="text-light-gray text-break" style="font-size:11px;">@log.Details</div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+<div class="modal-footer flex-wrap gap-2">
+    @if (isStandard)
+    {
+        if (!Model.IsOwnLine)
+        {
+            <button type="button" class="btn btn-warning fw-bold" data-card-action="transfer" data-item-id="@it.ItemId">
+                <i class="bi bi-arrow-left-right me-1"></i> Request Transfer
+            </button>
+        }
+        else
+        {
+            if (it.Quantity == 0 && isAdmin)
+            {
+                <button type="button" class="btn btn-outline-danger fw-bold me-auto" data-card-action="delete" data-item-id="@it.ItemId" data-item-name="@it.ItemName">
+                    <i class="bi bi-trash me-1"></i> Delete Item
+                </button>
+            }
+            <button type="button" class="btn btn-outline-info fw-bold" data-card-action="stock" data-item-id="@it.ItemId">
+                <i class="bi bi-box-seam me-1"></i> Handle Stock
+            </button>
+            <button type="button" class="btn btn-primary fw-bold" data-card-action="cart" data-item-id="@it.ItemId"
+                    @(vars.Any() && Model.AvailableToViewer > 0 ? "" : "disabled")
+                    title="@(vars.Any() && Model.AvailableToViewer > 0 ? "" : "Nothing available to order")">
+                <i class="bi bi-cart-plus me-1"></i> @(Model.InCartQty > 0 ? "Add More" : "Add to Cart")
+            </button>
+        }
+    }
+    else
+    {
+        <span class="text-light-gray small me-auto">View only at your access level.</span>
+    }
+    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Close</button>
+</div>

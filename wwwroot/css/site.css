@@ -1159,6 +1159,14 @@ body {
     border-color: #8B9198 !important;
 }
 
+/* ...except inside the always-dark Compressor/Motor registry rows (Pass 40's
+   "Open" buttons), which need the dark-surface version in both themes. */
+:root[data-theme="light"] .comp-row .btn-outline-light,
+:root[data-theme="light"] .motor-row .btn-outline-light {
+    color: #E2E8F0 !important;
+    border-color: #94A3B8 !important;
+}
+
 :root[data-theme="light"] .btn-check:checked + .btn-outline-light,
 :root[data-theme="light"] .btn-outline-light:hover,
 :root[data-theme="light"] .btn-outline-light:focus {
@@ -1166,3 +1174,85 @@ body {
     border-color: #1A1D23 !important;
     color: #FFFFFF !important;
 }
+
+/* =========================================================
+   ITEM CARD (Pass 40) -- Views/Home/_ItemCardPartial.cshtml
+   Everything here follows the theme through --vis-* vars, so
+   there's no light-theme block to keep in sync.
+========================================================= */
+.ic-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 8px;
+}
+
+.ic-stat {
+    background: var(--vis-bg);
+    border: 1px solid var(--vis-card-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.ic-stat-val {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--vis-text);
+}
+
+.ic-stat-lbl {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--vis-text-muted);
+}
+
+.ic-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--vis-text-muted);
+    border-bottom: 1px solid var(--vis-card-border);
+    padding-bottom: 4px;
+    margin-bottom: 8px;
+}
+
+.ic-details {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 4px 12px;
+    font-size: 13px;
+}
+
+    .ic-details dt {
+        font-weight: 600;
+        color: var(--vis-text-muted);
+    }
+
+    .ic-details dd {
+        margin: 0;
+        color: var(--vis-text);
+    }
+
+.ic-activity li {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--vis-card-border);
+}
+
+    .ic-activity li:last-child {
+        border-bottom: 0;
+    }
+
+@media (max-width: 575.98px) {
+    .ic-details { grid-template-columns: 1fr; }
+    .ic-details dd { margin-bottom: 6px; }
+}
+
+/* Result rows open their Item Card on click (Pass 40). */
+.holo-viewer:not([data-mode="Ledger"]) .holo-row { cursor: pointer; }
+
+/* TC amber: #F59E0B is 2.0:1 on the light theme's tile, so it darkens there. */
+.ic-stat-val.ic-tc { color: #F59E0B; }
+:root[data-theme="light"] .ic-stat-val.ic-tc { color: #92400E; }

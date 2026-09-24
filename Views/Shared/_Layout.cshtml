@@ -4,8 +4,9 @@
 @inject Visual_Inventory_System.Services.NotificationService Notifications
 @inject Visual_Inventory_System.Services.SuperuserGateService SuperuserGate
 @{
-    bool orderMode = false;
-    try { orderMode = OrderSvc.GetCurrentDraft().Entries.Any(); } catch { orderMode = false; }
+    int cartCount = 0;
+    try { cartCount = OrderSvc.GetCurrentDraft().Entries.Count; } catch { cartCount = 0; }
+    bool orderMode = cartCount > 0;
 
     bool signedIn = CurrentUser.IsSet;
     string theme = CurrentUser.Theme;
@@ -150,18 +151,49 @@
             .top-bar.order-mode::after { transform: scaleX(1); }
             .top-bar.order-mode::before { opacity: 0; }
         }
-        .order-mode-badge {
+        /* Top-bar cart button (Pass 40). Filled either way so it reads as the
+           primary action wherever you are: brand red when empty, the same
+           green-on-dark-text as the order-mode accent once it holds lines. */
+        .vis-cart-btn {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: var(--vis-green);
-            color: #06210f;
+            background: var(--vis-red);
+            color: #FFFFFF;
             font-weight: 800;
-            font-size: 11px;
+            font-size: 12px;
             letter-spacing: 0.5px;
-            padding: 3px 10px;
-            border-radius: 999px;
             text-transform: uppercase;
+            text-decoration: none;
+            padding: 6px 14px;
+            border-radius: 999px;
+            box-shadow: 0 2px 8px rgba(216, 43, 51, 0.35);
+            transition: filter .15s ease, box-shadow .15s ease;
+        }
+        .vis-cart-btn i { font-size: 16px; }
+        /* !important on the text colour: _Layout.cshtml.css styles every <a>
+           with a scoped attribute selector that outranks a plain class, which
+           rendered this label link-blue on the red fill (1.05:1). */
+        .vis-cart-btn, .vis-cart-btn:visited, .vis-cart-btn:hover, .vis-cart-btn:focus { color: #FFFFFF !important; }
+        .vis-cart-btn:hover { filter: brightness(1.08); }
+        .vis-cart-btn.has-items {
+            background: #22C55E;
+            box-shadow: 0 2px 10px rgba(34, 197, 94, 0.45);
+        }
+        .vis-cart-btn.has-items, .vis-cart-btn.has-items:visited,
+        .vis-cart-btn.has-items:hover, .vis-cart-btn.has-items:focus { color: #06210f !important; }
+        .vis-cart-count {
+            background: #06210f;
+            color: #FFFFFF;
+            border-radius: 999px;
+            min-width: 20px;
+            padding: 1px 6px;
+            font-size: 11px;
+            text-align: center;
+        }
+        @@media (max-width: 575.98px) {
+            .vis-cart-label { display: none; }
+            .vis-cart-btn { padding: 6px 10px; }
         }
         /* Notification bell dropdown */
         .notif-menu {
@@ -264,7 +296,9 @@
         <aside class="sidebar" id="appSidebar">
             <a class="sidebar-brand text-decoration-none" asp-area="" asp-controller="Home" asp-action="Index">
                 <img src="~/images/RheemLogo.png" alt="Rheem" />
-                <span class="sidebar-brand-text text-white fw-bold" style="font-size: 0.95rem; line-height: 1.15;">
+                @* 0.8rem, not 0.95: at 0.95 the name was 181px in a ~165px slot, so it
+                   ran through the right padding and was clipped at the sidebar edge. *@
+                <span class="sidebar-brand-text text-white fw-bold" style="font-size: 0.8rem; line-height: 1.15;">
                     <span style="color: var(--vis-red);">V</span>isual
                     <span style="color: var(--vis-red);">I</span>nventory
                     <span style="color: var(--vis-red);">S</span>ystem
@@ -324,13 +358,23 @@
                     <button type="button" class="sidebar-hamburger" id="sidebarHamburger" aria-label="Open navigation">
                         <i class="bi bi-list"></i>
                     </button>
-                    @if (orderMode)
-                    {
-                        <span class="order-mode-badge"><i class="bi bi-cart-fill"></i> Order Mode</span>
-                    }
                 </div>
 
                 <div class="d-flex align-items-center">
+                    @* Pass 40: the cart used to be one plain card among the Actions
+                       row, easy to miss. Now a fixed, bright button in the same spot
+                       on every page -- it takes over from the old "Order Mode" badge,
+                       turning green with a live line count once the cart has
+                       anything in it. Standard+ only, same gate as View Cart. *@
+                    @if (signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Standard)
+                    {
+                        <a href="/Home/SearchCenter?mode=Ledger" id="visCartBtn"
+                           class="vis-cart-btn me-3 @(cartCount > 0 ? "has-items" : "")" title="View cart">
+                            <i class="bi bi-cart3"></i>
+                            <span class="vis-cart-label">Cart</span>
+                            <span id="visCartCount" class="vis-cart-count @(cartCount > 0 ? "" : "d-none")">@cartCount</span>
+                        </a>
+                    }
                     @if (signedIn)
                     {
                         <form asp-controller="Home" asp-action="SetTheme" method="post" class="m-0 me-3">
@@ -459,6 +503,17 @@
     <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 12000;"></div>
 
     <script>
+        // Top-bar cart button (Pass 40): pages that add to the cart without a
+        // reload call this with the server's new line count.
+        window.visSetCartCount = function (n) {
+            var btn = document.getElementById('visCartBtn');
+            var badge = document.getElementById('visCartCount');
+            if (!btn || !badge) return;
+            badge.textContent = String(n);
+            badge.classList.toggle('d-none', !(n > 0));
+            btn.classList.toggle('has-items', n > 0);
+        };
+
         (function () {
             function visAntiForgeryToken() {
                 var el = document.querySelector('#notifBellWrap input[name="__RequestVerificationToken"]');

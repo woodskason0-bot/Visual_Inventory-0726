@@ -10,20 +10,8 @@
         return result.Mode == "Ledger" ? "Order Cart" : "Holo Viewer";
     }
 
-    string FriendlyVarLoc(Visual_Inventory_System.Models.ItemVariant v)
-    {
-        bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
-        var crumbs = new System.Collections.Generic.List<string>();
-        if (Real(v.Parent)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Parent));
-        if (Real(v.Major)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Major));
-        if (Real(v.Sub)) crumbs.Add(Visual_Inventory_System.Services.LocationCodec.Decode(v.Sub));
-        string path = string.Join(" › ", crumbs);
-        string rr = "";
-        if (Real(v.Rack) || Real(v.Row))
-            rr = $"R{(Real(v.Rack) ? v.Rack.Trim() : "-")}/{(Real(v.Row) ? v.Row.Trim() : "-")}";
-        if (path == "" && rr == "") return string.IsNullOrWhiteSpace(v.FdaString) ? "-" : v.FdaString;
-        return rr == "" ? path : (path == "" ? rr : $"{path} · {rr}");
-    }
+    string FriendlyVarLoc(Visual_Inventory_System.Models.ItemVariant v) =>
+        Visual_Inventory_System.Services.LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString);
 
     string TruncName(string name, int maxNonSpace)
     {
@@ -536,44 +524,22 @@
                                         <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted); opacity: 0.75;">No variants of item</small>
                                     }
                                 </div>
+                                @* Pass 40: one entry point per row. Add to Cart, Handle
+                                   Stock, Request Transfer and Delete Item all live in the
+                                   Item Card now, which also shows everything else VIS
+                                   stores about the item. Clicking anywhere on the row
+                                   opens it too. *@
                                 <div class="d-flex flex-column align-items-end gap-2">
+                                    <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openItemCard('@item.ItemId')">
+                                        <i class="bi bi-card-text me-1"></i> Open
+                                    </button>
+                                    @if (inDraft)
+                                    {
+                                        <span class="badge bg-secondary fw-bold"><i class="bi bi-cart-check me-1"></i>In Cart</span>
+                                    }
                                     @if (!isOwnLine)
                                     {
-                                        @if (CurrentUser.Level >= AccessLevels.Standard)
-                                        {
-                                            <button type="button" class="btn btn-warning px-3 py-2 fw-bold" onclick="openTransfer('@item.ItemId')">
-                                                <i class="bi bi-arrow-left-right me-1"></i> Request Transfer
-                                            </button>
-                                        }
                                         <small class="text-light-gray" style="font-size:10px;">Not your Line — request only</small>
-                                    }
-                                    else
-                                    {
-                                        @if (CurrentUser.Level >= AccessLevels.Standard)
-                                        {
-                                            @if (!inDraft)
-                                            {
-                                                <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openAddToCart('@item.ItemId')">
-                                                    <i class="bi bi-cart-plus me-1"></i> Add to Cart
-                                                </button>
-                                            }
-                                            else
-                                            {
-                                                <span class="badge bg-secondary p-2 fs-6 fw-bold">In Cart</span>
-                                            }
-                                        }
-                                        @if (CurrentUser.Level >= AccessLevels.Standard)
-                                        {
-                                            <button type="button" class="btn btn-outline-info btn-sm fw-bold px-3" onclick="handleStock('@item.ItemId')">
-                                                <i class="bi bi-box-seam me-1"></i> Handle Stock
-                                            </button>
-                                        }
-                                        @if (item.Quantity == 0 && CurrentUser.Level >= AccessLevels.Admin)
-                                        {
-                                            <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3" onclick="openDeleteItem('@item.ItemId', '@item.ItemName')">
-                                                <i class="bi bi-trash me-1"></i> Delete Item
-                                            </button>
-                                        }
                                     }
                                 </div>
                             </div>
@@ -603,7 +569,7 @@
                 {
                     <div class="text-center text-light-gray p-3">
                         <i class="bi bi-arrow-left-circle d-block mb-2 fs-3"></i>
-                        <div class="small">Set a quantity and click <strong>Add to Order</strong> on each item you need, then open your cart to submit.</div>
+                        <div class="small"><strong>Open</strong> an item to see everything about it and add it to your cart, then open your cart to submit.</div>
                     </div>
                 }
                 <a href="/Home/SearchCenter?mode=None&omniSearch=@ViewBag.OmniSearch" class="btn btn-outline-secondary w-100 mt-3 py-2 text-white fw-bold">Close Viewer</a>
@@ -611,6 +577,14 @@
         </div>
     </div>
 }
+
+<!-- ITEM CARD (Pass 40) -- the content is fetched from /Home/ItemCard and
+     injected on open, so it's always current (cart, pending orders). -->
+<div class="modal fade" id="itemCardModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+        <div class="modal-content" id="itemCardContent"></div>
+    </div>
+</div>
 
 <!-- DELETE ITEM -->
 <div class="modal fade" id="deleteItemModal" tabindex="-1">
@@ -736,7 +710,12 @@
                         }
 
                         <div class="comp-row mb-2 p-2" data-branch="@itBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
-                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                            @* Open sits OUTSIDE the collapse toggler: Bootstrap 5 binds
+                               its delegated data-api handlers in the capture phase, so
+                               a stopPropagation() on a button inside the toggler runs
+                               too late and the row expands anyway. *@
+                            <div class="d-flex align-items-center gap-2">
+                            <div class="d-flex justify-content-between align-items-center flex-grow-1" style="cursor:pointer;"
                                  data-bs-toggle="collapse" data-bs-target="#@collapseId">
                                 <div>
                                     <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
@@ -749,6 +728,11 @@
                                     </span>
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" title="Open the Item Card"
+                                    onclick="openItemCard('@it.ItemId', 'compressorRegistryModal')">
+                                <i class="bi bi-card-text"></i> Open
+                            </button>
                             </div>
                             <div class="collapse mt-2" id="@collapseId">
                                 @if (!roster.Any())
@@ -901,7 +885,8 @@
                             roster.Add((mu.Id, 0, mu.LabNumber, "Out on Loan"));
 
                         <div class="motor-row mb-2 p-2" data-branch="@motorBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimedMotor ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
-                            <div class="d-flex justify-content-between align-items-center" style="cursor:pointer;"
+                            <div class="d-flex align-items-center gap-2">
+                            <div class="d-flex justify-content-between align-items-center flex-grow-1" style="cursor:pointer;"
                                  data-bs-toggle="collapse" data-bs-target="#@collapseId">
                                 <div>
                                     <span class="fw-bold">@it.ItemId</span> &mdash; @it.ItemName
@@ -915,6 +900,11 @@
                                     }
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" title="Open the Item Card"
+                                    onclick="openItemCard('@it.ItemId', 'motorRegistryModal')">
+                                <i class="bi bi-card-text"></i> Open
+                            </button>
                             </div>
                             <div class="collapse mt-2" id="@collapseId">
                                 @if (!roster.Any())
@@ -1260,6 +1250,55 @@
 </div>
 
 <script>
+    // ---- Item Card (Pass 40) ------------------------------------------------
+    // Runs fn once `modalId` has finished hiding (or right away if it isn't
+    // open) -- the same hidden.bs.modal chaining every modal-to-modal hop in
+    // this app uses, so two Bootstrap modals and their backdrops never stack.
+    function afterModalHides(modalId, fn) {
+        const el = modalId ? document.getElementById(modalId) : null;
+        const inst = el ? bootstrap.Modal.getInstance(el) : null;
+        if (inst && el.classList.contains('show')) {
+            el.addEventListener('hidden.bs.modal', function () { fn(); }, { once: true });
+            inst.hide();
+        } else {
+            fn();
+        }
+    }
+
+    // fromModalId: the modal the click came from (a Compressor/Motor registry
+    // row), closed first. The card body is fetched fresh every time, so cart
+    // state and pending-order counts are never a stale page-load snapshot.
+    function openItemCard(itemId, fromModalId) {
+        afterModalHides(fromModalId, function () {
+            const content = document.getElementById('itemCardContent');
+            content.innerHTML = '<div class="modal-body text-center py-5 text-light-gray">'
+                + '<span class="spinner-border spinner-border-sm me-2"></span>Loading ' + itemId + '…</div>';
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('itemCardModal')).show();
+            fetch('/Home/ItemCard?itemId=' + encodeURIComponent(itemId), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+                .then(function (html) { content.innerHTML = html; })
+                .catch(function () {
+                    content.innerHTML = '<div class="modal-body text-center py-5 text-danger">Couldn\'t load ' + itemId + '.</div>'
+                        + '<div class="modal-footer"><button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Close</button></div>';
+                });
+        });
+    }
+
+    // Card buttons hand off to the existing modals -- the card never duplicates
+    // Add to Cart / Modify Stock / Transfer / Delete logic, it just routes.
+    document.addEventListener('click', function (e) {
+        const btn = e.target.closest('#itemCardModal [data-card-action]');
+        if (!btn || btn.disabled) return;
+        const id = btn.dataset.itemId, name = btn.dataset.itemName;
+        const next = {
+            cart: function () { openAddToCart(id); },
+            stock: function () { handleStock(id); },
+            transfer: function () { openTransfer(id); },
+            'delete': function () { openDeleteItem(id, name); }
+        }[btn.dataset.cardAction];
+        if (next) afterModalHides('itemCardModal', next);
+    });
+
     function openDeleteItem(itemId, itemName) {
         const idField = document.getElementById('delete-item-id');
         const nameEl = document.getElementById('delete-item-name');
@@ -1448,6 +1487,7 @@
             if (data.success) {
                 orderActive = true;
                 document.querySelector('.top-bar')?.classList.add('order-mode');
+                if (typeof data.cartCount === 'number' && window.visSetCartCount) visSetCartCount(data.cartCount);
                 if (window.showToast) showToast(data.message, "success");
                 const b = form.querySelector('button');
                 if (b) { b.classList.replace('btn-primary', 'btn-success'); b.innerText = "Added!"; b.disabled = true; }
@@ -1502,6 +1542,18 @@
         const b = document.getElementById('holo-add-submit');
         const i = document.getElementById('holo-add-itemId');
         if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
+        // Pass 40: a search-result row opens its Item Card on click. Not in the
+        // cart view (those rows carry their own Remove form), and not when the
+        // click was on a control inside the row -- the Open button handles itself.
+        const viewer = row.closest('.holo-viewer');
+        if (viewer && viewer.dataset.mode !== 'Ledger' && !e.target.closest('button, a, form, input, select'))
+            openItemCard(row.dataset.itemId);
+    });
+    // Rows are already tabindex="0" -- Enter opens the card from the keyboard too.
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || !e.target.classList || !e.target.classList.contains('holo-row')) return;
+        const viewer = e.target.closest('.holo-viewer');
+        if (viewer && viewer.dataset.mode !== 'Ledger') openItemCard(e.target.dataset.itemId);
     });
 
     (function() {

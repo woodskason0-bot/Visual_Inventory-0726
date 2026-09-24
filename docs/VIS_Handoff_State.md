@@ -61,7 +61,7 @@ proven.
 |---|---|---|
 | `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | **Newest copy of the host**, pulled 9/23. 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
 | `C:\VIS_Inventory\inventory.dev.db` | `4b989780…` | Dev sandbox = that 9/23 host copy, minus the stale `Decory1.Thomas` user, plus a few dev-only test logs from Pass 39 (a net-zero Adjustment round trip on CEV-0027). **Current — the right file to test against.** |
-| `E:\VIS_Return_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | Return package for the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted. `README_FIRST.txt` beside it. |
+| `E:\VIS_Release_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | For the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted, staged with the Sept 24 release. Same file as the earlier `E:\VIS_Return_20260924\` package, which it supersedes. |
 | `C:\VIS_Inventory\inventory.db` | `5be3f996…` | Local production — **still the Sept 2 merge state, three weeks behind the host** (494 items / 519 variants / 651 logs). Do not treat as current. |
 
 `integrity_check ok` on all of them. Take a fresh backup before any db write
@@ -81,9 +81,21 @@ rather than assuming one exists.
 - **Catch local production up** once the host is settled — copying the return
   package's db (or a fresh host pull) over `C:\VIS_Inventory\inventory.db`,
   after a backup.
-- **Pass 39 is committed and pushed (`9238179`) but not released.** Nothing in
-  it reaches the lab until the next publish. No migration in it, so the db
-  needs no move for it.
+- **Install the Sept 24 release on the host (Passes 39 + 40).** Built to
+  `C:\VIS_Host\september24threlease\` (self-contained win-x64, 544 files,
+  ~130 MB) and staged on SD `MASTER128` at **`E:\VIS_Release_20260924\`**:
+  `app\`, `VIS_Inventory\inventory.db` (the Decory1-delete db, optional), and
+  `README_FIRST.txt` with both deploy procedures. All 544 app files SHA-256
+  verified against the build. **No migration** — the app runs on the host's
+  current db as-is; the db is only for the Decory1 cleanup and carries the same
+  md5 gate as before. This folder supersedes `E:\VIS_Return_20260924\` (same db
+  file). Smoke-tested for real: the published exe (Production environment) ran
+  against a scratch copy of that db — signed in, Search Center rows carry Open,
+  the Item Card renders a compressor's serial roster, Intake carries the Type
+  gate, zero `fail` lines in the log; all 26 tables then diffed row-for-row
+  against the original: **zero differences** (the file's md5 moves on startup
+  because SQLite bumps the header change counter on any write transaction,
+  even an empty one — not a data change).
 - **Orphan notification subscription:** `NotificationSubscriptions` row 9
   points at `UserId 72`, which doesn't exist (a `PickupRequested` subscription).
   Present in every copy including the Sept 2 one, so it long predates this
@@ -3174,3 +3186,74 @@ a measured contrast sweep.** No migration, no schema change. Tested against
 **Changes the OPEN state at the top of this file** — rewritten for 2026-09-24:
 the host is ahead of local production, dev is current, and the
 `Decory1.Thomas` return package is waiting on an md5 check.
+
+**Pass 40 (2026-09-24) — the Item Card, and a cart button you can actually
+find.** No migration, no schema change. Spiterated before building; decisions
+locked up front: units are view-only in the card, every action moves into the
+card, the cart button lives in the top bar.
+
+- **Search result rows carry one entry point now.** Omni / Filter / the Command
+  Center stockView shortcuts each render a single **Open** button per row;
+  clicking anywhere on the row (or Enter — rows were already `tabindex="0"`)
+  opens it too. Add to Cart, Handle Stock, Request Transfer and Delete Item all
+  moved off the row and into the card. An "In Cart" badge stays on the row.
+- **The Item Card** (`Views/Home/_ItemCardPartial.cshtml`, served by
+  `HomeController.ItemCard`) is fetched fresh on every open and injected into a
+  page-level `#itemCardModal` shell, so cart state and pending-order counts are
+  never a page-load snapshot. It shows: on hand, **available to you** (the same
+  team-scoped `GetAvailableForViewer` figure Submit enforces), **in pending
+  orders**, and `LoanOutstanding` — labelled **"Out on loan"** for Controls/TC
+  motors and **"Awaiting Done Using"** for compressors, because for a compressor
+  that counter means picked up and not yet dispositioned, not "coming back";
+  TC on hand for motors; alert-threshold status; description, Line (+Branch),
+  team(s), group, project code, registered, last updated/by; every active stack
+  with its readable location; the compressor serial/lab roster with a
+  collapsible picked-up/scrapped history, or TC-motor lab #s on hand and out on
+  loan; and the last 5 log rows through `ApplyLogVisibility`, so they're
+  Line-scoped exactly like View Logs.
+- **Gates, same as before, just in one place:** a Viewer gets a read-only card
+  (no "Available to you" either — it means nothing to someone who can't order);
+  another Line's item gets Request Transfer only, with a "Not your Line" note;
+  Delete Item only at qty 0 for Admin; Add to Cart disabled when nothing is
+  available; an item already in the cart shows "N already in your cart" and the
+  button reads "Add More". **The card never re-implements an action** — its
+  buttons hide the card and hand off to the existing Add to Cart / Modify Stock
+  / Request Transfer / Delete Item modals through `hidden.bs.modal`, the same
+  one-modal-at-a-time chaining as everywhere else.
+- **Compressor and TC Motor registry rows** got an **Open** button to the same
+  card. It has to sit *outside* the row's collapse toggler: Bootstrap 5 binds
+  its delegated data-api click handlers in the **capture** phase, so a
+  `stopPropagation()` on a button inside the toggler runs too late and the row
+  expands anyway. Found live, fixed structurally.
+- **Top-bar cart button** on every page, Standard+: filled Rheem red when
+  empty, green with a live line count once the cart holds anything, replacing
+  the old Order Mode badge (the order-mode green accent on the top bar stays).
+  `AddToCart`'s AJAX reply now carries `cartCount` and `visSetCartCount()`
+  updates the badge without a reload. Its label first rendered **link-blue on
+  red (1.05:1)** — `_Layout.cshtml.css` styles every `<a>` with a scoped
+  attribute selector that outranks a plain class — so the button's text colour
+  is `!important`. Icon + count only below 576px.
+- **`LocationCodec.FriendlyPath`** replaces Search Center's private
+  `FriendlyVarLoc` so the card and the rows share one location formatter. It
+  also stopped prefixing "R" onto racks that are already named: stacks had been
+  reading "RRACK 5/Row 2" on every search row all along.
+- **Sidebar brand text** dropped 0.95rem → 0.8rem. At 0.95 the name was 181px
+  in a ~165px slot, so it ran through the right padding and clipped at the
+  sidebar's edge; it now clears the edge by 29px.
+
+**Verified live on the dev db.** Every hand-off (card → Add to Cart → Start
+Order → cart badge 0→1; card → Modify Stock preloaded; card → Request Transfer
+with the owner line filled; registry Open → card, row not toggled) left exactly
+one backdrop. Gates checked by signing in as Colton Reather (Standard,
+Residential OD, looking at a Commercial item → Transfer only, activity hidden)
+and Hunter Little (Viewer → read-only, no cart button). 375px mobile: the card
+goes full-screen, no horizontal overflow. Contrast re-audited the reliable way
+(real `SetTheme` + server stamp) on the page, every modal, and the card for a
+compressor, a TC motor and an EEV in both themes: zero failures after fixing
+the cart label and the TC amber on light tiles. Zero console or server errors;
+build still at the 14-warning baseline. The only db writes were my theme
+toggles, set back to light — cart testing lives in the session, not the db.
+
+**Brand red decided: leave it.** Rheem red as text on dark (~3.4:1) stays as
+is — sidebar active link, Sign Out, outline-primary buttons, the V/I/S. It's
+readable, just under AA, and it's the brand colour.

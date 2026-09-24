@@ -219,6 +219,55 @@ namespace Visual_Inventory_System.Controllers
             return View();
         }
 
+        // Pass 40 -- the Item Card: everything VIS stores about one item, opened
+        // from a search result row or a Compressor/Motor registry row. Returned
+        // as a partial and injected into the page's #itemCardModal shell, so the
+        // card is always fresh (cart state, pending orders) rather than a
+        // snapshot baked into the page at render time.
+        //
+        // GetById is unfiltered by design (see InventoryService) -- the same
+        // item a search row can already show. What stays Line-scoped is the
+        // activity list, which goes through ApplyLogVisibility like View Logs.
+        [HttpGet]
+        public IActionResult ItemCard(string itemId)
+        {
+            var item = _inventoryService.GetById(itemId ?? "");
+            if (item == null) return NotFound();
+
+            var draft = _orderService.GetCurrentDraft().Entries;
+            var vm = new ItemCardViewModel
+            {
+                Item = item,
+                Branch = OrgStructure.BranchFor(item.Line) ?? "",
+                IsOwnLine = _inventoryService.IsOwnLine(item.Line),
+                OnHand = item.Quantity,
+                AvailableToViewer = _inventoryService.GetAvailableForViewer(item),
+                CommittedToPending = _db.OrderItems.AsNoTracking()
+                    .Where(oi => oi.ItemId == item.ItemId && oi.Order.Status == "Pending")
+                    .Sum(oi => (int?)oi.Quantity) ?? 0,
+                OutOnLoan = _db.OrderItems.AsNoTracking()
+                    .Where(oi => oi.ItemId == item.ItemId && oi.LoanOutstanding > 0)
+                    .Sum(oi => (int?)oi.LoanOutstanding) ?? 0,
+                IsCompressor = InventoryService.IsCompressorType(item.Type),
+                IsMotor = InventoryService.IsMotorType(item.Type),
+                IsLoanable = InventoryService.IsControlType(item.Type) || InventoryService.IsMotorType(item.Type),
+                InCartQty = draft.Where(e => e.ItemId == item.ItemId).Sum(e => e.Quantity),
+                RecentLogs = _inventoryService.ApplyLogVisibility(_db.TransactionLogs.AsNoTracking())
+                    .Where(t => t.ItemId == item.ItemId)
+                    .OrderByDescending(t => t.Timestamp)
+                    .Take(5)
+                    .ToList()
+            };
+            if (vm.IsCompressor)
+                vm.CompressorUnits = _db.CompressorUnits.AsNoTracking()
+                    .Where(u => u.ItemId == item.ItemId).OrderByDescending(u => u.RecordedAt).ToList();
+            if (vm.IsMotor)
+                vm.MotorUnits = _db.MotorUnits.AsNoTracking()
+                    .Where(u => u.ItemId == item.ItemId).OrderByDescending(u => u.RecordedAt).ToList();
+
+            return PartialView("_ItemCardPartial", vm);
+        }
+
         // Shared "what counts as low stock / out of stock / needs a PN" --
         // reused by Search Center's stockView filter and Command Center's
         // Stock Alerts card / Need PN donut, so the definition can't drift into
@@ -357,7 +406,10 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0, string? requestedTeam = null)
         {
             _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount, requestedTeam);
-            if (Request.Headers["X-Requested-With"] == "XMLHttpRequest") return Json(new { success = true, message = "Added to cart!" });
+            // cartCount feeds the top-bar cart button's badge (Pass 40) so it
+            // updates without a reload.
+            if (Request.Headers["X-Requested-With"] == "XMLHttpRequest")
+                return Json(new { success = true, message = "Added to cart!", cartCount = _orderService.GetCurrentDraft().Entries.Count });
             TempData["Message"] = "Item added to cart.";
             return SmartRedirect();
         }

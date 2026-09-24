@@ -112,5 +112,33 @@ namespace Visual_Inventory_System.Services
         }
 
         public static IReadOnlyDictionary<string, string> DecodeMap => _reverseMap;
+
+        /// <summary>
+        /// One stack's location as a person reads it: "RD Lab › Metrology
+        /// Mezzanine · R8/2". Blank and "0" segments are skipped; if nothing real
+        /// is left, falls back to the stored FDA string. Lived as a private
+        /// helper in SearchCenter.cshtml until the Item Card needed the same
+        /// thing -- one copy, not two.
+        /// </summary>
+        public static string FriendlyPath(string? parent, string? major, string? sub,
+            string? rack, string? row, string? fdaString)
+        {
+            static bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
+            var crumbs = new List<string>();
+            if (Real(parent)) crumbs.Add(Decode(parent));
+            if (Real(major)) crumbs.Add(Decode(major));
+            if (Real(sub)) crumbs.Add(Decode(sub));
+            string path = string.Join(" › ", crumbs);
+            // "R" only prefixes a bare rack number ("8" -> "R8"). Many racks are
+            // stored already named ("RACK 5", "Lean-To", "FLOOR"), which the
+            // unconditional prefix rendered as "RRACK 5".
+            string rk = Real(rack) ? rack!.Trim() : "-";
+            if (rk.Length > 0 && char.IsDigit(rk[0])) rk = "R" + rk;
+            string rr = (Real(rack) || Real(row))
+                ? $"{rk}/{(Real(row) ? row!.Trim() : "-")}"
+                : "";
+            if (path == "" && rr == "") return string.IsNullOrWhiteSpace(fdaString) ? "-" : fdaString!;
+            return rr == "" ? path : (path == "" ? rr : $"{path} · {rr}");
+        }
     }
 }
