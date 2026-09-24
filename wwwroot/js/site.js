@@ -203,8 +203,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     matches.forEach(m => {
                         let btn = document.createElement('button');
                         btn.type = 'button';
-                        btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
-                        btn.style.backgroundColor = '#1C1E24';
+                        btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item';
                         btn.innerHTML = `<strong class="text-primary">${m.id}</strong>${m.rpn ? ' <span class="text-info">[' + m.rpn + ']</span>' : ''} - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
 
                         btn.onclick = function() {
@@ -237,9 +236,6 @@ document.addEventListener('DOMContentLoaded', function () {
                             }
                         };
 
-                        btn.onmouseover = () => btn.style.backgroundColor = '#2A2D35';
-                        btn.onmouseout = () => btn.style.backgroundColor = '#1C1E24';
-
                         autoList.appendChild(btn);
                     });
                 } else {
@@ -263,34 +259,67 @@ document.addEventListener('DOMContentLoaded', function () {
     // returning the current array (dynamic, e.g. Rack/Row suggestions that
     // depend on whatever Parent/Major/Sub is picked right now) -- evaluated
     // fresh on every keystroke either way, so a dynamic source never goes stale.
-    function bindValueAutocomplete(inputEl, listEl, valuesOrGetter) {
+    //
+    // opts (optional, both off by default so existing callers are unchanged):
+    //   floating: true -- pin the list to the viewport (position:fixed) under
+    //     the input instead of absolutely inside its parent. Needed wherever
+    //     the input sits in a clipping ancestor: Bulk Intake's rows live in a
+    //     .table-responsive, whose overflow-x:auto also clips vertically, so
+    //     an absolute list got cut off at the table's bottom edge. Opens
+    //     upward when there isn't room below.
+    //   extraItem(typedValue, matches) -> { label, onPick } | null -- one
+    //     extra, visually distinct row after the matches (e.g. "Add as a new
+    //     type"). Shown even when nothing matches.
+    function bindValueAutocomplete(inputEl, listEl, valuesOrGetter, opts) {
         if (!inputEl || !listEl) return;
+        opts = opts || {};
         let suppress = false;
+
+        function place() {
+            if (!opts.floating || listEl.style.display === 'none') return;
+            const r = inputEl.getBoundingClientRect();
+            listEl.style.position = 'fixed';
+            listEl.style.left = r.left + 'px';
+            listEl.style.minWidth = r.width + 'px';
+            const h = listEl.offsetHeight;
+            const below = window.innerHeight - r.bottom;
+            listEl.style.top = ((below < h + 4 && r.top > h + 4) ? (r.top - h - 2) : (r.bottom + 2)) + 'px';
+        }
+        if (opts.floating) {
+            // Capture phase: also catches the table wrapper's own horizontal scroll.
+            window.addEventListener('scroll', place, true);
+            window.addEventListener('resize', place);
+        }
+
+        function row(label, onPick, extraClass) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item' + (extraClass ? ' ' + extraClass : '');
+            btn.textContent = label;
+            btn.onclick = function () { listEl.style.display = 'none'; onPick(); };
+            listEl.appendChild(btn);
+        }
+
         inputEl.addEventListener('input', function () {
             if (suppress) { suppress = false; return; }
-            const val = inputEl.value.trim().toLowerCase();
+            const raw = inputEl.value.trim();
+            const val = raw.toLowerCase();
             listEl.innerHTML = '';
             if (!val) { listEl.style.display = 'none'; return; }
             const values = (typeof valuesOrGetter === 'function') ? (valuesOrGetter() || []) : valuesOrGetter;
             const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
-            if (matches.length === 0) { listEl.style.display = 'none'; return; }
-            listEl.style.display = 'block';
+            const extra = opts.extraItem ? opts.extraItem(raw, matches) : null;
+            if (matches.length === 0 && !extra) { listEl.style.display = 'none'; return; }
             matches.forEach(function (v) {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
-                btn.style.backgroundColor = '#1C1E24';
-                btn.textContent = v;
-                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
-                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
-                btn.onclick = function () {
-                    listEl.style.display = 'none';
+                row(v, function () {
                     suppress = true;
                     inputEl.value = v;
                     inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                };
-                listEl.appendChild(btn);
+                });
             });
+            if (extra) row(extra.label, extra.onPick, 'fst-italic text-info');
+            listEl.style.display = 'block';
+            place();
         });
         document.addEventListener('click', function (e) {
             if (e.target !== inputEl) listEl.style.display = 'none';

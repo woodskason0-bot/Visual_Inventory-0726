@@ -1659,6 +1659,14 @@ namespace Visual_Inventory_System.Services
             // whichever of the two Add branches ran (existing stack vs NEW).
             ItemVariant? addedVariant = null;
 
+            // Add and Scrap are one-directional amounts; only Adjustment is signed.
+            // A negative Scrap used to pass straight through the Min() clamp below
+            // and ADD stock (and a negative Add subtracted it), logged as the
+            // opposite of what happened.
+            if ((actionType == "Add" || actionType == "Scrap") && quantity < 1)
+                throw new System.InvalidOperationException(
+                    $"{actionType} needs a quantity of at least 1 — nothing was changed.");
+
             if (actionType == "Add")
             {
                 qtyChange = quantity;
@@ -1729,8 +1737,13 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Adjustment")
             {
+                // Floored at 0, same clamp-and-say-so shape as Scrap: a downward
+                // adjust past what the stack holds takes it to 0, never negative,
+                // and the log records what was actually applied.
+                int requested = quantity;
+                quantity = System.Math.Max(quantity, -pv!.Quantity);
                 qtyChange = quantity;
-                pv!.Quantity += quantity;
+                pv.Quantity += quantity;
                 // [decided] Adjustment can also RECLASSIFY existing on-hand stock
                 // as thermocoupled without changing the total count -- "take my
                 // existing N, mark X of those as TC" is a different action from
@@ -1745,7 +1758,9 @@ namespace Visual_Inventory_System.Services
                     pv.ThermocoupledQty = System.Math.Max(0, pv.Quantity);
                 string tcNote = (isMotor && thermocoupledQty > 0)
                     ? $"; {thermocoupledQty} of the existing stock reclassified as thermocoupled" : "";
-                details = $"Manual adjustment of {(quantity >= 0 ? "+" : "")}{quantity} unit(s) (Variant {pv.VariantNumber}){tcNote}.";
+                string floorNote = quantity != requested
+                    ? $" ({requested} requested, stack only held {-quantity})" : "";
+                details = $"Manual adjustment of {(quantity >= 0 ? "+" : "")}{quantity} unit(s){floorNote} (Variant {pv.VariantNumber}){tcNote}.";
             }
             else if (actionType == "Ownership")
             {

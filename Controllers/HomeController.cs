@@ -915,13 +915,19 @@ namespace Visual_Inventory_System.Controllers
                 _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToList()
                    .Select(i => new { id = i.ItemId, name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber, quantity = i.Quantity })
                    .ToList());
-            ViewBag.KnownTypes = _db.InventoryItems.AsNoTracking()
-                .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
+            ViewBag.KnownTypes = KnownItemTypes();
             ViewBag.MyPending = _db.IntakeBatches.AsNoTracking()
                 .Where(b => b.SubmittedBy == _currentUser.Name && b.Status == IntakeStatus.Pending)
                 .OrderByDescending(b => b.SubmittedAt).ToList();
             return View();
         }
+
+        // The Type vocabulary is whatever real items carry -- there's no Types
+        // table. One definition for both the Intake page's dropdown and
+        // SubmitIntake's gate, so the two can't disagree about what exists.
+        private List<string> KnownItemTypes() =>
+            _db.InventoryItems.AsNoTracking()
+               .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
 
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -931,7 +937,7 @@ namespace Visual_Inventory_System.Controllers
             string? parentCode, string? majorCode, string? subCode, string? rack, string? row,
             string? requestedLocation,
             string[]? itemName, string[]? type, string[]? brand, string[]? rpn, int[]? qty,
-            string[]? serial,
+            string[]? serial, string[]? typeNew,
             bool preview = false)
         {
             // Extra serial boxes beyond each row's first (compressor rows with
@@ -957,10 +963,28 @@ namespace Visual_Inventory_System.Controllers
                 if (int.TryParse(Request.Form[key], out int tcVal)) tcByRow[rowIdx] = tcVal;
             }
 
+            // Type gate: an existing type (matched case-insensitively and stored
+            // in its existing spelling) or a new type the row explicitly flagged
+            // via "Add as a new type" (typeNew[i] == "1"). Anything else refuses
+            // the whole batch -- a free-typed miss like "Contro" used to become
+            // its own type and mint its own ItemId prefix.
+            var knownTypes = KnownItemTypes();
+            var typeErrors = new List<string>();
+
             var lines = new List<InventoryService.IntakeLine>();
             for (int i = 0; itemName != null && i < itemName.Length; i++)
             {
                 if (string.IsNullOrWhiteSpace(itemName[i])) continue;
+
+                string rowType = (type != null && i < type.Length ? type[i] : "")?.Trim() ?? "";
+                string? canonType = knownTypes.FirstOrDefault(t => string.Equals(t, rowType, StringComparison.OrdinalIgnoreCase));
+                bool flaggedNew = typeNew != null && i < typeNew.Length && typeNew[i] == "1";
+                if (rowType.Length == 0)
+                    typeErrors.Add($"Row {i + 1} ({itemName[i].Trim()}): Type is required.");
+                else if (canonType != null)
+                    rowType = canonType;
+                else if (!flaggedNew)
+                    typeErrors.Add($"Row {i + 1} ({itemName[i].Trim()}): \"{rowType}\" isn't an existing type — pick one, or add it as a new type.");
 
                 var rowSerials = new List<string>();
                 if (serial != null && i < serial.Length && !string.IsNullOrWhiteSpace(serial[i]))
@@ -970,7 +994,7 @@ namespace Visual_Inventory_System.Controllers
                 lines.Add(new InventoryService.IntakeLine
                 {
                     ItemName = itemName[i],
-                    Type = type != null && i < type.Length ? type[i] : "",
+                    Type = rowType,
                     Brand = brand != null && i < brand.Length ? brand[i] : "",
                     RheemPartNumber = rpn != null && i < rpn.Length && !string.IsNullOrWhiteSpace(rpn[i]) ? rpn[i] : "N/A",
                     Quantity = qty != null && i < qty.Length ? qty[i] : 1,
@@ -981,6 +1005,11 @@ namespace Visual_Inventory_System.Controllers
             if (lines.Count == 0)
             {
                 TempData["Error"] = "Nothing to import — add at least one row.";
+                return RedirectToAction("Intake");
+            }
+            if (typeErrors.Count > 0)
+            {
+                TempData["Error"] = "Nothing was imported. " + string.Join(" ", typeErrors);
                 return RedirectToAction("Intake");
             }
 

@@ -122,6 +122,20 @@ html, body {
         color: white;
     }
 
+/* Bootstrap's success green (#198754) is 4.0:1 as text on this app's dark
+   surfaces -- short of 4.5 for 13px button labels. Brighter on dark, and a
+   darker green on white (light theme, below). */
+.btn-outline-success {
+    color: #2EBD72;
+    border-color: #2EBD72;
+}
+
+    .btn-outline-success:hover {
+        background-color: #2EBD72;
+        border-color: #2EBD72;
+        color: #0B1A12;
+    }
+
 .btn-warning {
     background-color: var(--vis-yellow);
     color: #000;
@@ -392,6 +406,106 @@ html, body {
 .comp-row .text-light-gray, .motor-row .text-light-gray, .filter-bar-dark .text-light-gray {
     color: #94A3B8 !important;
 }
+/* ...but the unit tables inside those rows didn't inherit the dark surface:
+   Bootstrap's .table paints every cell var(--bs-table-bg), which resolves to
+   the white body background, so the light-gray location/date text sat on
+   white (2.6:1) and the yellow "(missing)" serial flag was 1.6:1 -- in BOTH
+   themes. Let the row's own dark background show through instead. */
+.comp-row .table, .motor-row .table {
+    --bs-table-bg: transparent;
+    --bs-table-color: #E2E8F0;
+    --bs-table-hover-bg: rgba(255, 255, 255, 0.04);
+    --bs-table-hover-color: #E2E8F0;
+    --bs-table-border-color: #3D4351;
+}
+
+/* ---- Contrast sweep (2026-09-24) -------------------------------------------
+   Measured, not eyeballed: every visible text node on every page, both themes,
+   every modal, against WCAG AA (4.5:1 body, 3:1 large). Root causes first. */
+
+/* Bootstrap's .table paints every cell --bs-table-bg, which resolves to #fff.
+   Nothing in this app ever overrode it, so in DARK theme the Logs / All Items /
+   Pickup Queue / Settings tables were white slabs with Bootstrap's dark body
+   text, and each page's #94A3B8 .text-dim cells sat on white at 2.6:1. Tables
+   now take their card's surface and the app's text colour in both themes;
+   .table-dark theads keep their own. */
+.table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--vis-text);
+    --bs-table-border-color: var(--vis-card-border);
+    --bs-table-striped-bg: rgba(127, 127, 127, 0.06);
+    --bs-table-striped-color: var(--vis-text);
+    --bs-table-hover-bg: rgba(127, 127, 127, 0.10);
+    --bs-table-hover-color: var(--vis-text);
+}
+
+/* .text-dim is declared page-locally (Logs, All Items, Deliveries, Log
+   Delivery, Pickup Queue) as #94A3B8 !important -- fine on dark, 2.4-2.6:1 on
+   light surfaces. One light-theme override outranks all five. */
+:root[data-theme="light"] .text-dim { color: #5A6470 !important; }
+
+/* Page headings carry .text-white from the dark-only days (Bulk Intake, All
+   Items, the sign-in and Settings-unlock cards): white on the light page
+   background, 1.0-1.1:1. Tinted modal headers are excluded -- they stay dark. */
+:root[data-theme="light"] :is(h1, h2, h3, h4).text-white:not(.modal-header *):not(.comp-row *):not(.motor-row *) { color: #1A1D23 !important; }
+
+/* Bootstrap's .text-muted is rgba(33,37,41,.75) -- tuned for a white page, so
+   "Cart is empty." was 1.15:1 on the dark holo viewer. Theme-following now. */
+.text-muted { color: var(--vis-text-muted) !important; }
+
+/* Bootstrap success green (#198754) as TEXT is 3.7:1 on the dark card
+   ("Available: N" on every search result, Registry's Initial Qty). */
+.text-success { color: #2EBD72 !important; }
+:root[data-theme="light"] .text-success { color: #146C43 !important; }
+
+/* --vis-teal as button text is 4.0:1 on the dark card (Handle Stock, Intake's
+   Preview, delivery photo link). Brighter teal for text on dark only; the
+   light theme already overrides it to #087990 below. */
+.btn-outline-info { color: #22B5B5; border-color: #22B5B5; }
+
+/* .btn-info is white on --vis-blue (#1DA1F2): 2.8:1 in both themes (the
+   "View" buttons on My Activity / Orders). Dark label instead: 7.4:1. */
+.btn-info, .btn-info:hover, .btn-info:focus { color: #06121C !important; }
+
+/* Inset read-out boxes (Generated / New FDA String, Current location) were
+   pinned #14151A inline, so in light theme the teal label on them was 3.6:1.
+   They follow the theme now. */
+.vis-inset-box {
+    background-color: #14151A;
+    border-color: #3D4351 !important;
+    color: #94A3B8;
+}
+:root[data-theme="light"] .vis-inset-box {
+    background-color: #F4F6F8;
+    border-color: #DCE1E8 !important;
+    color: #5A6470;
+}
+
+/* Autocomplete suggestion rows (Modify Stock / New Item Registry item search,
+   Type and Rack/Row suggestions, sign-in name picker). Each builder used to
+   paint the row #1C1E24 inline with a .text-white label -- and in light
+   theme `.modal-content .text-white` flips that label dark, so the item name
+   went dark-on-dark and only the blue ID stayed readable. One theme-following
+   class instead of inline hex; hover is CSS, not JS mouseover handlers. */
+.vis-suggest-item {
+    background-color: var(--vis-card) !important;
+    color: var(--vis-text) !important;
+    border-color: var(--vis-card-border) !important;
+}
+    .vis-suggest-item:hover,
+    .vis-suggest-item:focus {
+        background-color: var(--vis-card-border) !important;
+    }
+    .vis-suggest-item .text-light-gray {
+        color: var(--vis-text-muted) !important;
+    }
+/* Bootstrap's text-primary (#0D6EFD) is 3.7:1 on the dark card; the app's own
+   blue reads 6:1 there. Light theme keeps a darker blue for white. */
+.vis-suggest-item .text-primary { color: var(--vis-blue) !important; }
+:root[data-theme="light"] .vis-suggest-item .text-primary { color: #0B5ED7 !important; }
+:root[data-theme="light"] .vis-suggest-item .text-info { color: #087990 !important; }
+:root[data-theme="light"] .vis-suggest-item:hover,
+:root[data-theme="light"] .vis-suggest-item:focus { background-color: #EEF1F5 !important; }
 
 .holo-viewer {
     background: var(--vis-bg);
@@ -622,6 +736,21 @@ body {
 :root[data-theme="light"] .modal-content { color: #1A1D23; }
 :root[data-theme="light"] .modal-content .text-white { color: #1A1D23 !important; }
 
+/* ...except on tinted headers, which DON'T follow the theme (bg-primary /
+   bg-dark / bg-danger / bg-success, and .modal-header-tinted for a header
+   coloured inline). The rule above turned the Export Wizard's title dark on
+   its bg-dark header (1.1:1). bg-warning is excluded -- it carries .text-dark. */
+:root[data-theme="light"] .modal-content .modal-header.bg-primary,
+:root[data-theme="light"] .modal-content .modal-header.bg-dark,
+:root[data-theme="light"] .modal-content .modal-header.bg-danger,
+:root[data-theme="light"] .modal-content .modal-header.bg-success,
+:root[data-theme="light"] .modal-content .modal-header.modal-header-tinted,
+:root[data-theme="light"] .modal-content .modal-header.bg-primary .text-white,
+:root[data-theme="light"] .modal-content .modal-header.bg-dark .text-white,
+:root[data-theme="light"] .modal-content .modal-header.bg-danger .text-white,
+:root[data-theme="light"] .modal-content .modal-header.bg-success .text-white,
+:root[data-theme="light"] .modal-content .modal-header.modal-header-tinted .text-white { color: #FFFFFF !important; }
+
 /* One of those (a compressor's blank-serial flag, in its History table) sits
    inside .comp-row, whose background stays dark regardless of theme --
    same exclusion shape as the label rule above, same reason: four
@@ -650,6 +779,11 @@ body {
 :root[data-theme="light"] .btn-outline-danger { color: #A61E2B !important; border-color: #A61E2B !important; }
 :root[data-theme="light"] .btn-outline-warning { color: #8A6100 !important; border-color: #8A6100 !important; }
 :root[data-theme="light"] .btn-outline-info { color: #087990 !important; border-color: #087990 !important; }
+:root[data-theme="light"] .btn-outline-success { color: #146C43; border-color: #146C43; }
+/* ...except inside the always-dark unit rows, which keep the dark-surface green. */
+:root[data-theme="light"] .comp-row .btn-outline-success,
+:root[data-theme="light"] .motor-row .btn-outline-success { color: #2EBD72; border-color: #2EBD72; }
+:root[data-theme="light"] .btn-outline-success:hover { background-color: #146C43; border-color: #146C43; color: #FFFFFF; }
 
 /* Pick Up Orders box (text-white sitting over a near-white box) */
 :root[data-theme="light"] .pickup-box,

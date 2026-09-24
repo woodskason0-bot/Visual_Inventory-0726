@@ -281,49 +281,9 @@
         }
     })();
 
-    // Generic single-value autocomplete (Type fields): a plain list of
-    // strings, no id/qty metadata like the model matches below carry. Same
-    // visual pattern as bindAutocomplete's list-group panel (Registry/Modify
-    // Stock search), so every dropdown in the app looks the same. Picking a
-    // suggestion sets the input's value and fires a real 'input' event so
-    // whatever's already listening (unit-capture rebuild, etc.) still runs --
-    // suppressed once so that synthetic event doesn't reopen this same list.
-    // valuesOrGetter: a plain array (static, e.g. known Types) OR a function
-    // returning the current array (dynamic, e.g. Rack/Row suggestions that
-    // depend on whatever Parent/Major/Sub is picked right now) -- evaluated
-    // fresh on every keystroke either way, so a dynamic source never goes stale.
-    function bindValueAutocomplete(inputEl, listEl, valuesOrGetter) {
-        let suppress = false;
-        inputEl.addEventListener('input', function () {
-            if (suppress) { suppress = false; return; }
-            const val = inputEl.value.trim().toLowerCase();
-            listEl.innerHTML = '';
-            if (!val) { listEl.style.display = 'none'; return; }
-            const values = (typeof valuesOrGetter === 'function') ? (valuesOrGetter() || []) : valuesOrGetter;
-            const matches = values.filter(function (v) { return v.toLowerCase().includes(val); }).slice(0, 10);
-            if (matches.length === 0) { listEl.style.display = 'none'; return; }
-            listEl.style.display = 'block';
-            matches.forEach(function (v) {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
-                btn.style.backgroundColor = '#1C1E24';
-                btn.textContent = v;
-                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
-                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
-                btn.onclick = function () {
-                    listEl.style.display = 'none';
-                    suppress = true;
-                    inputEl.value = v;
-                    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-                };
-                listEl.appendChild(btn);
-            });
-        });
-        document.addEventListener('click', function (e) {
-            if (e.target !== inputEl) listEl.style.display = 'none';
-        });
-    }
+    // bindValueAutocomplete lives in site.js (loaded at the top of <body> since
+    // Pass 27, so it exists before this script runs). This page used to carry
+    // its own copy, which silently shadowed the shared one.
 
     // Model autocomplete: suggest what already exists, and prefill the rest of the
     // row from it so adding stock to a known item doesn't mean retyping its brand.
@@ -342,6 +302,47 @@
         // same exact-match / suffix rules the server enforces.
         function isCompressorTypeLocal(t) { return !!t && String(t).trim().toLowerCase() === 'compressor'; }
         function isMotorTypeLocal(t) { return !!t && String(t).trim().toLowerCase().endsWith('motor'); }
+
+        // ---- Type gate ----------------------------------------------------
+        // A Type is accepted only as an existing type (picked, or typed out in
+        // full -- case doesn't matter, the stored spelling wins) or as a new
+        // type someone explicitly chose "Add as a new type" for. A free-typed
+        // miss like "Contro" used to register as its own type and mint its own
+        // ID prefix (CCO- instead of CCL-). The server re-checks all of this;
+        // the typeNew flag is what tells it a new type was deliberate.
+        function canonicalType(v) {
+            const l = String(v || '').trim().toLowerCase();
+            if (!l) return null;
+            return knownTypesArr.find(function (t) { return t.toLowerCase() === l; }) || null;
+        }
+        function checkType(tr, showError) {
+            const typeIn = tr.querySelector('.intake-type-input');
+            const flag = tr.querySelector('.intake-type-new');
+            const note = tr.querySelector('.intake-type-note');
+            const v = typeIn.value.trim();
+            const setNote = function (text, cls) {
+                note.textContent = text;
+                note.className = 'intake-type-note mt-1 ' + cls;
+                note.style.display = text ? 'block' : 'none';
+            };
+            flag.value = '0';
+            typeIn.classList.remove('is-invalid');
+
+            if (canonicalType(v)) { tr._confirmedNewType = null; setNote('', ''); return true; }
+            if (v && tr._confirmedNewType === v) {
+                flag.value = '1';
+                setNote('New type — created on import.', 'text-info');
+                return true;
+            }
+            tr._confirmedNewType = null;
+            if (showError) {
+                typeIn.classList.add('is-invalid');
+                setNote(v ? 'Not an existing type — pick one, or add it as new.' : 'Type is required.', 'text-danger');
+            } else {
+                setNote('', '');
+            }
+            return false;
+        }
 
         // Rebuild a row's Serial(s)/TC cell based on its current Type. Neither
         // is required -- this only surfaces the opportunity. Every row keeps
@@ -551,8 +552,12 @@
             const tr = document.createElement('tr');
             tr.innerHTML =
                 '<td><input name="itemName" list="known-items" class="form-control form-control-sm" autocomplete="off" /></td>' +
-                '<td class="position-relative"><input name="type" class="form-control form-control-sm intake-type-input" autocomplete="off" />' +
-                  '<div class="list-group position-absolute shadow intake-type-list" style="z-index:2000; display:none; max-height:180px; overflow-y:auto; width:220px;"></div></td>' +
+                '<td><input name="type" class="form-control form-control-sm intake-type-input" autocomplete="off" />' +
+                  // Exactly one typeNew per row, always -- binds positionally
+                  // against type[], same rule as serial[] above.
+                  '<input type="hidden" name="typeNew" value="0" class="intake-type-new" />' +
+                  '<small class="intake-type-note mt-1" style="font-size:10px; display:none;"></small>' +
+                  '<div class="list-group shadow intake-type-list" style="z-index:2000; display:none; max-height:180px; overflow-y:auto; width:220px;"></div></td>' +
                 '<td><input name="brand" class="form-control form-control-sm" /></td>' +
                 '<td><input name="rpn" value="N/A" class="form-control form-control-sm" /></td>' +
                 '<td><input name="qty" type="number" min="1" value="1" class="form-control form-control-sm" /></td>' +
@@ -569,8 +574,34 @@
                 if (!hit) return;
                 moveToAlreadyRegistered(tr, hit);
             });
-            bindValueAutocomplete(tr.querySelector('.intake-type-input'), tr.querySelector('.intake-type-list'), knownTypesArr);
-            tr.querySelector('[name=type]').addEventListener('input', function () { syncUnitCapture(tr); });
+            const typeIn = tr.querySelector('.intake-type-input');
+            bindValueAutocomplete(typeIn, tr.querySelector('.intake-type-list'), knownTypesArr, {
+                floating: true,
+                extraItem: function (raw) {
+                    if (canonicalType(raw)) return null;
+                    return {
+                        label: '+ Add "' + raw + '" as a new type',
+                        onPick: function () {
+                            tr._confirmedNewType = raw;
+                            typeIn.value = raw;
+                            checkType(tr, true);
+                            syncUnitCapture(tr);
+                        }
+                    };
+                }
+            });
+            typeIn.addEventListener('input', function () {
+                checkType(tr, typeIn.classList.contains('is-invalid'));
+                syncUnitCapture(tr);
+            });
+            // Leaving the box: a case-only miss ("control") snaps to the stored
+            // spelling instead of becoming its own type; anything else unknown
+            // is flagged until it's picked or explicitly added as new.
+            typeIn.addEventListener('change', function () {
+                const canon = canonicalType(typeIn.value);
+                if (canon && canon !== typeIn.value) { typeIn.value = canon; syncUnitCapture(tr); }
+                checkType(tr, true);
+            });
             tr.querySelector('[name=qty]').addEventListener('input', function () { syncUnitCapture(tr); });
             body.appendChild(tr);
             syncUnitCapture(tr);
@@ -583,7 +614,17 @@
         // index has to be computed from final DOM order, not creation order,
         // matching how itemName[]/type[]/etc. already bind by document order.
         const form = document.querySelector('form[action*="SubmitIntake"]');
-        if (form) form.addEventListener('submit', function () {
+        if (form) form.addEventListener('submit', function (e) {
+            // Gate first: every named row needs a valid Type before anything
+            // (Preview included) goes to the server.
+            let firstBad = null;
+            Array.from(body.children).forEach(function (tr) {
+                const name = tr.querySelector('[name=itemName]').value.trim();
+                if (!name) return;
+                if (!checkType(tr, true) && !firstBad) firstBad = tr.querySelector('.intake-type-input');
+            });
+            if (firstBad) { e.preventDefault(); firstBad.focus(); return; }
+
             Array.from(body.children).forEach(function (tr, rowIdx) {
                 tr.querySelectorAll('.intake-extra-serial').forEach(function (el) {
                     el.name = 'extraSerial_' + rowIdx + '_' + el.getAttribute('data-slot');

@@ -217,7 +217,7 @@
                     <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
                          selected item's current location. 0 = unspecified at every level but Parent. -->
                     <div id="stock-loc-div" class="mb-1" style="display:none;">
-                        <div class="py-2 px-3 mb-3 small rounded" style="background:#14151A; border:1px solid #3D4351; color:#94A3B8;">
+                        <div class="py-2 px-3 mb-3 small rounded border vis-inset-box">
                             <i class="bi bi-geo-alt me-1"></i> Current location: <span class="fw-bold text-info" id="loc-current">--</span>
                         </div>
                         <div id="loc-needs-item" class="small text-warning mb-2">
@@ -277,7 +277,7 @@
                                 <small id="loc-merge-note" class="text-warning fw-bold" style="display:none; font-size:11px;"></small>
                             </div>
                         </div>
-                        <div class="p-2 mt-2 border rounded" style="background-color:#14151A; border-color:#3D4351 !important;">
+                        <div class="p-2 mt-2 border rounded vis-inset-box">
                             <label class="form-label small fw-bold text-info mb-1">New FDA String</label>
                             <input type="text" id="loc-fda" class="form-control fw-bold border-0 text-white" style="background:transparent; font-size:15px;" readonly placeholder="--" />
                         </div>
@@ -670,8 +670,60 @@
             else if (action === 'Adjustment') helpText.innerText = "Use negative numbers (-) to subtract, positive to add.";
         }
 
+        refreshQtyCap(action);
         refreshTcFields(action);
         refreshSerialFields(action);
+    }
+    // ---- Quantity bounds ----------------------------------------------------
+    // Scrap is capped at the selected stack's quantity -- it acts on ONE
+    // variant, so the item total would still over-promise on a split item.
+    // Add and Scrap floor at 1; Adjustment stays signed but can't take the
+    // stack below 0 (floor = -stack qty).
+    // Clamped live rather than left to min/max validation, because Execute
+    // goes through executeSubmit() -> form.submit(), which skips validation.
+    // The server clamps and rejects independently either way.
+    function scrapCap() {
+        const v = getSelectedVariant(getStockItem());
+        return v ? Math.max(0, v.qty || 0) : 0;
+    }
+    function refreshQtyCap(action) {
+        const q = document.getElementById('stock-qty-input');
+        const help = document.getElementById('stock-qty-help');
+        if (!q) return;
+        q.removeAttribute('min');
+        q.removeAttribute('max');
+        if (action === 'Add') {
+            q.min = '1';
+        } else if (action === 'Scrap') {
+            const cap = scrapCap();
+            q.min = cap > 0 ? '1' : '0';
+            q.max = String(cap);
+            if (help) help.innerText = cap > 0
+                ? 'Amount to REMOVE from inventory (this stack holds ' + cap + ').'
+                : 'This stack is empty — nothing to scrap.';
+        } else if (action === 'Adjustment') {
+            const cap = scrapCap();
+            q.min = String(-cap);
+            if (help) help.innerText = 'Use negative numbers (-) to subtract, positive to add. This stack holds '
+                + cap + ', so it can go down by at most ' + cap + '.';
+        }
+        clampQty(action);
+    }
+    function clampQty(action) {
+        const q = document.getElementById('stock-qty-input');
+        if (!q || (action !== 'Add' && action !== 'Scrap' && action !== 'Adjustment')) return;
+        if (q.value === '' || q.value === '-') return;   // let them clear the box / start a minus
+        let v = parseInt(q.value, 10);
+        if (action === 'Adjustment') {
+            if (isNaN(v)) return;
+            const floor = -scrapCap();
+            if (v < floor) q.value = String(floor);
+            return;
+        }
+        if (isNaN(v)) v = 1;
+        if (v < 1) v = 1;
+        if (action === 'Scrap') v = Math.min(v, scrapCap());
+        if (String(v) !== q.value) q.value = String(v);
     }
     // ---- Edit Details (identity fields) -----------------------------------
     // Seed the pane from the selected item. Brand LOCKS when the item already
@@ -894,6 +946,7 @@
         const q = document.getElementById('stock-qty-input');
         if (q) q.addEventListener('input', function () {
             const a = document.getElementById('stock-action-type').value;
+            clampQty(a);
             if (a === 'Add' || a === 'Scrap') refreshTcFields(a);
             if (a === 'Add') refreshSerialFields(a);
         });
@@ -922,6 +975,7 @@
             const action = document.getElementById('stock-action-type').value;
             refreshDeleteVariantBtn();
             refreshVariantTeamNote();
+            refreshQtyCap(action);   // a different stack is a different Scrap ceiling
             if (typeof refreshTcFields === 'function') refreshTcFields(action);
             if (action === 'Location Transfer') {
                 if (typeof seedLocationTransfer === 'function') seedLocationTransfer();

@@ -75,11 +75,8 @@
             matches.forEach(function (u) {
                 const btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom border-dark text-white';
-                btn.style.backgroundColor = '#1C1E24';
+                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item';
                 btn.textContent = u.displayName;
-                btn.onmouseover = function () { btn.style.backgroundColor = '#2A2D35'; };
-                btn.onmouseout = function () { btn.style.backgroundColor = '#1C1E24'; };
                 btn.onclick = function () {
                     input.value = u.userName;
                     list.style.display = 'none';
