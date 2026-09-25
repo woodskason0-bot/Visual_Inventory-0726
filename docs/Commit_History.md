@@ -11,6 +11,18 @@ landed, when."
 
 ## 2026-09-24
 
+### Fix: the session cookie gets its own name
+No migration. The default `.AspNetCore.Session` cookie was shared with the
+Sourcing Tool: both apps run on the host, on :5000 and :5001, and browsers
+don't separate cookies by port. Each app rejected the other's cookie
+(`SessionMiddleware[7] Error unprotecting the session cookie`) and replaced it,
+which signed people out of the app they'd just left. The cookie is now
+`.VisualInventory.Session`, and the Sourcing Tool uses `.SourcingTool.Session`.
+Verified on dev with both apps signed in and switched between: no sign-outs,
+no warning. The staged `E:\VIS_Release_20260924\` predates this; rebuild before
+installing.
+*Files:* `Program.cs`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### Pass 40 — the Item Card, top-bar cart button, sidebar brand text
 No migration, no schema change. Search result rows now carry one **Open** entry
 point (row click / Enter too); Add to Cart, Handle Stock, Request Transfer and

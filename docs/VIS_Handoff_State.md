@@ -96,6 +96,21 @@ rather than assuming one exists.
   against the original: **zero differences** (the file's md5 moves on startup
   because SQLite bumps the header change counter on any write transaction,
   even an empty one — not a data change).
+- **Fix waiting for the next release: session cookie shared with the Sourcing
+  Tool.** The host console logged
+  `SessionMiddleware[7] Error unprotecting the session cookie … The payload was
+  invalid`. Both apps used the default cookie name `.AspNetCore.Session`, and
+  browsers scope cookies by host, not port, so VIS (:5000) and the Sourcing Tool
+  (:5001) on the host overwrote each other's cookie. Each app couldn't decrypt the
+  other's, logged the warning and started a fresh session, so switching apps
+  signed you out of the one you left. `Program.cs` now sets
+  `options.Cookie.Name = ".VisualInventory.Session"`, and the Sourcing Tool uses
+  `.SourcingTool.Session`. Verified on dev with both apps running: signed in to
+  each, switched back and forth, stayed signed in to both, with no warning and no
+  errors in either log. **The staged `E:\VIS_Release_20260924\` predates this.**
+  Rebuild it (Passes 39 + 40 + this fix) before installing on the host; the same
+  md5 gate still applies to its db. Each browser logs the warning once on its first
+  visit after the update, while the old cookie is replaced.
 - **Orphan notification subscription:** `NotificationSubscriptions` row 9
   points at `UserId 72`, which doesn't exist (a `PickupRequested` subscription).
   Present in every copy including the Sept 2 one, so it long predates this
@@ -3253,6 +3268,22 @@ compressor, a TC motor and an EEV in both themes: zero failures after fixing
 the cart label and the TC amber on light tiles. Zero console or server errors;
 build still at the 14-warning baseline. The only db writes were my theme
 toggles, set back to light — cart testing lives in the session, not the db.
+
+**Fix (2026-09-24) — the session cookie gets its own name.** No migration, not a
+pass. The host console was logging `SessionMiddleware[7] Error unprotecting the
+session cookie … The payload was invalid`. VIS and the Sourcing Tool both used
+the default `.AspNetCore.Session` cookie, and on the host they share a machine,
+on :5000 and :5001. Browsers scope cookies by host, not port, so each app got the
+other's cookie, couldn't decrypt it (each has its own Data Protection keys), and
+replaced it — signing you out of whichever app you'd just left. `Program.cs` now
+sets `options.Cookie.Name = ".VisualInventory.Session"`, and the Sourcing Tool
+uses `.SourcingTool.Session`.
+
+**Verified live on the dev db.** Both apps ran side by side (VIS :5000, Sourcing
+:5001). I signed in to each and switched back and forth, and both stayed signed
+in. Neither log had the warning or any errors. Signing in writes nothing to the
+db. On the host, each browser logs the warning one last time while its old cookie
+is replaced.
 
 **Brand red decided: leave it.** Rheem red as text on dark (~3.4:1) stays as
 is — sidebar active link, Sign Out, outline-primary buttons, the V/I/S. It's

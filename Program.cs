@@ -31,6 +31,10 @@ builder.Services.AddDistributedMemoryCache();
 builder.Services.AddSession(options =>
 {
     options.IdleTimeout = TimeSpan.FromMinutes(30);
+    // Own name, not the default ".AspNetCore.Session": browsers scope cookies by
+    // host, not port, so the Sourcing Tool on :5001 and VIS on :5000 would
+    // overwrite each other's session (and log "Error unprotecting the session cookie").
+    options.Cookie.Name = ".VisualInventory.Session";
     options.Cookie.HttpOnly = true;
     options.Cookie.IsEssential = true;
 });
