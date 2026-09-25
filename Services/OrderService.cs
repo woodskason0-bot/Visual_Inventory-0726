@@ -209,6 +209,17 @@ namespace Visual_Inventory_System.Services
                 _db.SaveChanges(); // This generates the new Order.Id
                 newOrderId = order.Id;
 
+                // What THIS cart has already claimed, line by line. The stock
+                // check below reads committed Pending lines from the database,
+                // and the lines this loop adds aren't saved until after it -- so
+                // without this, two rows of the same item (the cart keeps them
+                // apart by location/team on purpose) each passed against the
+                // full shelf: 4 + 4 accepted against 5 units. Pools follow
+                // GetAvailableQuantity's own: an unscoped ("") line draws on
+                // every team's stock, so it counts against any line of the item,
+                // and any line counts against an unscoped one.
+                var claimedThisCart = new List<(string ItemId, string Team, int Qty)>();
+
                 // 2. Attach the Items
                 foreach (var entry in draft.Entries)
                 {
@@ -223,12 +234,19 @@ namespace Visual_Inventory_System.Services
                     // as the stock check right below it.
                     string team = ResolveOrderingTeam(invItem, entry.RequestedTeam);
 
+                    int inCart = claimedThisCart
+                        .Where(c => c.ItemId == entry.ItemId && (team.Length == 0 || c.Team.Length == 0 || c.Team == team))
+                        .Sum(c => c.Qty);
+
                     // Verify Stock (Clean error message without quotes to protect Toast JS)
-                    var avail = invService.GetAvailableQuantity(entry.ItemId, team);
+                    var avail = System.Math.Max(0, invService.GetAvailableQuantity(entry.ItemId, team) - inCart);
                     if (avail < entry.Quantity)
                     {
-                        throw new InvalidOperationException($"Failed: ID {entry.ItemId} only has {avail} available in stock.");
+                        throw new InvalidOperationException(inCart > 0
+                            ? $"Failed: ID {entry.ItemId} only has {avail} available in stock after the other cart lines for it."
+                            : $"Failed: ID {entry.ItemId} only has {avail} available in stock.");
                     }
+                    claimedThisCart.Add((entry.ItemId, team, entry.Quantity));
 
                     // TC request only sticks for motors, and never exceeds the line qty.
                     int tcCount = InventoryService.IsMotorType(invItem.Type)
@@ -575,11 +593,13 @@ namespace Visual_Inventory_System.Services
 
             int remaining = it.Quantity;
             int remainingTc = it.ThermocoupledCount;   // TC motors still owed to this line
+            int pulledTc = 0;   // TC motors that actually left, forced ones included
             var pulls = new List<string>();   // snapshot for the log
             // Which variant each pulled unit actually came from -- needed below
             // so compressor unit rows get matched against on-hand stock AT THAT
-            // LOCATION instead of pooled across every stack the item sits on.
-            var variantPulls = new List<(int VariantId, int Take)>();
+            // LOCATION instead of pooled across every stack the item sits on,
+            // and so TC motor rows come off the shelves the TC really left.
+            var variantPulls = new List<(int VariantId, int Take, int TcTake)>();
             foreach (var v in pullOrder)
             {
                 if (remaining <= 0) break;
@@ -600,8 +620,9 @@ namespace Visual_Inventory_System.Services
                     v.ThermocoupledQty -= tcTake;
                     remaining -= take;
                     remainingTc = System.Math.Max(0, remainingTc - tcTake);
+                    pulledTc += tcTake;
                     pulls.Add($"{take}{(tcTake > 0 ? $" [{tcTake} TC]" : "")} from V{v.VariantNumber} ({v.FdaString})");
-                    variantPulls.Add((v.Id, take));
+                    variantPulls.Add((v.Id, take, tcTake));
                 }
             }
 
@@ -609,8 +630,12 @@ namespace Visual_Inventory_System.Services
             // shelf are now out and expected back (Controls: everything
             // pulled; Motors: the TC pulled). Based on what shipped, not
             // what was ordered, so a short pickup can't over-count a loan.
+            // pulledTc is summed inside the loop above, not derived as
+            // "requested minus still owed": the floor can FORCE more TC off a
+            // stack than the line asked for, and that derivation dropped the
+            // extra -- a TC motor left the shelf with no loan and its unit
+            // row still On Hand.
             int pulledQty = it.Quantity - remaining;
-            int pulledTc = it.ThermocoupledCount - remainingTc;
             // Pass 6B: call the shared helper instead of repeating the
             // rule inline. This block WAS a duplicate of
             // InventoryService.LoanableQuantity -- which meant the helper
@@ -643,7 +668,7 @@ namespace Visual_Inventory_System.Services
                 // order, so slot u lines up with both the Lab#/Serial# posted
                 // for slot u and the specific shelf that unit came from.
                 var unitVariant = new List<int>();
-                foreach (var (variantId, take) in variantPulls)
+                foreach (var (variantId, take, _) in variantPulls)
                     for (int i = 0; i < take; i++) unitVariant.Add(variantId);
 
                 // On-hand rows fetched once per variant and mutated in-memory
@@ -658,6 +683,13 @@ namespace Visual_Inventory_System.Services
                         list = _db.CompressorUnits
                             .Where(c => c.ItemId == it.ItemId && c.ItemVariantId == variantId && c.Status == UnitStatus.OnHand)
                             .OrderBy(c => c.RecordedAt)
+                            .ToList()
+                            // Rechecked in memory: the SQL filter reads saved
+                            // values, but an EARLIER line of this same pickup may
+                            // already have flipped one of these rows (tracked,
+                            // unsaved) -- EF hands back that same instance, and
+                            // without this the second line re-claimed it.
+                            .Where(c => c.Status == UnitStatus.OnHand && c.ItemVariantId == variantId)
                             .ToList();
                         onHandByVariant[variantId] = list;
                     }
@@ -675,49 +707,10 @@ namespace Visual_Inventory_System.Services
             }
 
             // TC MOTOR UNITS: mirrors the compressor block above, minus the
-            // serial match step (motors have none to match on -- there's
-            // nothing to key "is this the same physical unit" off of, so
-            // every pull just draws the oldest On Hand rows first). Only the
-            // TC subset of the pull gets a row; a non-TC motor never does.
+            // serial match step (motors have none to match on). Only the TC
+            // subset of the pull gets a row; a non-TC motor never does.
             if (InventoryService.IsMotorType(inv.Type) && pulledTc > 0)
-            {
-                var now = System.DateTime.UtcNow;
-                var onHandMotors = _db.MotorUnits
-                    .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand)
-                    .OrderBy(c => c.RecordedAt)
-                    .Take(pulledTc)
-                    .ToList();
-
-                foreach (var known in onHandMotors)
-                {
-                    known.Status = UnitStatus.PickedUp;
-                    known.OrderId = orderId;
-                    known.OrderItemId = it.Id;
-                    known.PickedUpAt = now;
-                    known.PickedUpBy = _currentUser.Name;
-                    known.ItemVariantId = null;
-                }
-
-                // Untracked TC stock (no on-hand row existed) still needs to
-                // be trackable once it's out -- created straight into Picked
-                // Up, same as an unmatched compressor serial at pickup.
-                for (int u = onHandMotors.Count; u < pulledTc; u++)
-                {
-                    _db.MotorUnits.Add(new MotorUnit
-                    {
-                        ItemId = it.ItemId,
-                        ItemVariantId = null,
-                        LabNumber = null,
-                        Status = UnitStatus.PickedUp,
-                        RecordedAt = now,
-                        RecordedBy = _currentUser.Name,
-                        OrderId = orderId,
-                        OrderItemId = it.Id,
-                        PickedUpAt = now,
-                        PickedUpBy = _currentUser.Name
-                    });
-                }
-            }
+                TakeMotorUnits(it.ItemId, variantPulls, orderId, it.Id, null, System.DateTime.UtcNow);
 
             var flagParts = new List<string>();
             if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
@@ -849,6 +842,66 @@ namespace Visual_Inventory_System.Services
                     PickedUpAt = now,
                     PickedUpBy = _currentUser.Name
                 });
+            }
+        }
+
+        /// <summary>
+        /// The TC motor counterpart of AssignOneCompressorUnit, shared by
+        /// FulfillOrderItem and ApproveTransfer: flips the oldest On Hand
+        /// MotorUnit rows on EACH shelf the pull actually drew TC from, as many
+        /// per shelf as TC left it. It used to take the oldest rows item-wide,
+        /// so pulling from shelf B marked shelf A's lab-numbered unit Picked Up
+        /// and left B's On Hand. TC the shelf had no row for is created straight
+        /// into Picked Up so it's still trackable once it's out, same as an
+        /// unmatched compressor serial. orderId/orderItemId vs.
+        /// transferRequestId are mutually exclusive, as in the compressor helper.
+        /// </summary>
+        private void TakeMotorUnits(string itemId, List<(int VariantId, int Take, int TcTake)> variantPulls,
+            int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now)
+        {
+            foreach (var (variantId, _, tcTake) in variantPulls)
+            {
+                if (tcTake <= 0) continue;
+
+                var onHandHere = _db.MotorUnits
+                    .Where(m => m.ItemId == itemId && m.ItemVariantId == variantId && m.Status == UnitStatus.OnHand)
+                    .OrderBy(m => m.RecordedAt)
+                    .ToList()
+                    // Rechecked in memory, same reason as FulfillOrderItem's
+                    // OnHandAt: an earlier line of this pickup may already have
+                    // flipped a row that the database still reads as On Hand.
+                    .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId == variantId)
+                    .Take(tcTake)
+                    .ToList();
+
+                foreach (var known in onHandHere)
+                {
+                    known.Status = UnitStatus.PickedUp;
+                    known.OrderId = orderId;
+                    known.OrderItemId = orderItemId;
+                    known.TransferRequestId = transferRequestId;
+                    known.PickedUpAt = now;
+                    known.PickedUpBy = _currentUser.Name;
+                    known.ItemVariantId = null;
+                }
+
+                for (int u = onHandHere.Count; u < tcTake; u++)
+                {
+                    _db.MotorUnits.Add(new MotorUnit
+                    {
+                        ItemId = itemId,
+                        ItemVariantId = null,
+                        LabNumber = null,
+                        Status = UnitStatus.PickedUp,
+                        RecordedAt = now,
+                        RecordedBy = _currentUser.Name,
+                        OrderId = orderId,
+                        OrderItemId = orderItemId,
+                        TransferRequestId = transferRequestId,
+                        PickedUpAt = now,
+                        PickedUpBy = _currentUser.Name
+                    });
+                }
             }
         }
 
@@ -1007,6 +1060,48 @@ namespace Visual_Inventory_System.Services
             catch { tx.Rollback(); throw; }
         }
 
+        /// <summary>
+        /// The compressor unit rows a Return or Scrap of `settling` units acts
+        /// on, checked before anything changes. Units are a PARTIAL overlay --
+        /// a line of 3 may name 1 unit and carry 2 as pure quantity -- but the
+        /// ticks and the quantity still have to describe the same units:
+        ///   - every ticked unit must be out on THIS loan line. The lookup used
+        ///     to match on ItemId alone, so a posted id from another person's
+        ///     loan of the same model was flipped while their counter stayed;
+        ///   - no more ticked than the quantity being settled (every tick
+        ///     starts checked, so lowering qty alone put 2 rows On Hand
+        ///     against 1 unit returned to the shelf);
+        ///   - the units NOT ticked have to fit in what this line carries as
+        ///     pure quantity (outstanding minus its unit rows), or a recorded
+        ///     unit would stay Picked Up on a loan that says it's settled.
+        /// </summary>
+        private List<CompressorUnit> LoanUnitsToSettle(OrderItem it, int settling, int[]? unitIds, string verbPast)
+        {
+            var lineUnits = _db.CompressorUnits
+                .Where(c => c.OrderItemId == it.Id && c.ItemId == it.ItemId && c.Status == UnitStatus.PickedUp)
+                .ToList();
+            var ids = (unitIds ?? System.Array.Empty<int>()).Distinct().ToList();
+            var picked = lineUnits.Where(c => ids.Contains(c.Id)).ToList();
+
+            if (picked.Count != ids.Count)
+                throw new InvalidOperationException(
+                    "One or more ticked units aren't out on this loan line any more -- refresh the page and try again.");
+            if (picked.Count > settling)
+                throw new InvalidOperationException(
+                    $"{picked.Count} units are ticked but only {settling} {(settling == 1 ? "is" : "are")} being {verbPast} -- untick the ones that aren't, or raise the quantity. Nothing was changed.");
+
+            int untracked = System.Math.Max(0, it.LoanOutstanding - lineUnits.Count);
+            int unticked = settling - picked.Count;
+            if (unticked > untracked)
+            {
+                int more = unticked - untracked;
+                throw new InvalidOperationException(
+                    $"{settling} {(settling == 1 ? "unit is" : "units are")} being {verbPast} but only {picked.Count} {(picked.Count == 1 ? "is" : "are")} ticked -- tick which {more} more recorded {(more == 1 ? "unit is" : "units are")} included. Nothing was changed.");
+            }
+
+            return picked;
+        }
+
         // Return loaned units to inventory: adds stock back at a chosen active
         // location OR a freshly minted one, and draws down LoanOutstanding. Motor
         // loans come back as TC stock (they were TC when they went out). Self-
@@ -1030,6 +1125,10 @@ namespace Visual_Inventory_System.Services
 
                 var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
                 if (inv == null) throw new InvalidOperationException("That item no longer exists in inventory.");
+
+                // Checked before anything moves -- including the new-location
+                // mint below, which saves mid-transaction.
+                var pickedUnits = LoanUnitsToSettle(it, give, unitIds, "returned");
 
                 bool asTc = InventoryService.IsMotorType(inv.Type);   // motor loans return as TC stock
                 string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "0" : v.Trim().ToUpperInvariant();
@@ -1080,23 +1179,13 @@ namespace Visual_Inventory_System.Services
                     _db.SaveChanges();   // need dest.Id before unit rows can reference it -- ItemVariantId has no FK/navigation, so EF does no fixup and would store 0
                 }
 
-                // Pass 6B: act on the individual units the user ticked. Units are a
-                // PARTIAL overlay -- only 184 of 825 compressors have a serial, so a
-                // line of 3 may name 1 unit and leave 2 as pure quantity. This loop
-                // is bounded by what was actually selected, never by the qty.
+                // Pass 6B: act on the individual units the user ticked --
+                // validated against this line and the quantity by
+                // LoanUnitsToSettle above.
                 string unitNote = "";
-                var pickedUnits = new List<CompressorUnit>();
-                if (unitIds != null && unitIds.Length > 0)
-                {
-                    pickedUnits = _db.CompressorUnits
-                        .Where(c => unitIds.Contains(c.Id)
-                                 && c.ItemId == it.ItemId
-                                 && c.Status == UnitStatus.PickedUp)
-                        .ToList();
-                    var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
-                                           .Select(u => u.SerialNumber).ToList();
-                    if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
-                }
+                var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
+                                       .Select(u => u.SerialNumber).ToList();
+                if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
                 string reasonNote = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
 
                 // Returned units land ON the shelf they were returned to.
@@ -1177,23 +1266,13 @@ namespace Visual_Inventory_System.Services
                 bool isMotor = InventoryService.IsMotorType(
                     _db.InventoryItems.AsNoTracking().Where(i => i.ItemId == it.ItemId).Select(i => i.Type).FirstOrDefault());
 
-                // Pass 6B: act on the individual units the user ticked. Units are a
-                // PARTIAL overlay -- only 184 of 825 compressors have a serial, so a
-                // line of 3 may name 1 unit and leave 2 as pure quantity. This loop
-                // is bounded by what was actually selected, never by the qty.
+                // Pass 6B: act on the individual units the user ticked --
+                // same checks as ReturnLoan, see LoanUnitsToSettle.
+                var pickedUnits = LoanUnitsToSettle(it, drop, unitIds, "scrapped");
                 string unitNote = "";
-                var pickedUnits = new List<CompressorUnit>();
-                if (unitIds != null && unitIds.Length > 0)
-                {
-                    pickedUnits = _db.CompressorUnits
-                        .Where(c => unitIds.Contains(c.Id)
-                                 && c.ItemId == it.ItemId
-                                 && c.Status == UnitStatus.PickedUp)
-                        .ToList();
-                    var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
-                                           .Select(u => u.SerialNumber).ToList();
-                    if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
-                }
+                var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
+                                       .Select(u => u.SerialNumber).ToList();
+                if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
                 string reasonNote = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
 
                 // Scrapped units never come back to a shelf: ItemVariantId stays
@@ -1408,8 +1487,9 @@ namespace Visual_Inventory_System.Services
 
                 int remaining = req.Quantity;
                 int remainingTc = req.ThermocoupledCount;
+                int pulledTc = 0;   // summed as taken -- see FulfillOrderItem for why
                 var pulls = new List<string>();
-                var variantPulls = new List<(int VariantId, int Take)>();
+                var variantPulls = new List<(int VariantId, int Take, int TcTake)>();
                 foreach (var v in pullOrder)
                 {
                     if (remaining <= 0) break;
@@ -1425,19 +1505,19 @@ namespace Visual_Inventory_System.Services
                     v.ThermocoupledQty -= tcTake;
                     remaining -= take;
                     remainingTc = System.Math.Max(0, remainingTc - tcTake);
+                    pulledTc += tcTake;
                     pulls.Add($"{take}{(tcTake > 0 ? $" [{tcTake} TC]" : "")} from V{v.VariantNumber} ({v.FdaString})");
-                    variantPulls.Add((v.Id, take));
+                    variantPulls.Add((v.Id, take, tcTake));
                 }
 
                 var now = System.DateTime.UtcNow;
                 int pulledQty = req.Quantity - remaining;
-                int pulledTc = req.ThermocoupledCount - remainingTc;
 
                 int missingLab = 0, missingSerial = 0, matchedUnits = 0;
                 if (InventoryService.IsCompressorType(item.Type) && pulledQty > 0)
                 {
                     var unitVariant = new List<int>();
-                    foreach (var (variantId, take) in variantPulls)
+                    foreach (var (variantId, take, _) in variantPulls)
                         for (int i = 0; i < take; i++) unitVariant.Add(variantId);
 
                     var onHandByVariant = new Dictionary<int, List<CompressorUnit>>();
@@ -1465,38 +1545,7 @@ namespace Visual_Inventory_System.Services
                 }
 
                 if (InventoryService.IsMotorType(item.Type) && pulledTc > 0)
-                {
-                    var onHandMotors = _db.MotorUnits
-                        .Where(c => c.ItemId == req.ItemId && c.Status == UnitStatus.OnHand)
-                        .OrderBy(c => c.RecordedAt)
-                        .Take(pulledTc)
-                        .ToList();
-                    foreach (var known in onHandMotors)
-                    {
-                        known.Status = UnitStatus.PickedUp;
-                        known.OrderId = null;
-                        known.OrderItemId = null;
-                        known.TransferRequestId = req.Id;
-                        known.PickedUpAt = now;
-                        known.PickedUpBy = _currentUser.Name;
-                        known.ItemVariantId = null;
-                    }
-                    for (int u = onHandMotors.Count; u < pulledTc; u++)
-                    {
-                        _db.MotorUnits.Add(new MotorUnit
-                        {
-                            ItemId = req.ItemId,
-                            ItemVariantId = null,
-                            LabNumber = null,
-                            Status = UnitStatus.PickedUp,
-                            RecordedAt = now,
-                            RecordedBy = _currentUser.Name,
-                            TransferRequestId = req.Id,
-                            PickedUpAt = now,
-                            PickedUpBy = _currentUser.Name
-                        });
-                    }
-                }
+                    TakeMotorUnits(req.ItemId, variantPulls, null, null, req.Id, now);
 
                 item.LastUpdated = now;
                 item.UpdatedBy = _currentUser.Name;

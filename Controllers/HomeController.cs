@@ -242,8 +242,10 @@ namespace Visual_Inventory_System.Controllers
                 IsOwnLine = _inventoryService.IsOwnLine(item.Line),
                 OnHand = item.Quantity,
                 AvailableToViewer = _inventoryService.GetAvailableForViewer(item),
+                // Line status too, same as GetAvailableQuantity: a Split line's
+                // units already left, even while its order waits on another line.
                 CommittedToPending = _db.OrderItems.AsNoTracking()
-                    .Where(oi => oi.ItemId == item.ItemId && oi.Order.Status == "Pending")
+                    .Where(oi => oi.ItemId == item.ItemId && oi.Order.Status == "Pending" && oi.Status == "Pending")
                     .Sum(oi => (int?)oi.Quantity) ?? 0,
                 OutOnLoan = _db.OrderItems.AsNoTracking()
                     .Where(oi => oi.ItemId == item.ItemId && oi.LoanOutstanding > 0)
@@ -306,6 +308,22 @@ namespace Visual_Inventory_System.Controllers
                 ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
                 : (_currentUser.Branch ?? "");
 
+            // Recorded On Hand units per stack, for Location Transfer's "which
+            // recorded units are moving?" checklist on a partial move. One query
+            // per table, grouped here, not one per item.
+            var compressorsByVariant = _db.CompressorUnits.AsNoTracking()
+                .Where(u => u.Status == UnitStatus.OnHand && u.ItemVariantId != null)
+                .OrderBy(u => u.RecordedAt)
+                .ToList()
+                .GroupBy(u => u.ItemVariantId!.Value)
+                .ToDictionary(g => g.Key, g => g.Select(u => (object)new { id = u.Id, serial = u.SerialNumber, lab = u.LabNumber }).ToList());
+            var motorsByVariant = _db.MotorUnits.AsNoTracking()
+                .Where(u => u.Status == UnitStatus.OnHand && u.ItemVariantId != null)
+                .OrderBy(u => u.RecordedAt)
+                .ToList()
+                .GroupBy(u => u.ItemVariantId!.Value)
+                .ToDictionary(g => g.Key, g => g.Select(u => (object)new { id = u.Id, lab = u.LabNumber }).ToList());
+
             var autocompleteData = allItems.Select(i => new {
                 id = i.ItemId,
                 name = i.ItemName,
@@ -345,7 +363,10 @@ namespace Visual_Inventory_System.Controllers
                     // Which team's slice this stack is (per-team quantity ownership,
                     // 2026-08-26) -- Modify Stock's variant picker shows it per option
                     // once an item is split.
-                    team = v.Team
+                    team = v.Team,
+                    // Recorded On Hand units on this stack (see above).
+                    cunits = compressorsByVariant.GetValueOrDefault(v.Id) ?? new List<object>(),
+                    munits = motorsByVariant.GetValueOrDefault(v.Id) ?? new List<object>()
                 }).ToList()
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
@@ -500,7 +521,8 @@ namespace Visual_Inventory_System.Controllers
             string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
             string? newRheemPart = null, string? newDescription = null, string? newBrand = null,
-            string? newLine = null, string? variantTeam = null)
+            string? newLine = null, string? variantTeam = null,
+            int[]? movingUnitIds = null, int[]? movingMotorUnitIds = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return SmartRedirect();
 
@@ -544,7 +566,7 @@ namespace Visual_Inventory_System.Controllers
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
                     newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
-                    newLine, serials, variantTeam);
+                    newLine, serials, variantTeam, movingUnitIds, movingMotorUnitIds);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -1536,7 +1558,11 @@ namespace Visual_Inventory_System.Controllers
                 var canFulfill = true;
                 var blockedByPriority = false;
 
-                foreach (var it in order.Items)
+                // Only lines still awaiting pickup -- the same set PickUpOrder
+                // acts on. A deliberate partial pickup leaves its "Split" line on
+                // an order that stays Pending for another line; listing it offered
+                // units that had already left and judged the order against them.
+                foreach (var it in order.Items.Where(i => i.Status == "Pending"))
                 {
                     var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt, it.Team);
                     var totalAvailable = _inventoryService.GetAvailableQuantity(it.ItemId, it.Team);

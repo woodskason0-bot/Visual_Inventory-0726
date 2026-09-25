@@ -617,13 +617,21 @@ namespace Visual_Inventory_System.Services
             return Encoding.UTF8.GetBytes(builder.ToString());
         }
 
+        /// <summary>
+        /// Every reservation query below requires the LINE to be Pending as well
+        /// as its order. A deliberate partial pickup marks its line "Split" (the
+        /// units already left the shelf) and parks the remainder on a new order,
+        /// but the original order stays Pending while any other line on it is --
+        /// so an order-status-only test kept holding the picked units back a
+        /// second time: 9 on the shelf, 2 genuinely requested, 6 shown available.
+        /// </summary>
         public int GetAvailableQuantity(string itemId)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
             var total = _db.ItemVariants.AsNoTracking()
                 .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId)
                 .Sum(v => (int?)v.Quantity) ?? 0;
-            var pendingAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending").Sum(oi => (int?)oi.Quantity) ?? 0;
+            var pendingAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending").Sum(oi => (int?)oi.Quantity) ?? 0;
             return System.Math.Max(0, total - pendingAlloc);
         }
 
@@ -646,7 +654,7 @@ namespace Visual_Inventory_System.Services
                 .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
                 .Sum(v => (int?)v.Quantity) ?? 0;
             var pendingAlloc = _db.OrderItems.AsNoTracking()
-                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Team == team)
+                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Team == team)
                 .Sum(oi => (int?)oi.Quantity) ?? 0;
             return System.Math.Max(0, total - pendingAlloc);
         }
@@ -657,7 +665,7 @@ namespace Visual_Inventory_System.Services
             var total = _db.ItemVariants.AsNoTracking()
                 .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId)
                 .Sum(v => (int?)v.Quantity) ?? 0;
-            var earlierAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt).Sum(oi => (int?)oi.Quantity) ?? 0;
+            var earlierAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt).Sum(oi => (int?)oi.Quantity) ?? 0;
             return System.Math.Max(0, total - earlierAlloc);
         }
 
@@ -671,7 +679,7 @@ namespace Visual_Inventory_System.Services
                 .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
                 .Sum(v => (int?)v.Quantity) ?? 0;
             var earlierAlloc = _db.OrderItems.AsNoTracking()
-                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt && oi.Team == team)
+                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt && oi.Team == team)
                 .Sum(oi => (int?)oi.Quantity) ?? 0;
             return System.Math.Max(0, total - earlierAlloc);
         }
@@ -708,7 +716,9 @@ namespace Visual_Inventory_System.Services
             if (outOnLoan)
                 return (false, $"Can't delete -- {itemId} has unit(s) still out on loan. Return or scrap them first.");
 
-            bool onPendingOrder = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.Order.Status == "Pending");
+            // Line status too, same as the reservation queries: a Split line
+            // already pulled its units even while its order waits on another line.
+            bool onPendingOrder = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending");
             if (onPendingOrder)
                 return (false, $"Can't delete -- {itemId} is on a pending order.");
 
@@ -774,7 +784,7 @@ namespace Visual_Inventory_System.Services
             if (onHandUnits)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} still has a recorded unit on it. Log/move it first.");
 
-            bool onPendingOrder = _db.OrderItems.Any(oi => oi.RequestedVariantId == variant.Id && oi.Order.Status == "Pending");
+            bool onPendingOrder = _db.OrderItems.Any(oi => oi.RequestedVariantId == variant.Id && oi.Order.Status == "Pending" && oi.Status == "Pending");
             if (onPendingOrder)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} is requested on a pending order.");
 
@@ -1608,16 +1618,58 @@ namespace Visual_Inventory_System.Services
             return 0;
         }
 
+        /// <summary>
+        /// Which of a stack's recorded On Hand units a PARTIAL Location Transfer
+        /// takes along, from the ones the person ticked as moving. `moving` and
+        /// `staying` are the units going and the units left behind -- the stack's
+        /// quantity for compressor rows, its TC for motor rows, which are TC-only.
+        /// Refuses (nothing has changed yet) when:
+        ///   - a ticked unit isn't recorded On Hand on this stack any more;
+        ///   - more are ticked than are moving;
+        ///   - the unticked rows can't all fit in what stays. That minimum is
+        ///     capped at what's moving: a stack already carrying more rows than
+        ///     units (Modify Stock's Scrap lowers the count without touching unit
+        ///     rows) would otherwise be impossible to move at all.
+        /// </summary>
+        private static List<T> TickedUnitsMoving<T>(List<T> here, System.Func<T, int> idOf,
+            IReadOnlyCollection<int>? ticked, int moving, int staying, string noun)
+        {
+            var ids = (ticked ?? System.Array.Empty<int>()).Distinct().ToList();
+            var picked = here.Where(u => ids.Contains(idOf(u))).ToList();
+
+            if (picked.Count != ids.Count)
+                throw new InvalidOperationException(
+                    "One or more ticked units aren't recorded on that stack any more -- refresh and try again. Nothing was moved.");
+            if (picked.Count > moving)
+                throw new InvalidOperationException(
+                    $"{picked.Count} recorded {noun}s are ticked but only {moving} {(moving == 1 ? "is" : "are")} moving -- untick the ones staying. Nothing was moved.");
+
+            int mustTick = System.Math.Min(moving, System.Math.Max(0, here.Count - staying));
+            if (picked.Count < mustTick)
+            {
+                int left = here.Count - picked.Count;
+                int more = mustTick - picked.Count;
+                throw new InvalidOperationException(
+                    $"Only {staying} {noun}{(staying == 1 ? " stays" : "s stay")} behind but {left} recorded {noun}{(left == 1 ? "" : "s")} would stay on record there -- tick which {more} more {(more == 1 ? "is" : "are")} moving. Nothing was moved.");
+            }
+            return picked;
+        }
+
         // serials: compressors only, Add action only -- mirrors CreateItem/
         // CommitIntake's own optional per-unit serial capture (Pass 17), just
         // reached from the Modify Stock jump-in (registry name-match click)
         // instead of a fresh registration. One CompressorUnit per non-blank
         // entry, logged On Hand against whichever variant actually received
         // the stock (existing stack or a freshly minted NEW-location one).
+        // movingCompressorIds / movingMotorIds: Location Transfer only -- the
+        // recorded units the person ticked as moving on a PARTIAL move. See
+        // TickedUnitsMoving for the rule; ignored when the move takes the whole
+        // stack (or all of its TC), since then every recorded unit goes.
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
-            string? newLine = null, List<string>? serials = null, string? variantTeam = null)
+            string? newLine = null, List<string>? serials = null, string? variantTeam = null,
+            IReadOnlyCollection<int>? movingCompressorIds = null, IReadOnlyCollection<int>? movingMotorIds = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -1658,6 +1710,12 @@ namespace Visual_Inventory_System.Services
             // serial-logging step after SaveChanges knows where to point,
             // whichever of the two Add branches ran (existing stack vs NEW).
             ItemVariant? addedVariant = null;
+            // Location Transfer only: tracked unit rows that have to follow the
+            // stock to another variant, and where to. Re-pointed after the
+            // SaveChanges below, since a split's new variant has no Id before it.
+            ItemVariant? unitDest = null;
+            var movingCompressors = new List<CompressorUnit>();
+            var movingMotors = new List<MotorUnit>();
 
             // Add and Scrap are one-directional amounts; only Adjustment is signed.
             // A negative Scrap used to pass straight through the Min() clamp below
@@ -1876,8 +1934,49 @@ namespace Visual_Inventory_System.Services
                     && Seg(v.Rack) == dRk && Seg(v.Row) == dRw
                     && string.Equals((v.Team ?? "").Trim(), srcTeam, System.StringComparison.OrdinalIgnoreCase));
 
+                // Which recorded units move with the stock. The On Hand unit rows
+                // point at a VARIANT, so a merge or split that leaves them behind
+                // on the source strands them: a merged-and-retired source kept its
+                // serials, and picking that real serial from the destination was
+                // refused as "already on record at a different location". A move
+                // that leaves no room for a unit at the source settles it: the
+                // whole stack (every row goes), or -- motor rows being TC-only --
+                // all of the source's TC. Anything short of that can't tell WHICH
+                // units moved, so the person ticks them (TickedUnitsMoving). All
+                // of this is checked before anything below changes. A whole-stack
+                // relocate with no merge keeps its variant Id, so its rows are
+                // already right.
+                bool sourceDrained = moveQty >= pv.Quantity;
+                bool tcDrained = pv.ThermocoupledQty > 0 && tcMove >= pv.ThermocoupledQty;
+                if (mergeTarget != null || !sourceDrained)
+                {
+                    var compressorsHere = _db.CompressorUnits
+                        .Where(c => c.ItemId == itemId && c.ItemVariantId == pv.Id && c.Status == UnitStatus.OnHand)
+                        .ToList();
+                    var motorsHere = _db.MotorUnits
+                        .Where(m => m.ItemId == itemId && m.ItemVariantId == pv.Id && m.Status == UnitStatus.OnHand)
+                        .ToList();
+                    movingCompressors = sourceDrained ? compressorsHere
+                        : TickedUnitsMoving(compressorsHere, c => c.Id, movingCompressorIds,
+                            moveQty, pv.Quantity - moveQty, "unit");
+                    movingMotors = (sourceDrained || tcDrained) ? motorsHere
+                        : TickedUnitsMoving(motorsHere, m => m.Id, movingMotorIds,
+                            tcMove, pv.ThermocoupledQty - tcMove, "TC unit");
+                }
+                int movingUnits = movingCompressors.Count + movingMotors.Count;
+                var movingNames = movingCompressors
+                    .Select(c => string.IsNullOrWhiteSpace(c.SerialNumber) ? c.LabNumber : c.SerialNumber)
+                    .Concat(movingMotors.Select(m => m.LabNumber))
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .ToList();
+                string unitMoveNote = movingUnits > 0
+                    ? $" {movingUnits} recorded unit{(movingUnits == 1 ? "" : "s")} moved with {(movingUnits == 1 ? "it" : "them")}"
+                      + (movingNames.Count > 0 ? $" [{string.Join(", ", movingNames)}]" : "") + "."
+                    : "";
+
                 if (mergeTarget != null)
                 {
+                    unitDest = mergeTarget;
                     mergeTarget.Quantity += moveQty;
                     mergeTarget.ThermocoupledQty += tcMove;
                     pv.Quantity -= moveQty;
@@ -1887,11 +1986,11 @@ namespace Visual_Inventory_System.Services
                         pv.Quantity = 0;
                         pv.ThermocoupledQty = 0;
                         pv.IsRetired = true;   // fully drained -> retire (kept for history, number freed)
-                        details = $"Moved {moveQty}{tcMoveNote} from {oldFda} into Variant {mergeTarget.VariantNumber} ({destFda}); Variant {pv.VariantNumber} fully merged and retired.";
+                        details = $"Moved {moveQty}{tcMoveNote} from {oldFda} into Variant {mergeTarget.VariantNumber} ({destFda}); Variant {pv.VariantNumber} fully merged and retired.{unitMoveNote}";
                     }
                     else
                     {
-                        details = $"Moved {moveQty}{tcMoveNote} from Variant {pv.VariantNumber} ({oldFda}) into Variant {mergeTarget.VariantNumber} ({destFda}); {pv.Quantity} remain at source.";
+                        details = $"Moved {moveQty}{tcMoveNote} from Variant {pv.VariantNumber} ({oldFda}) into Variant {mergeTarget.VariantNumber} ({destFda}); {pv.Quantity} remain at source.{unitMoveNote}";
                     }
                 }
                 else if (moveQty >= pv.Quantity)
@@ -1921,9 +2020,10 @@ namespace Visual_Inventory_System.Services
                         IsRetired = false
                     };
                     item.Variants.Add(nv);
+                    unitDest = nv;
                     pv.Quantity -= moveQty;
                     pv.ThermocoupledQty -= tcMove;
-                    details = $"Split {moveQty}{tcMoveNote} from Variant {pv.VariantNumber} ({oldFda}) to NEW Variant {nv.VariantNumber} ({destFda}); {pv.Quantity} remain at source.";
+                    details = $"Split {moveQty}{tcMoveNote} from Variant {pv.VariantNumber} ({oldFda}) to NEW Variant {nv.VariantNumber} ({destFda}); {pv.Quantity} remain at source.{unitMoveNote}";
                 }
             }
 
@@ -1942,7 +2042,26 @@ namespace Visual_Inventory_System.Services
                 User = _currentUser.Name
             });
 
-            _db.SaveChanges();   // need addedVariant.Id (NEW-location case) before serials can reference it
+            // Unit rows following a Location Transfer are saved in the same
+            // transaction as the stock move -- a caller's own transaction when
+            // there is one, else one opened here. The second save is needed
+            // because ItemVariantId has no navigation, so EF can't fix up a
+            // split's new variant Id on its own (it would store 0).
+            bool movesUnits = unitDest != null && (movingCompressors.Count > 0 || movingMotors.Count > 0);
+            var unitTx = movesUnits && _db.Database.CurrentTransaction == null ? _db.Database.BeginTransaction() : null;
+            try
+            {
+                _db.SaveChanges();   // need addedVariant.Id (NEW-location case) before serials can reference it
+                if (movesUnits)
+                {
+                    foreach (var cu in movingCompressors) cu.ItemVariantId = unitDest!.Id;
+                    foreach (var mu in movingMotors) mu.ItemVariantId = unitDest!.Id;
+                    _db.SaveChanges();
+                }
+                unitTx?.Commit();
+            }
+            catch { unitTx?.Rollback(); throw; }
+            finally { unitTx?.Dispose(); }
 
             if (addedVariant != null && IsCompressorType(item.Type))
             {

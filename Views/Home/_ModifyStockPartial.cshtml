@@ -277,6 +277,14 @@
                                 <small id="loc-merge-note" class="text-warning fw-bold" style="display:none; font-size:11px;"></small>
                             </div>
                         </div>
+                        <!-- Recorded units on a PARTIAL move: which ones are going. Built by
+                             refreshUnitPicker(); emptied (so nothing posts) whenever the move
+                             takes the whole stack, or all of its TC, since then every recorded
+                             unit goes on its own. -->
+                        <div id="loc-units-div" class="p-2 mb-2 border rounded vis-inset-box" style="display:none;">
+                            <label class="form-label small fw-bold text-light-gray mb-1">Which recorded units are moving?</label>
+                            <div id="loc-units-list"></div>
+                        </div>
                         <div class="p-2 mt-2 border rounded vis-inset-box">
                             <label class="form-label small fw-bold text-info mb-1">New FDA String</label>
                             <input type="text" id="loc-fda" class="form-control fw-bold border-0 text-white" style="background:transparent; font-size:15px;" readonly placeholder="--" />
@@ -577,6 +585,93 @@
         const srcVar = getSelectedVariant(getStockItem());
         if (srcVar) { input.value = srcVar.qty; input.max = srcVar.qty; }
     }
+    // ---- Recorded units on a partial Location Transfer ----------------------
+    // Mirrors ModifyStock / TickedUnitsMoving: a move that takes the whole
+    // stack takes every recorded unit, and one that takes all of a motor
+    // stack's TC takes every TC row -- nothing to ask. Anything short of that
+    // can't tell which units went, so the person ticks them. The server applies
+    // the same minimum and maximum and refuses a pick that doesn't fit; this
+    // only asks the question and keeps count. Rebuilt whenever the source
+    // stack, the quantity or the TC count changes, keeping ticks that still apply.
+    function refreshUnitPicker() {
+        const div = document.getElementById('loc-units-div');
+        const list = document.getElementById('loc-units-list');
+        if (!div || !list) return;
+
+        const was = {};
+        list.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { was[cb.name + ':' + cb.value] = true; });
+        list.innerHTML = '';   // emptied = nothing posts
+        div.style.display = 'none';
+
+        const action = document.getElementById('stock-action-type').value;
+        const v = (action === 'Location Transfer') ? getSelectedVariant(getStockItem()) : null;
+        if (!v) return;
+
+        const qty = v.qty || 0;
+        const tcHave = v.tcqty || 0;
+        let moveQty = parseInt((document.getElementById('loc-moveqty') || {}).value, 10);
+        if (isNaN(moveQty) || moveQty <= 0 || moveQty > qty) moveQty = qty;   // same as the server: blank = whole stack
+        if (moveQty >= qty) return;
+
+        const tcInput = document.getElementById('loc-tc-input');
+        const tcMove = (tcInput && !tcInput.disabled) ? (parseInt(tcInput.value, 10) || 0) : 0;
+
+        const groups = [];
+        if ((v.cunits || []).length)
+            groups.push({ name: 'movingUnitIds', noun: 'unit', units: v.cunits, moving: moveQty, staying: qty - moveQty,
+                          label: function (u) { return u.serial || '(no serial)'; },
+                          extra: function (u) { return u.lab ? 'Lab ' + u.lab : ''; } });
+        if ((v.munits || []).length && tcMove > 0 && tcMove < tcHave)
+            groups.push({ name: 'movingMotorUnitIds', noun: 'TC unit', units: v.munits, moving: tcMove, staying: tcHave - tcMove,
+                          label: function (u) { return u.lab || '(no lab #)'; },
+                          extra: function () { return ''; } });
+        if (!groups.length) return;
+
+        groups.forEach(function (g) {
+            const box = document.createElement('div');
+            box.className = 'mb-1';
+            const min = Math.min(g.moving, Math.max(0, g.units.length - g.staying));
+            const max = Math.min(g.moving, g.units.length);
+            g.units.forEach(function (u) {
+                // Built with textContent, never innerHTML -- serials and lab #s are typed-in text.
+                const lbl = document.createElement('label');
+                lbl.className = 'd-block small';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.name = g.name;
+                cb.value = String(u.id);
+                cb.className = 'me-1';
+                cb.checked = !!was[g.name + ':' + u.id];
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(g.label(u)));
+                const extra = g.extra(u);
+                if (extra) {
+                    const span = document.createElement('span');
+                    span.className = 'text-light-gray ms-2';
+                    span.textContent = extra;
+                    lbl.appendChild(span);
+                }
+                box.appendChild(lbl);
+            });
+            const help = document.createElement('small');
+            help.style.fontSize = '10px';
+            box.appendChild(help);
+            const count = function () {
+                const boxes = Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]'));
+                const ticked = boxes.filter(function (b) { return b.checked; }).length;
+                boxes.forEach(function (b) { if (!b.checked) b.disabled = ticked >= max; });
+                const range = (min === max) ? 'exactly ' + min
+                    : (min > 0 ? 'at least ' + min + ', at most ' + max : 'up to ' + max);
+                help.textContent = 'Moving ' + g.moving + ' of ' + (g.moving + g.staying) + (g.noun === 'TC unit' ? ' TC' : '')
+                    + ' — tick which recorded ' + g.noun + 's go (' + range + '). Unticked ones stay recorded on this stack. Ticked: ' + ticked + '.';
+                help.className = 'd-block mt-1 ' + (ticked < min ? 'text-warning fw-bold' : 'text-light-gray');
+            };
+            box.addEventListener('change', count);
+            count();
+            list.appendChild(box);
+        });
+        div.style.display = 'block';
+    }
     function toggleStockUI() {
         const action = document.getElementById('stock-action-type').value;
         const qtyDiv = document.getElementById('stock-qty-div');
@@ -673,6 +768,7 @@
         refreshQtyCap(action);
         refreshTcFields(action);
         refreshSerialFields(action);
+        refreshUnitPicker();
     }
     // ---- Quantity bounds ----------------------------------------------------
     // Scrap is capped at the selected stack's quantity -- it acts on ONE
@@ -952,9 +1048,14 @@
         });
         const mq = document.getElementById('loc-moveqty');
         if (mq) mq.addEventListener('input', function () {
-            if (document.getElementById('stock-action-type').value === 'Location Transfer')
+            if (document.getElementById('stock-action-type').value === 'Location Transfer') {
                 refreshTcFields('Location Transfer');
+                refreshUnitPicker();
+            }
         });
+        // How much TC moves decides whether (and how many) TC rows need ticking.
+        const ltc = document.getElementById('loc-tc-input');
+        if (ltc) ltc.addEventListener('input', refreshUnitPicker);
     })();
     // Variant choice changes reshape the panel: re-seed transfer source,
     // re-prefill move qty, re-check merges, or reveal the new-location cascade.
@@ -982,6 +1083,7 @@
                 refreshMoveQty();
                 refreshMergeNote();
                 if (typeof refreshTcFields === 'function') refreshTcFields(action);
+                refreshUnitPicker();
             } else if (action === 'Add') {
                 // Only the loc-div/team-div visibility depends on NEW vs existing.
                 const locDiv = document.getElementById('stock-loc-div');
