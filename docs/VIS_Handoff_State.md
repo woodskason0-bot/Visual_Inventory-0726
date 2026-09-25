@@ -69,6 +69,17 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **VIS-1 to VIS-6 audit fixes are committed (`1df2e45`, 2026-09-25) but not in
+  any release.** No migration, no schema change — a build from `1df2e45` runs on
+  the host's current db as-is. Includes the partial-move unit picker on Location
+  Transfer ("Which recorded units are moving?"), which I signed off on as scoped.
+  The full record (what changed, the service-level checks run against both
+  `c1ff400` and the fixed tree, the live passes on seeded scratch copies) is the
+  2026-09-25 VIS entry in OneDrive
+  `Documents\VIS and Sourcing Debug Sessions\Debugging_Log.md`. The data check I
+  ran found nothing to repair in the 9/23 host copy; the host has taken writes
+  since, so run `datacheck.py` from that session folder against the next host
+  pull before calling the data clean.
 - **Delete `Decory1.Thomas` on the host.** A stale second account (Id 76,
   inactive, no teams, no subscriptions) I made on 9/10 while sorting out
   DeCory's access. Deleted in dev; the host still has it. The return package

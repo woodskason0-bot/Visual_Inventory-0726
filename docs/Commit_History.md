@@ -9,6 +9,50 @@ landed, when."
 
 ---
 
+## 2026-09-25
+
+### docs — log `1df2e45`
+Docs only. OPEN notes the audit fixes are committed and not in any release.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `1df2e45` — Fix: audit VIS-1 to VIS-6 from the 9/24 business-logic audit
+No migration, no schema change. The six VIS defects the 2026-09-24 audit
+reproduced (record: OneDrive `Documents\VIS and Sourcing Debug Sessions\`).
+**VIS-1** — Submit checked each cart row against committed Pending lines only, so
+two rows of one item (kept apart by location) each passed against the full
+shelf: 4 + 4 accepted against 5. It now counts what the cart already claimed.
+**VIS-2** — TC taken was derived as "requested minus still owed", dropping TC the
+floor forced off a stack; a TC motor left with no loan and its row still On
+Hand. Summed as pulled now, in pickup and transfer approval.
+**VIS-3** — Return/Scrap matched ticked units on ItemId alone and never against
+the quantity: returning 1 with both default ticks put 2 rows On Hand beside 1
+unit, and a posted id from someone else's loan flipped their unit. Ticks must now
+be on that exact loan line, no more than the quantity, and the unticked rest must
+fit in the line's untracked count — refused before anything changes.
+**VIS-4** — Location Transfer moved quantities but left unit rows on the source
+variant; a merged-and-retired source kept its serials and the next pickup of
+that serial was refused. Rows now follow the stock in the same transaction:
+automatically for a whole stack or all of its TC, and through a new "Which
+recorded units are moving?" checklist on a partial move (the server enforces the
+same minimum/maximum; the minimum is capped at what's moving so a stack with
+more rows than units can still move). The log names the units moved.
+**VIS-5** — motor rows were taken oldest-first item-wide, so pulling from shelf B
+flipped shelf A's lab-numbered unit. Now per shelf the TC came off, one helper
+shared by pickup and transfer approval. Also: a second line of the same item on
+one order could re-claim a row the first line had flipped (EF returns the
+tracked instance); lookups recheck in memory, motors and compressors.
+**VIS-6** — reservation queries tested the order's status, not the line's, so a
+deliberate partial pickup's Split line stayed reserved while another line kept
+its order Pending (9 on shelf, 2 requested, 6 shown available). Line status is
+now required in both `GetAvailableQuantity` and both `GetAvailableForOrder`
+overloads, Delete Item/Stack, the Item Card's pending figure and the Pickup Queue.
+34 service-level checks against copies of the dev db (every audit case reproduces
+on `c1ff400` and not here) plus live passes on seeded scratch copies; contrast of
+the new checklist measured in both themes after a real `SetTheme`. 14-warning
+baseline unchanged.
+*Files:* `Controllers/HomeController.cs`, `Services/InventoryService.cs`,
+`Services/OrderService.cs`, `Views/Home/_ModifyStockPartial.cshtml`
+
 ## 2026-09-24
 
 ### docs — record `185f788`; the Sept 24 release rebuilt with it on MASTER128
