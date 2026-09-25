@@ -96,8 +96,8 @@ rather than assuming one exists.
   against the original: **zero differences** (the file's md5 moves on startup
   because SQLite bumps the header change counter on any write transaction,
   even an empty one — not a data change).
-- **Fix waiting for the next release: session cookie shared with the Sourcing
-  Tool.** The host console logged
+- **That release now carries the session cookie fix (`185f788`) — install this
+  build, not the `f3d872b` one.** The host console logged
   `SessionMiddleware[7] Error unprotecting the session cookie … The payload was
   invalid`. Both apps used the default cookie name `.AspNetCore.Session`, and
   browsers scope cookies by host, not port, so VIS (:5000) and the Sourcing Tool
@@ -105,12 +105,29 @@ rather than assuming one exists.
   other's, logged the warning and started a fresh session, so switching apps
   signed you out of the one you left. `Program.cs` now sets
   `options.Cookie.Name = ".VisualInventory.Session"`, and the Sourcing Tool uses
-  `.SourcingTool.Session`. Verified on dev with both apps running: signed in to
-  each, switched back and forth, stayed signed in to both, with no warning and no
-  errors in either log. **The staged `E:\VIS_Release_20260924\` predates this.**
-  Rebuild it (Passes 39 + 40 + this fix) before installing on the host; the same
-  md5 gate still applies to its db. Each browser logs the warning once on its first
-  visit after the update, while the old cookie is replaced.
+  `.SourcingTool.Session` (Sourcing `2437326`). The new builds never read the old
+  cookie, so the warning doesn't appear at all after the update. Anyone signed in
+  at the time signs in once more.
+  - **Rebuilt and staged the evening of 2026-09-24.** Published from `185f788`
+    (544 files, dll stamped `1.0.0+185f788…`, same file list as the `f3d872b`
+    build) and copied in place over
+    `E:\VIS_Release_20260924\VIS_application_9.24.26\` — the name the app folder
+    already had on the card (the README had still called it `app\`; the new
+    README names it correctly). The README was rewritten with the fix and the
+    SHA-256s: dll `5EBD2519…D6BF`, exe `3FA06B16…B47C`. `VIS_Inventory\inventory.db`
+    was left alone and is still md5 `929843e8…`. All 544 files matched the build
+    by SHA-256, and the card's other 36,172 files were unchanged.
+  - **The `f3d872b` package is in OneDrive** at `03_Rheem_Projects\Superseded
+    Releases\VIS_Release_20260924\` in the master, all 546 files SHA-256-matched
+    before anything on the card changed. Removing the folder from the card was
+    blocked (Claude Code protects `E:\` from deletion), hence the in-place
+    overwrite. `C:\VIS_Host\september24threlease\` on this machine is still the
+    `f3d872b` build.
+  - Smoke test: the published exe on :5004 against a copy of the staged db,
+    beside the Sourcing Tool's matching build on :5002. From a fresh cookie jar
+    I signed in to both and alternated between them for 12 page loads. All
+    returned 200 while still signed in, and there were zero warnings and zero
+    `fail` lines.
 - **Orphan notification subscription:** `NotificationSubscriptions` row 9
   points at `UserId 72`, which doesn't exist (a `PickupRequested` subscription).
   Present in every copy including the Sept 2 one, so it long predates this
@@ -3282,8 +3299,11 @@ uses `.SourcingTool.Session`.
 **Verified live on the dev db.** Both apps ran side by side (VIS :5000, Sourcing
 :5001). I signed in to each and switched back and forth, and both stayed signed
 in. Neither log had the warning or any errors. Signing in writes nothing to the
-db. On the host, each browser logs the warning one last time while its old cookie
-is replaced.
+db. The release build did the same beside the Sourcing Tool's release build,
+from a fresh cookie jar, with zero warnings. The first browser attempt at that
+did log it: the browser still held the dev run's `.VisualInventory.Session`, and
+a build run from another folder has different Data Protection keys. That was the
+test setup, not the fix — the host runs one copy of each app. Commit `185f788`.
 
 **Brand red decided: leave it.** Rheem red as text on dark (~3.4:1) stays as
 is — sidebar active link, Sign Out, outline-primary buttons, the V/I/S. It's

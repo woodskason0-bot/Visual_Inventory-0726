@@ -11,7 +11,16 @@ landed, when."
 
 ## 2026-09-24
 
-### Fix: the session cookie gets its own name
+### docs — record `185f788`; the Sept 24 release rebuilt with it on MASTER128
+Docs only. The release was rebuilt from `185f788` and copied in place over
+`E:\VIS_Release_20260924\VIS_application_9.24.26\`. The `f3d872b` package
+moved to the OneDrive master's `03_Rheem_Projects\Superseded Releases\` and was
+SHA-256-verified before anything on the card changed. Also corrects the earlier
+note: the new builds never read the old cookie, so the warning doesn't show
+after the update.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `185f788` — Fix: the session cookie gets its own name
 No migration. The default `.AspNetCore.Session` cookie was shared with the
 Sourcing Tool: both apps run on the host, on :5000 and :5001, and browsers
 don't separate cookies by port. Each app rejected the other's cookie
