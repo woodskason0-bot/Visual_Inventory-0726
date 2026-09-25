@@ -11,6 +11,19 @@ landed, when."
 
 ## 2026-09-25
 
+### docs — `1df2e45` released to MASTER128 as `VIS_Release_20260925`; Sourcing side installed
+Docs only. OPEN: the release built from `1df2e45` (544 files, dll
+`1.0.0+1df2e45`) is staged at `\VIS_Release_20260925\` on SD `MASTER128` with
+a standalone README and no database; SHA-256-matched after copying and
+smoke-tested in Production against a copy of the dev db (all 26 tables
+unchanged). Compared file by file with the 9/24 cookie-fix build on the card
+(and its zip, the same folder) it differs only in the app's own code and
+`site.css` line endings, so it replaces that release, which is marked
+superseded. `Sourcing_Release_20260925` is installed on the host, so the VIS
+side is the only half of the cookie fix left. Also notes the local
+`C:\VIS_Host\september24threlease\` is the pre-cookie build.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — log `1df2e45`
 Docs only. OPEN notes the audit fixes are committed and not in any release.
 *Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`

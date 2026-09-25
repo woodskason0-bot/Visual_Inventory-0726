@@ -69,10 +69,26 @@ rather than assuming one exists.
 
 ### Still to do
 
-- **VIS-1 to VIS-6 audit fixes are committed (`1df2e45`, 2026-09-25) but not in
-  any release.** No migration, no schema change — a build from `1df2e45` runs on
-  the host's current db as-is. Includes the partial-move unit picker on Location
-  Transfer ("Which recorded units are moving?"), which I signed off on as scoped.
+- **Install `VIS_Release_20260925` on the host — it replaces the 9/24 release
+  below.** Built from `1df2e45` (the VIS-1 to VIS-6 audit fixes; it contains
+  Passes 39/40 and the cookie fix too) to `C:\VIS_Host\september25threlease\`
+  and staged on SD `MASTER128` at `\VIS_Release_20260925\`
+  (`VIS_application_9.25.26\` + a standalone `README_FIRST.txt`, no database).
+  All 544 files SHA-256-matched after copying; dll `A136496A…B858`, exe
+  `A7D9A446…02EE`. Smoke-tested in Production against a copy of the dev db:
+  every main page 200 while signed in, no errors, all 26 tables unchanged.
+  No migration, no schema change — it runs on the host's current db as-is.
+  Includes the partial-move unit picker on Location Transfer ("Which recorded
+  units are moving?"), which I signed off on as scoped.
+  Compared file by file with the 9/24 cookie-fix build on the card
+  (`VIS_Release_20260924`, and `VIS_App_CookiesF.zip`, which is the same
+  folder zipped, dll byte-identical): same 544 paths, only the app's own code
+  and `site.css` line endings differ, so it contains that release whole.
+  Note `C:\VIS_Host\september24threlease\` on this machine is the PRE-cookie
+  build (stamped `9d5b036`), not what's on the card.
+  **The Sourcing Tool side is done:** `Sourcing_Release_20260925` (its cookie
+  fix plus the audit's SOURCE-1 to SOURCE-5) is installed on the host as of
+  2026-09-25, so VIS is the only half of the cookie fix left.
   The full record (what changed, the service-level checks run against both
   `c1ff400` and the fixed tree, the live passes on seeded scratch copies) is the
   2026-09-25 VIS entry in OneDrive
@@ -92,7 +108,9 @@ rather than assuming one exists.
 - **Catch local production up** once the host is settled — copying the return
   package's db (or a fresh host pull) over `C:\VIS_Inventory\inventory.db`,
   after a backup.
-- **Install the Sept 24 release on the host (Passes 39 + 40).** Built to
+- **SUPERSEDED by `VIS_Release_20260925` above — don't install this one; kept
+  as history, and for its optional Decory1 db.** Install the Sept 24 release on
+  the host (Passes 39 + 40). Built to
   `C:\VIS_Host\september24threlease\` (self-contained win-x64, 544 files,
   ~130 MB) and staged on SD `MASTER128` at **`E:\VIS_Release_20260924\`**:
   `app\`, `VIS_Inventory\inventory.db` (the Decory1-delete db, optional), and
