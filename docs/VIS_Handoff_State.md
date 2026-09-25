@@ -117,6 +117,11 @@ rather than assuming one exists.
     SHA-256s: dll `5EBD2519…D6BF`, exe `3FA06B16…B47C`. `VIS_Inventory\inventory.db`
     was left alone and is still md5 `929843e8…`. All 544 files matched the build
     by SHA-256, and the card's other 36,172 files were unchanged.
+  - **Also zipped, 2026-09-25:** `E:\VIS_App_CookiesF.zip` (58.3 MB, SHA-256
+    `BC7835FB…9D5D`) holds the whole `VIS_Release_20260924\` folder, db
+    included, and the Sourcing Tool's is beside it as `Sourcing_App_CookiesF.zip`.
+    Extracted from the card and compared: all 546 files match the folder by
+    SHA-256. Same release, one file.
   - **The `f3d872b` package is in OneDrive** at `03_Rheem_Projects\Superseded
     Releases\VIS_Release_20260924\` in the master, all 546 files SHA-256-matched
     before anything on the card changed. Removing the folder from the card was
