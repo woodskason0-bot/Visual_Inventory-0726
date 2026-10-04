@@ -307,6 +307,21 @@ namespace Visual_Inventory_System.Services
         // LogIntakeThermocoupled) so both forms feed the roster identically.
         public void CreateItem(InventoryItem newItem, List<string>? serials = null, int thermocoupledQty = 0)
         {
+            // The caller model-binds a whole InventoryItem, so a crafted post could
+            // arrive with its own Variants/Id/RegisteredAt/AlertThreshold -- and
+            // Quantity reads a posted variant ahead of the staged value. The
+            // registry form posts none of these; the variant is built below.
+            newItem.Id = 0;
+            newItem.Variants = new List<ItemVariant>();
+            newItem.RegisteredAt = null;
+            newItem.AlertThreshold = 0;
+
+            // The form's min="0" is skipped by form.submit(), and this was the only
+            // thing that could have caught it.
+            if (newItem.Quantity < 0)
+                throw new System.InvalidOperationException(
+                    "Quantity can't be negative -- nothing was registered.");
+
             newItem.LastUpdated = System.DateTime.UtcNow;
             newItem.UpdatedBy = _currentUser.Name;
             // First-registered timestamp. Set once here and never touched again
@@ -710,6 +725,14 @@ namespace Visual_Inventory_System.Services
             int totalQty = item.Variants.Where(v => !v.IsRetired).Sum(v => v.Quantity);
             if (totalQty != 0)
                 return (false, $"Can't delete -- {itemId} still has {totalQty} unit(s) on hand.");
+
+            // The loan itself is counted on the order line. Controls never get unit
+            // rows, so the unit-row check below can't see them -- deleting a Control
+            // with units out left a loan nobody could return ("That item no longer
+            // exists"). LoanOutstanding is the authority; unit rows never drive counts.
+            bool loanOutstanding = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.LoanOutstanding > 0);
+            if (loanOutstanding)
+                return (false, $"Can't delete -- {itemId} still has a loan out. Return or scrap it first.");
 
             bool outOnLoan = _db.CompressorUnits.Any(c => c.ItemId == itemId && c.Status == UnitStatus.PickedUp)
                 || _db.MotorUnits.Any(m => m.ItemId == itemId && m.Status == UnitStatus.PickedUp);
@@ -2025,6 +2048,14 @@ namespace Visual_Inventory_System.Services
                     pv.ThermocoupledQty -= tcMove;
                     details = $"Split {moveQty}{tcMoveNote} from Variant {pv.VariantNumber} ({oldFda}) to NEW Variant {nv.VariantNumber} ({destFda}); {pv.Quantity} remain at source.{unitMoveNote}";
                 }
+            }
+            else
+            {
+                // The controller's gates compare case-insensitively but the branches
+                // above don't, so a direct post of e.g. "scrap" fell through every
+                // branch, changed nothing, and still logged and reported success.
+                throw new System.InvalidOperationException(
+                    $"'{actionType}' isn't a recognized stock action -- nothing was changed.");
             }
 
             item.LastUpdated = System.DateTime.UtcNow;

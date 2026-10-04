@@ -595,6 +595,14 @@ namespace Visual_Inventory_System.Controllers
         {
             try
             {
+                // Same reset InventoryService.CreateItem does, needed here too:
+                // the location getters below read a posted variant ahead of the
+                // staged form values.
+                newItem.Id = 0;
+                newItem.Variants = new List<ItemVariant>();
+                newItem.RegisteredAt = null;
+                newItem.AlertThreshold = 0;
+
                 newItem.ItemName ??= "Unnamed Item";
                 newItem.Type ??= "General";
                 newItem.Brand ??= "Unknown";
@@ -2053,6 +2061,10 @@ namespace Visual_Inventory_System.Controllers
                     var parts = rest.Split('_');
                     if (parts.Length != 2) continue;
                     if (!int.TryParse(parts[0], out int oiId) || !int.TryParse(parts[1], out int unitIdx)) continue;
+                    // The list below is padded out to unitIdx, so an absurd posted
+                    // index would allocate until the process fell over.
+                    if (unitIdx < 0 || unitIdx >= MaxUnitsPerLine)
+                        throw new InvalidOperationException("That pickup form isn't valid -- reload the queue and try again.");
 
                     string? lab = Request.Form[key].ToString();
                     string? serial = Request.Form[$"compSerial_{oiId}_{unitIdx}"].ToString();
@@ -2097,6 +2109,11 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
         }
 
+        // Ceiling on the per-unit form loops in the two pickup actions below, which
+        // run on posted numbers before the service gets to validate them. Far above
+        // any real order line (the whole Lean-To holds 636 compressors).
+        private const int MaxUnitsPerLine = 5000;
+
         // Deliberate partial pickup (see OrderService.PickUpPartialAndSplit) --
         // the picker saw, before submitting, that the chosen location can't
         // cover the full line and chose to take what's there and defer the
@@ -2111,6 +2128,8 @@ namespace Visual_Inventory_System.Controllers
         {
             try
             {
+                if (pickupQty > MaxUnitsPerLine)
+                    throw new InvalidOperationException("That pickup quantity isn't valid -- reload the queue and try again.");
                 var unitChoices = new Dictionary<int, (string? Lab, string? Serial)>();
                 for (int u = 0; u < pickupQty; u++)
                 {

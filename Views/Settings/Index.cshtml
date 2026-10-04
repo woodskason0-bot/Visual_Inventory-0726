@@ -751,8 +751,10 @@
         const ownerSel = document.getElementById('loc-owner');
         if (!levelSel || !ownerSel) return;
 
-        const parents = [@Html.Raw(string.Join(",", ((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Parent" && x.IsActive).Select(x => $"{{id:{x.Id},name:\"{x.Name}\"}}")))];
-        const majors  = [@Html.Raw(string.Join(",", ((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Major" && x.IsActive).Select(x => $"{{id:{x.Id},name:\"{x.Name}\"}}")))];
+        // Serialized, not string-interpolated: a quote or backslash in a location
+        // name used to break out of the literal and kill this whole script block.
+        const parents = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Parent" && x.IsActive).Select(x => new { id = x.Id, name = x.Name })));
+        const majors  = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Major" && x.IsActive).Select(x => new { id = x.Id, name = x.Name })));
 
         function refresh() {
             const lvl = levelSel.value;

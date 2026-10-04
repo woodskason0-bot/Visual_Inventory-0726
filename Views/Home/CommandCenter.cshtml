@@ -838,7 +838,7 @@
                 let warningIcon = data.HasAlert ? `<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark" style="font-size:10px; padding:4px;"><i class="bi bi-exclamation-triangle-fill"></i></span>` : '';
 
                 let innerHTML = `
-                    <div class="zone-marker ${pulseClass}" title="${title}" style="position:relative;">
+                    <div class="zone-marker ${pulseClass}" title="${escapeHtml(title)}" style="position:relative;">
                         <i class="bi bi-geo-alt-fill marker-icon"></i>
                         <span class="marker-count">${data.TotalRows} Rows</span>
                         ${warningIcon}
@@ -847,7 +847,7 @@
 
                 innerHTML += `
                     <div class="zone-menu ${vClass} ${hClass}">
-                        <div class="zone-menu-header">${title} Locations</div>
+                        <div class="zone-menu-header">${escapeHtml(title)} Locations</div>
                         <button type="button" class="zone-menu-btn" onclick="window.location.href='${a.href}'">
                             <span><i class="bi bi-globe me-2"></i>View All</span>
                             <span class="badge">${data.TotalRows}</span>
@@ -863,7 +863,7 @@
                     if (subKeys.length > 0) {
                         let subsHTML = `
                             <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='${majorLink}'">
-                                <span><i class="bi bi-grid-3x3-gap me-2"></i>View all ${locDecode(major)}</span>
+                                <span><i class="bi bi-grid-3x3-gap me-2"></i>View all ${escapeHtml(locDecode(major))}</span>
                                 <span class="badge">${mData.Rows}</span>
                             </button>`;
                         for (let sub in mData.Subs) {
@@ -871,7 +871,7 @@
                             let sAlert = sData.HasAlert ? `<i class="bi bi-exclamation-triangle-fill text-warning ms-2"></i>` : ``;
                             subsHTML += `
                                 <button type="button" class="zone-menu-btn zone-subbtn" onclick="window.location.href='/Home/SearchCenter?mode=Filter&filterLocParent=${encodeURIComponent(a.dataset.code || '')}&filterLocMajor=${encodeURIComponent(major)}&filterLocSub=${encodeURIComponent(sub)}'">
-                                    <span><i class="bi bi-box me-2"></i>${locDecode(sub)} ${sAlert}</span>
+                                    <span><i class="bi bi-box me-2"></i>${escapeHtml(locDecode(sub))} ${sAlert}</span>
                                     <span class="badge">${sData.Rows}</span>
                                 </button>`;
                         }
@@ -880,7 +880,7 @@
                             <div class="zone-major-group">
                                 <button type="button" class="zone-menu-btn zone-major-toggle"
                                         onclick="event.stopPropagation(); this.closest('.zone-major-group').classList.toggle('open');">
-                                    <span><i class="bi bi-diagram-3 me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                    <span><i class="bi bi-diagram-3 me-2"></i>${escapeHtml(locDecode(major))} ${mAlert}</span>
                                     <span class="badge">${mData.Rows}<i class="bi bi-chevron-down zone-chev"></i></span>
                                 </button>
                                 <div class="zone-submenu">${subsHTML}</div>
@@ -888,7 +888,7 @@
                     } else {
                         innerHTML += `
                             <button type="button" class="zone-menu-btn" onclick="window.location.href='${majorLink}'">
-                                <span><i class="bi bi-box-seam me-2"></i>${locDecode(major)} ${mAlert}</span>
+                                <span><i class="bi bi-box-seam me-2"></i>${escapeHtml(locDecode(major))} ${mAlert}</span>
                                 <span class="badge">${mData.Rows}</span>
                             </button>`;
                     }
@@ -910,7 +910,7 @@
             } else {
                 zoneDiv.title = `${title} — no stock recorded yet`;
                 zoneDiv.innerHTML = `
-                    <div class="zone-marker" title="${title}" style="position:relative; opacity:.45;">
+                    <div class="zone-marker" title="${escapeHtml(title)}" style="position:relative; opacity:.45;">
                         <i class="bi bi-geo-alt marker-icon"></i>
                         <span class="marker-count">0 Rows</span>
                     </div>`;

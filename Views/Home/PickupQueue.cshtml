@@ -434,16 +434,17 @@
         return (units || []).filter(function (u) { return u.serial; });
     }
 
-    function optionsFor(units) {
-        var html = "";
+    // Real <option> nodes, never an HTML string: serial and lab # are typed by
+    // Standard-level users (Log Units, Modify Stock Add) and land in every
+    // picker's session.
+    function fillOptions(sel, units) {
+        sel.options.length = 0;
         namedUnits(units).forEach(function (u) {
             var label = "SN: " + u.serial + (u.lab ? " (Lab: " + u.lab + ")" : "");
-            var val = String(u.serial).replace(/"/g, "&quot;");
-            html += '<option value="' + val + '">' + label + "</option>";
+            sel.add(new Option(label, String(u.serial)));
         });
-        html += '<option value="__NONE__">No serial</option>';
-        html += '<option value="__ADD__">Serial not in list -- add serial</option>';
-        return html;
+        sel.add(new Option("No serial", "__NONE__"));
+        sel.add(new Option("Serial not in list -- add serial", "__ADD__"));
     }
 
     // A picker choosing the same on-hand serial for two different units on the
@@ -484,7 +485,7 @@
                 return;
             }
             sel.disabled = false;
-            sel.innerHTML = optionsFor(units);
+            fillOptions(sel, units);
             // Stagger the default across units so a multi-unit line doesn't
             // open with every dropdown already aimed at the same physical
             // serial -- one real serial per unit while they last, "No serial"
@@ -583,9 +584,7 @@
             for (var u = 0; u < pickupQty; u++) {
                 html += '<div class="d-flex gap-1 mb-1">' +
                     '<input type="text" name="compLab_' + u + '" class="form-control form-control-sm" placeholder="Lab # (unit ' + (u + 1) + ')" style="max-width:100px;" />' +
-                    '<select name="compSerial_' + u + '" class="form-select form-select-sm comp-serial-select" data-u="' + u + '" style="max-width:170px;">' +
-                    optionsFor(units) +
-                    '</select>' +
+                    '<select name="compSerial_' + u + '" class="form-select form-select-sm comp-serial-select" data-u="' + u + '" style="max-width:170px;"></select>' +
                     '<input type="text" name="compSerialManual_' + u + '" class="form-control form-control-sm comp-serial-manual d-none" placeholder="Type serial (unit ' + (u + 1) + ')" style="max-width:140px;" />' +
                     '</div>';
             }
@@ -594,6 +593,7 @@
             // they last, instead of every row opening on the same default.
             var namedHere = namedUnits(units);
             rows.querySelectorAll(".comp-serial-select").forEach(function (sel, idx) {
+                fillOptions(sel, units);
                 sel.value = (idx < namedHere.length) ? namedHere[idx].serial : "__NONE__";
             });
             enforceSerialExclusivity(document.getElementById("partial-pickup-card"));

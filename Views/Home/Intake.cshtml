@@ -450,8 +450,10 @@
             sec.dataset.itemId = hit.id;
             sec.innerHTML =
                 '<div class="d-flex justify-content-between align-items-start mb-2">' +
-                  '<div><strong class="text-white">' + hit.name + '</strong> ' +
-                  '<span class="text-light-gray small">(' + hit.id + ' &middot; currently ' + current + ' on hand)</span></div>' +
+                  // Name and id are filled in below through textContent -- the name is
+                  // whatever a Standard-level user typed at registration.
+                  '<div><strong class="sr-name" style="color:var(--vis-text);"></strong> ' +
+                  '<span class="text-light-gray small sr-meta"></span></div>' +
                   '<button type="button" class="btn btn-sm btn-outline-secondary sr-remove">&times;</button>' +
                 '</div>' +
                 '<div class="row g-2 mb-2">' +
@@ -461,6 +463,8 @@
                     '<input type="number" class="form-control form-control-sm sr-qty" min="0" value="' + qty + '" /></div>' +
                 '</div>' +
                 '<div class="sr-extra"></div>';
+            sec.querySelector('.sr-name').textContent = hit.name;
+            sec.querySelector('.sr-meta').textContent = '(' + hit.id + ' · currently ' + current + ' on hand)';
             document.getElementById('stock-review-sections').appendChild(sec);
 
             const entry = {

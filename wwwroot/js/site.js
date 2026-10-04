@@ -101,6 +101,14 @@ document.addEventListener('DOMContentLoaded', function () {
             f.submit();
         }
     }
+    // For the few places that still have to assemble an HTML string around a
+    // name from the database. Prefer createElement + textContent where the
+    // markup is small enough; this is for the big template literals.
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
     // ---- Shared Branch -> Line cascade ---------------------------------
     // One vocabulary (orgStructure), reused everywhere a Branch select drives
     // a paired Line select, instead of each caller hand-rolling its own copy.
@@ -204,7 +212,25 @@ document.addEventListener('DOMContentLoaded', function () {
                         let btn = document.createElement('button');
                         btn.type = 'button';
                         btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item';
-                        btn.innerHTML = `<strong class="text-primary">${m.id}</strong>${m.rpn ? ' <span class="text-info">[' + m.rpn + ']</span>' : ''} - ${m.name} <span class="text-light-gray float-end">Qty: ${m.quantity}</span>`;
+                        // Built from nodes, not an HTML string: name and Rheem PN are
+                        // typed by Standard-level users (Registry, Intake) and rendered
+                        // in every other user's session.
+                        const idEl = document.createElement('strong');
+                        idEl.className = 'text-primary';
+                        idEl.textContent = m.id;
+                        btn.appendChild(idEl);
+                        if (m.rpn) {
+                            const rpnEl = document.createElement('span');
+                            rpnEl.className = 'text-info';
+                            rpnEl.textContent = '[' + m.rpn + ']';
+                            btn.appendChild(document.createTextNode(' '));
+                            btn.appendChild(rpnEl);
+                        }
+                        btn.appendChild(document.createTextNode(' - ' + m.name + ' '));
+                        const qtyEl = document.createElement('span');
+                        qtyEl.className = 'text-light-gray float-end';
+                        qtyEl.textContent = 'Qty: ' + m.quantity;
+                        btn.appendChild(qtyEl);
 
                         btn.onclick = function() {
                             autoList.style.display = 'none';

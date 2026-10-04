@@ -497,7 +497,7 @@
         if (!t || msIsMyTeam(t)) { note.style.display = 'none'; return; }
 
         note.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>This stack belongs to <strong>'
-            + t + '</strong> — not one of your teams. You can still act on it.';
+            + escapeHtml(t) + '</strong> — not one of your teams. You can still act on it.';
         note.style.display = 'block';
     }
     // Admin-only: a zero-qty stack on a multi-variant item has no other way
@@ -571,7 +571,7 @@
             note.style.display = 'block';
         } else if (otherTeam) {
             note.innerHTML = '<i class="bi bi-people me-1"></i>'
-                + ((otherTeam.team || '').trim() || 'Another team')
+                + escapeHtml((otherTeam.team || '').trim() || 'Another team')
                 + ' also stocks that spot — your units move there as their own stack, still yours.';
             note.style.display = 'block';
         } else {

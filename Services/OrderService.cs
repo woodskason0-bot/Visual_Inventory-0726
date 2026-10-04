@@ -1323,14 +1323,39 @@ namespace Visual_Inventory_System.Services
             catch { tx.Rollback(); throw; }
         }
 
+        // Only a Pending order can be cancelled -- the mirror of PickUpOrder's
+        // non-Pending refusal. Without it a stale Order History tab could flip an
+        // order that was already picked up to Cancelled while its lines stayed
+        // Completed and the loan stayed out. Lines are left alone on purpose, as
+        // PickUpOrder's note describes. Logged like every other write; ItemId is
+        // blank because an order can span many items, same as "Intake Approved".
         public void CancelPersistedOrder(int orderId)
         {
-            var order = _db.Orders.FirstOrDefault(o => o.Id == orderId);
-            if (order != null)
+            using var tx = _db.Database.BeginTransaction();
+            try
             {
+                var order = _db.Orders.Include(o => o.Items).FirstOrDefault(o => o.Id == orderId);
+                if (order == null) throw new InvalidOperationException("Order not found.");
+                if (order.Status != "Pending")
+                    throw new InvalidOperationException(order.Status == "Cancelled"
+                        ? $"Order #{orderId} was already cancelled."
+                        : $"Order #{orderId} is already {order.Status.ToLowerInvariant()} and can't be cancelled.");
+
                 order.Status = "Cancelled";
+                int released = order.Items.Count(i => i.Status == "Pending");
+                _db.TransactionLogs.Add(new TransactionLog
+                {
+                    Timestamp = System.DateTime.UtcNow,
+                    ActionType = "Order Cancelled",
+                    ItemId = "",
+                    QuantityChange = 0,
+                    Details = $"Order #{orderId} (requested by {order.RequestedBy}) cancelled; {released} pending line(s) released.",
+                    User = _currentUser.Name
+                });
                 _db.SaveChanges();
+                tx.Commit();
             }
+            catch { tx.Rollback(); throw; }
         }
 
         public void CancelOrder()

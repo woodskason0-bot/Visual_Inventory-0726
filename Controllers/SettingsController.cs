@@ -574,6 +574,9 @@ namespace Visual_Inventory_System.Controllers
         {
             var batch = _db.IntakeBatches.FirstOrDefault(b => b.Id == batchId);
             if (batch == null) { TempData["Error"] = "That batch no longer exists."; return RedirectToAction("Index"); }
+            // Same guard ApproveIntake has: a stale Settings page could otherwise flip
+            // an already-Approved batch to Rejected after its stock went in.
+            if (batch.Status != IntakeStatus.Pending) { TempData["Error"] = "That batch is no longer pending."; return RedirectToAction("Index"); }
             batch.Status = IntakeStatus.Rejected;
             batch.ResolvedBy = _currentUser.Name;
             batch.ResolvedAt = DateTime.UtcNow;
