@@ -1333,6 +1333,20 @@ namespace Visual_Inventory_System.Services
             public bool Ok => Errors.Count == 0;
         }
 
+        // Whether a variant sits on the shelf named by these five location values.
+        // Compared on the Parent/Major/Sub/Rack/Row COLUMNS, not FdaString: the app
+        // writes that string in more than one shape ("PATS.Lean-To" from Registry
+        // and Intake, "PATS.0.0.LEAN-TO.0" from Modify Stock's NEW location, Location
+        // Transfer and Loan Return), so an == on it missed the same physical shelf.
+        // Blank counts as "0" and case is ignored -- the rule Location Transfer's
+        // merge target has always used, and the one place it now lives.
+        private static bool SameShelf(ItemVariant v, string? parent, string? major, string? sub, string? rack, string? row)
+        {
+            static string Norm(string? s) => string.IsNullOrWhiteSpace(s) ? "0" : s.Trim().ToUpperInvariant();
+            return Norm(v.Parent) == Norm(parent) && Norm(v.Major) == Norm(major) && Norm(v.Sub) == Norm(sub)
+                && Norm(v.Rack) == Norm(rack) && Norm(v.Row) == Norm(row);
+        }
+
         /// <summary>
         /// Commit a batch of rows at one location, under one Line/Team.
         ///
@@ -1340,13 +1354,15 @@ namespace Visual_Inventory_System.Services
         /// writing -- the same thing the hand-written 02_verify SQL files did, but
         /// before the fact instead of after.
         ///
-        /// Group is derived from the SUBMITTER's Line, not the batch's, so the
-        /// ItemId prefix keeps recording who created the record (Pass 7A).
+        /// Group is derived from the item's Line (the batch's `line`), the same rule
+        /// New Item Registry uses, so one item gets one ItemId prefix whichever door
+        /// it came through. It used to follow the submitter's own Line, which is
+        /// blank for whole-Branch users and so always minted a "C".
         /// </summary>
         public IntakeResult CommitIntake(
             IEnumerable<IntakeLine> lines, string line, string team,
             string parentCode, string majorCode, string subCode, string rack, string row,
-            string submittedBy, string submitterLine, bool preview)
+            string submittedBy, bool preview)
         {
             var res = new IntakeResult();
             string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
@@ -1357,7 +1373,7 @@ namespace Visual_Inventory_System.Services
 
             string fda = string.Join(".", new[] { parentCode, majorCode, subCode, rack, row }
                                           .Where(x => x.Length > 0));
-            string grp = OrgStructure.GroupFor(submitterLine);
+            string grp = OrgStructure.GroupFor(line);
             var now = System.DateTime.UtcNow;
             string ts = now.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -1399,7 +1415,8 @@ namespace Visual_Inventory_System.Services
                     // never a second item, which is the rule the compressor loads
                     // established and the reason 18 models legitimately sit in two
                     // places.
-                    var here = existing.Variants.FirstOrDefault(v => !v.IsRetired && v.FdaString == fda);
+                    var here = existing.Variants.FirstOrDefault(v => !v.IsRetired
+                        && SameShelf(v, parentCode, majorCode, subCode, rack, row));
                     if (here != null)
                     {
                         res.Skipped.Add($"{name}: already has stock at {fda} (V{here.VariantNumber}, qty {here.Quantity}) — use Add Stock to top it up.");
@@ -1578,10 +1595,6 @@ namespace Visual_Inventory_System.Services
         public List<(InventoryItem Item, int OldQty, int NewQty)> CommitIntakeStockBatch(
             List<StockBatchUpdate> updates, string parentCode, string majorCode, string subCode, string rack, string row)
         {
-            string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "" : v.Trim();
-            string fda = string.Join(".", new[] { Seg(parentCode), Seg(majorCode), Seg(subCode), Seg(rack), Seg(row) }
-                                          .Where(x => x.Length > 0));
-
             var results = new List<(InventoryItem Item, int OldQty, int NewQty)>();
 
             using var tx = _db.Database.BeginTransaction();
@@ -1596,7 +1609,7 @@ namespace Visual_Inventory_System.Services
                     if (u.ActionType == "Add" && u.Quantity <= 0)
                         throw new InvalidOperationException($"{item.ItemName} ({u.ItemId}): quantity must be positive to add stock.");
 
-                    var match = item.ActiveVariants.FirstOrDefault(v => v.FdaString == fda);
+                    var match = item.ActiveVariants.FirstOrDefault(v => SameShelf(v, parentCode, majorCode, subCode, rack, row));
 
                     if (u.ActionType == "Adjustment" && match == null)
                         throw new InvalidOperationException(
@@ -1953,8 +1966,7 @@ namespace Visual_Inventory_System.Services
                 // the stock lands where it was asked to and stays whose it was.
                 string srcTeam = (pv!.Team ?? "").Trim();
                 var mergeTarget = item.ActiveVariants.FirstOrDefault(v => v.Id != pv.Id
-                    && Seg(v.Parent) == dP && Seg(v.Major) == dM && Seg(v.Sub) == dS
-                    && Seg(v.Rack) == dRk && Seg(v.Row) == dRw
+                    && SameShelf(v, dP, dM, dS, dRk, dRw)
                     && string.Equals((v.Team ?? "").Trim(), srcTeam, System.StringComparison.OrdinalIgnoreCase));
 
                 // Which recorded units move with the stock. The On Hand unit rows

@@ -523,18 +523,15 @@ namespace Visual_Inventory_System.Controllers
                 ThermocoupledQty = r.ThermocoupledQty
             }).ToList();
 
-            // The submitter's own Line still drives the ItemId prefix, not the
-            // approver's -- approving somebody's batch shouldn't rewrite whose
-            // record it is.
-            string submitterLine = _db.Users.AsNoTracking()
-                .FirstOrDefault(u => u.UserName == batch.SubmittedBy)?.Line ?? "";
-
+            // The ItemId prefix follows the batch's Line -- the item's Line, same as
+            // New Item Registry and a direct Intake -- not the submitter's own Line
+            // (blank for a whole-Branch user) and not the approver's.
             var result = _inventoryService.CommitIntake(
                 lines, batch.Line, batch.Team,
                 pCode, mCode, sCode,
                 string.IsNullOrWhiteSpace(rack) ? batch.Rack : rack.Trim(),
                 string.IsNullOrWhiteSpace(row) ? batch.Row : row.Trim(),
-                batch.SubmittedBy, submitterLine, preview: false);
+                batch.SubmittedBy, preview: false);
 
             if (!result.Ok)
             {

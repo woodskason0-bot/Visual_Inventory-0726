@@ -1159,7 +1159,7 @@ namespace Visual_Inventory_System.Controllers
             var result = _inventoryService.CommitIntake(
                 lines, line ?? "", team,
                 parentCode ?? "", majorCode ?? "", subCode ?? "", rack ?? "", row ?? "",
-                _currentUser.Name, _currentUser.Line ?? "", preview);
+                _currentUser.Name, preview);
 
             if (preview || !result.Ok)
             {
