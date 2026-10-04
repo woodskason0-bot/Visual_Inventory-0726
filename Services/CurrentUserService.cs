@@ -7,6 +7,10 @@ namespace Visual_Inventory_System.Services
     /// "who's at the keyboard" capture for the audit trail, NOT authentication --
     /// it does not verify identity, it just records the name the person entered
     /// so stock changes and pickups are attributed to a real person.
+    ///
+    /// Level, Line and Branch are copied in at sign-in, then re-read from the
+    /// person's roster row on every request by RequireNameFilter, so a change
+    /// in Settings reaches an open session on its next click.
     /// </summary>
     public class CurrentUserService
     {
