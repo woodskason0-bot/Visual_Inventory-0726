@@ -69,6 +69,27 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **The 2026-09-26 audit's fixes are committed and pushed but in no release:**
+  VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
+  `d39553d`, 2026-10-04). No migration, no schema change. A build from `d39553d`
+  carries them on top of `1df2e45` and would supersede the staged
+  `VIS_Release_20260925`, which stops at `1df2e45`. **VIS-9 is the one audit item
+  still open** — recorded compressor/motor units drifting above a stack's quantity
+  (CCR-0005 V1: 4 on the shelf, 5 recorded; CCR-0213 V2: 0 and 9). It needs a new
+  mechanic, so it gets its own scope and my go before anything is built. Two
+  behavior changes to know about: a hidden user's open session becomes a Viewer
+  with a blank Line on its next click, which reads the whole org (what signing in
+  as an unknown name already did); and Intake's ItemId prefix now follows the
+  item's Line, as Registry's does. The record (what changed, the checks, the live
+  runs) is the 2026-10-04 entry in `docs/VIS_Debugging_Log.md`.
+- **`SessionMiddleware[7]` in the Sourcing console on the host isn't explained
+  yet.** Both apps use their own cookie names now and the Sourcing fix is in the
+  10/02 release, so VIS can't be what's logging it there. I reproduced the error
+  only with two copies of Sourcing run from different folders on one hostname
+  (details in the debugging log). On the host, check the `Set-Cookie` name each app
+  sends (`.AspNetCore.Session` means a build from before the rename), and whether a
+  second copy of Sourcing is running (`Get-Process Sourcing_Tool | Select Id,Path`).
+  I'm not adding the Data Protection application-name pin for now.
 - **Install `VIS_Release_20260925` on the host — it replaces the 9/24 release
   below.** Built from `1df2e45` (the VIS-1 to VIS-6 audit fixes; it contains
   Passes 39/40 and the cookie fix too) to `C:\VIS_Host\september25threlease\`

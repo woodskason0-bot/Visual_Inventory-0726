@@ -2,7 +2,9 @@
 
 Filed in this repository on **2026-10-03**, split from the shared OneDrive debugging records. This is the VIS-specific home for subsequent debugging session notes.
 
-**Recorded status:** VIS-1 through VIS-6 were fixed in `1df2e45` and staged as `VIS_Release_20260925`. The latest recorded VIS deployment status still says not installed on the host; installation has not been checked again here. VIS-7 through VIS-14 were reported open in the 2026-09-26 audit. The local HEAD at filing is `a35850b`, the same revision examined by that later audit.
+**Recorded status:** VIS-1 through VIS-6 were fixed in `1df2e45` and staged as `VIS_Release_20260925`. The latest recorded VIS deployment status still says not installed on the host; installation has not been checked again here. VIS-7 through VIS-14 were reported open in the 2026-09-26 audit. The local HEAD at filing was `a35850b`, the same revision examined by that later audit.
+
+**Update 2026-10-04:** VIS-7, VIS-8 and VIS-10 through VIS-14 are fixed in `0b03c94` (Pass A), `a077663` (Pass B) and `d39553d` (Pass C), committed and pushed; none of it is in a release yet. VIS-9 is the one audit item still open: it is a new mechanic, scoped on 2026-10-04 and held for its own pass. See the 2026-10-04 entry below.
 
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
@@ -18,14 +20,14 @@ The rows below preserve the latest recorded per-issue status. Historical finding
 | VIS-4 | P1 | Location merges strand physical-unit records | Fixed in 1df2e45; in VIS_Release_20260925, not installed: automatic for whole-stack and whole-TC moves, unit picker for partial moves |
 | VIS-5 | P2 | Motor pickup selects another shelf's unit | Fixed in 1df2e45; in VIS_Release_20260925, not installed; transfer approval too |
 | VIS-6 | P2 | Partial pickup leaves issued units reserved | Fixed in 1df2e45; in VIS_Release_20260925, not installed; every reservation consumer |
-| VIS-7 | P1 | Stored XSS: item name/PN, serial and lab # rendered through innerHTML (item autocomplete, Intake review, Pickup Queue serial picker) | Open; reproduced 2026-09-26 |
-| VIS-8 | P1 | Intake matches "same shelf" by exact FdaString while Modify Stock/Transfer/Return write a padded shape: Adjustment refused, Add mints a duplicate stack | Open; reproduced on CCR-0005; 8 live stacks padded |
-| VIS-9 | P2 | Scrap, downward Adjustment, short-pull correction and "No serial" pickups leave recorded units On Hand past the stack's quantity | Open; live on CCR-0005 V1 (new) and CCR-0213 V2 (known) |
-| VIS-10 | P2 | Cancel has no status guard or log: a stale page flips a picked-up order to Cancelled | Open; reproduced on Order #11 |
-| VIS-11 | P2 | Delete Item ignores loans with no unit rows (Controls); the loan can't be returned afterward | Open; reproduced on CCL-0035; latent in real data |
-| VIS-12 | P2 | New Item Registry accepts a negative quantity (form.submit() skips min; no server bound) | Open; reproduced as CVE-0009 at -3 |
-| VIS-13 | P2 | AccessLevel/Line/Branch cached in the session: demoting or hiding a user doesn't reach an open session | Open; reproduced with Caden.Fuller |
-| VIS-14 | P2 | Intake mints the ItemId prefix from the submitter's Line, Registry from the item's; whole-Branch users always get C | Open; reproduced (CVE-0011 vs RVE-0001); needs a rule decision |
+| VIS-7 | P1 | Stored XSS: item name/PN, serial and lab # rendered through innerHTML (item autocomplete, Intake review, Pickup Queue serial picker) | Fixed in 0b03c94 (Pass A); not in a release |
+| VIS-8 | P1 | Intake matches "same shelf" by exact FdaString while Modify Stock/Transfer/Return write a padded shape: Adjustment refused, Add mints a duplicate stack | Fixed in a077663 (Pass B); not in a release. The 8 padded stacks are untouched: the match now accepts either shape |
+| VIS-9 | P2 | Scrap, downward Adjustment, short-pull correction and "No serial" pickups leave recorded units On Hand past the stack's quantity | Open; live on CCR-0005 V1 (new) and CCR-0213 V2 (known). Scoped 2026-10-04 as its own pass, not started |
+| VIS-10 | P2 | Cancel has no status guard or log: a stale page flips a picked-up order to Cancelled | Fixed in 0b03c94 (Pass A); not in a release |
+| VIS-11 | P2 | Delete Item ignores loans with no unit rows (Controls); the loan can't be returned afterward | Fixed in 0b03c94 (Pass A); not in a release |
+| VIS-12 | P2 | New Item Registry accepts a negative quantity (form.submit() skips min; no server bound) | Fixed in 0b03c94 (Pass A); not in a release |
+| VIS-13 | P2 | AccessLevel/Line/Branch cached in the session: demoting or hiding a user doesn't reach an open session | Fixed in d39553d (Pass C); not in a release |
+| VIS-14 | P2 | Intake mints the ItemId prefix from the submitter's Line, Registry from the item's; whole-Branch users always get C | Fixed in a077663 (Pass B): the item's Line decides, as Registry does; not in a release |
 
 ## 2026-09-24 — Initial VIS business logic audit
 
@@ -261,6 +263,44 @@ The ApproveIntake comment defends the submitter rule deliberately, so which rule
 - Notification dismiss is owner-scoped; loan return and scrap are owner-checked.
 - Transfer approve and deny re-check `CanApproveTransfer`.
 - Submit, Pickup, Return, Scrap-loan, Short-pull and Transfer approval each run inside one SQLite transaction.
+
+## 2026-10-04 — VIS-7, VIS-8 and VIS-10 to VIS-14 fixes
+
+Date: 2026-10-04
+Purpose: Fix the 2026-09-26 audit's open defects in three passes. VIS-9 was held back: it needs a new mechanic (which recorded unit leaves when stock drops), so it gets its own scope and go.
+Source revision: VIS `1c565b7` (docs only on top of the audited `a35850b`, which has the same code as `1df2e45`). Pass A `0b03c94`, Pass B `a077663`, Pass C `d39553d`, each built and verified on the working tree before it was committed, all pushed to `origin/master`. No schema change and no migration in any of them.
+Issues investigated: VIS-7, VIS-8, VIS-10, VIS-11, VIS-12, VIS-13, VIS-14, four of the audit's minor items, and the `SessionMiddleware[7]` report from the host's Sourcing console.
+Decisions made for these passes: VIS-14, the item's Line decides the ItemId prefix (what Registry has done since Pass 10), so `ApproveIntake`'s submitter-Line rule is gone. VIS-13, a hidden or deleted user's open session drops to Viewer with a blank Line and Branch, exactly what signing in as an off-roster name gives; no forced sign-out.
+Changes made:
+- Pass A (`0b03c94`).
+  - VIS-7: the item autocomplete (`site.js`), the Intake "already registered" header and the Pickup Queue serial picker, including the partial-pickup rows, build their rows from nodes and `new Option`, not HTML strings. The team name in Modify Stock's notes and the location names in the Command Center zone menus go through a new `escapeHtml`. The Intake header's model name was white on white in light mode (`text-white`); it follows `--vis-text` now.
+  - VIS-10: `CancelPersistedOrder` refuses anything that isn't Pending (a distinct message for an order already cancelled), runs in one transaction and writes an "Order Cancelled" log entry with a blank ItemId, like "Intake Approved". A partly picked-up order that is still Pending can still be cancelled, as before; its picked lines' loans are untouched.
+  - VIS-11: `DeleteItem` refuses while any order line has `LoanOutstanding > 0`.
+  - VIS-12: `CreateItem` rejects a negative quantity and discards a posted `Variants`, `Id`, `RegisteredAt` and `AlertThreshold`, in the service and again at the top of the controller action (the location getters read a posted variant ahead of the staged form values).
+  - Minors: `ModifyStock` throws on an unrecognized `actionType` instead of logging success; `RejectIntake` refuses a batch that is no longer Pending; the two pickup form loops are capped at 5000 units (`HomeController.MaxUnitsPerLine`); the Settings owner-picker lists are serialized as JSON, so a quote or backslash in a location name no longer breaks the script.
+- Pass B (`a077663`).
+  - VIS-8: a shared `SameShelf` compares the Parent/Major/Sub/Rack/Row columns, blank equal to `0`, case ignored. `CommitIntake`'s existing-item branch, `CommitIntakeStockBatch` and Location Transfer's merge target all use it. The writers still produce both FdaString shapes; the 8 padded stacks were not touched.
+  - VIS-14: `CommitIntake` takes the Group from the item's Line. Its `submitterLine` parameter, and `ApproveIntake`'s lookup of it, are removed.
+- Pass C (`d39553d`).
+  - VIS-13: `RequireNameFilter` is an async filter with the database injected. Each click it re-reads the person's active roster row (the same case-insensitive lookup `Identify` uses) and sets the session's Level, Line and Branch to match, writing only what changed so an ordinary click sends no new Set-Cookie. Global filters run before every `[RequireLevel]`, so it sees the fresh level. Pages marked `[AllowWithoutName]` skip it; the session name and theme are never touched. Sourcing's own `RequireNameFilter` already worked this way, except that it rewrites the session on every click.
+Verification and observed results:
+- Service and filter checks (real services and the real filter against backup-API copies of `inventory.dev.db`, the 9/25 harness extended): Pass A 50 cases, Pass B 64, Pass C 80. On the revision before each pass the audit case reproduced (VIS-10, 11 and 12 in A; VIS-8 and VIS-14 in B; VIS-13 in C). Of the cases added in each pass, 7 (A), 6 (B) and 9 (C) failed there and the rest passed on both, as controls. On the fixed tree all 80 pass: 67 PASS and 13 NOT_REPRODUCED, which includes every VIS-1 to VIS-6 case.
+- Live, on seeded scratch copies of the dev db (the real databases were not opened for writing; the dev db's modified time is still 2026-09-24):
+  - A: an item named with an `<img onerror>` payload rendered as literal text in all three autocompletes, the Intake header and the Pickup Queue picker, including the partial-pickup rows; the old construction fires the same payload. A pickup followed by a stale cancel is refused and the order stays Completed; a second cancel is refused; the cancel shows in the Command Center feed. Delete Item with a loan out is refused. Quantity -3 through the real Registry form is refused and registers nothing. Settings (unlocked with a test-only passcode) works with a location named `Dock "A" \ B`.
+  - B: CCR-0005's padded `PATS.0.0.LEAN-TO.0` stack took an Adjustment typed as `Lean-To` through the Intake page, 1 to 2 with no duplicate stack. As a whole-Branch user with a blank Line, an Intake import of a new Valve into Residential OD minted `RVE-0001`, Group Residential.
+  - C: through the real Settings endpoints, an Engineer on Commercial Packaged/Splits was demoted, hidden, restored and moved to Residential OD. Each change showed on his next click: the Engineer action refused after the demotion, the whole org visible while hidden, his own Line back after the restore, a smaller view after the move. The superuser's session and the Settings gate were not disturbed, and unchanged clicks sent no Set-Cookie.
+- Not exercised live: the held-batch approval (`ApproveIntake`). It was compile-checked and calls the same `CommitIntake` the service cases cover.
+- Build clean after each pass; the only warnings are the 12 already there plus the NU1903 advisory.
+- Found, not fixed: `BuildRackRowMap` groups on the raw `Parent|Major|Sub`, so the padded stacks (`"0"` levels) form keys of their own and their racks don't feed Rack suggestions.
+SessionMiddleware[7] on the host's Sourcing console:
+- Both apps now use their own cookie names (`.VisualInventory.Session`, `.SourcingTool.Session`), and the Sourcing fix `2437326` is inside the 10/02 release `17d4dba`. Browsers scope cookies by hostname, not port, so the two apps share a cookie jar and are kept apart only by the names.
+- Reproduced locally: the new Sourcing ignores cookies named `.AspNetCore.Session` and `.VisualInventory.Session` (0 log lines). Two copies of Sourcing started from different folders on one hostname reproduce the error text ("The payload was invalid"): 2 log lines per click while the browser holds the other copy's cookie, until the person signs in again on that copy; going back and forth makes each switch cost a sign-in. A copy reading its own cookie logs nothing.
+- Neither app polls in the background, so each log line is a real click. Sourcing writes the session on every click; VIS only wrote it at sign-in, and now writes only on a change.
+- Cause on the host not found. Checks that tell: the `Set-Cookie` name in each app's response in the browser's developer tools (`.AspNetCore.Session` means that app is a build from before the rename); `Get-Process Sourcing_Tool | Select Id,Path` and `netstat -ano | findstr :5001` for a second copy; the exact text of the log line. No code was changed, and the Data Protection application-name pin that was discussed is not adopted.
+Remaining issues: VIS-9. Its audit data is unchanged: CCR-0005 V1 (4 on the shelf, 5 recorded On Hand) and CCR-0213 V2 (0 and 9). Minor audit items not done: short-pull corrections aren't team-scoped, no concurrency tokens, CSV export escaping, unencoded HTML in emails, deliveries addressed to someone who leaves, and Intake's silent quantity coercion.
+Deployment status: committed and pushed (`0b03c94`, `a077663`, `d39553d`). No release has been built from them. `VIS_Release_20260925` (built from `1df2e45`) is still the staged one and is still recorded as not installed on the host. No migration, so a build from `d39553d` runs on the host's current db as-is. Two behavior changes to know about: a hidden user's open session reads the whole org as a Viewer on its next click, and Intake's ItemId prefix now follows the item's Line.
+Links to saved artifacts: [Pass A](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-03_VIS_PassA>), [Pass B](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-04_VIS_PassB>), [Pass C](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-04_VIS_PassC>); each holds the harness (`Reproduction`), `results_*` for the revision before and the fixed tree, and Pass C also the live Settings script and the two-copies cookie script.
+
 
 ## Continuing a debugging session
 

@@ -9,6 +9,68 @@ landed, when."
 
 ---
 
+## 2026-10-04
+
+### docs — log Passes A to C
+Docs only. The 2026-10-04 entry in `VIS_Debugging_Log.md` (what changed, the checks and
+live runs, the `SessionMiddleware[7]` findings, what's left), the register's statuses,
+and OPEN: the fixes are committed and pushed but in no release.
+*Files:* `docs/VIS_Debugging_Log.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `d39553d` — Fix: audit VIS-13 (Pass C), access changes reach an open session
+No migration, no schema change. Sign-in copied Level, Line and Branch into the
+session and nothing read the roster again, so a demotion, a Line change or a hide
+in Settings never reached an open session, and the sliding 30-minute idle timeout
+let an active one keep its rights indefinitely. `RequireNameFilter` now has the
+database injected and, each click, re-reads the person's active roster row (the
+lookup `Identify` uses, case-insensitive) and sets Level, Line and Branch to match;
+no row means Viewer with a blank Line and Branch, as signing in as an unknown name
+does. It writes only what changed, so an ordinary click sends no new Set-Cookie.
+`[AllowWithoutName]` pages skip it; name and theme are never touched. Global filters
+run before every `[RequireLevel]`, which therefore sees the fresh level. 80 checks
+against copies of the dev db, and a live run through the real Settings endpoints.
+*Files:* `Services/RequireNameFilter.cs`, `Services/CurrentUserService.cs`
+
+### `a077663` — Fix: audit VIS-8 and VIS-14 (Pass B)
+No migration, no schema change. **VIS-8** — Intake decided "same shelf" by an exact
+FdaString, but Modify Stock's NEW location, Location Transfer and Loan Return write
+it padded (`PATS.0.0.LEAN-TO.0`) and Registry and Intake write it compressed
+(`PATS.Lean-To`): an Adjustment against a padded stack was refused as "no existing
+stock", and an Add minted a duplicate stack on the same shelf. A shared `SameShelf`
+compares the five location columns (blank is `0`, case ignored) and is used by
+`CommitIntake`'s existing-item branch, `CommitIntakeStockBatch` and Location
+Transfer's merge target. The writers are unchanged. **VIS-14** — `CommitIntake` took
+the ItemId Group from the submitter's Line, blank for whole-Branch users, so it
+always minted a `C`. It now follows the item's Line, as Registry does; the unused
+`submitterLine` parameter and `ApproveIntake`'s lookup are gone. 64 checks against
+copies of the dev db, plus live runs through the Intake page.
+*Files:* `Services/InventoryService.cs`, `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`
+
+### `0b03c94` — Fix: audit VIS-7, VIS-10 to VIS-12 and minors (Pass A)
+No migration, no schema change. **VIS-7** — the item autocomplete, the Intake
+"already registered" header and the Pickup Queue serial picker (partial-pickup rows
+included) build rows from nodes, not HTML strings, so a name, PN, serial or lab #
+typed by a Standard user can't run script in anyone's session; the team name in
+Modify Stock's notes and the Command Center zone-menu names are escaped too
+(`escapeHtml` in `site.js`). The Intake header's model name was white on white in
+light mode and now follows `--vis-text`. **VIS-10** — Cancel refuses anything that
+isn't Pending, in one transaction, and logs "Order Cancelled". **VIS-11** — Delete
+Item refuses while any order line has a loan outstanding (Controls never get unit
+rows). **VIS-12** — Registry rejects a negative quantity and discards a posted
+`Variants`/`Id`/`RegisteredAt`/`AlertThreshold`. Minors: an unrecognized stock
+action throws instead of logging success; Reject refuses a batch no longer Pending;
+the pickup form loops are capped at 5000; the Settings owner-picker lists are
+serialized, so a quote in a location name can't break the script. 50 checks against
+copies of the dev db, plus live runs.
+*Files:* `Services/InventoryService.cs`, `Services/OrderService.cs`, `Controllers/HomeController.cs`, `Controllers/SettingsController.cs`, `Views/Home/CommandCenter.cshtml`, `Views/Home/Intake.cshtml`, `Views/Home/PickupQueue.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`, `Views/Settings/Index.cshtml`, `wwwroot/js/site.js`
+
+## 2026-10-03
+
+### docs — `1c565b7` add `VIS_Debugging_Log.md`
+Docs only. The 2026-09-24 and 09-26 audit findings (VIS-1 to VIS-14), the 09-25
+fixes and the debugging method, filed in the repo from the OneDrive records.
+*Files:* `docs/VIS_Debugging_Log.md`
+
 ## 2026-09-25
 
 ### docs — `1df2e45` released to MASTER128 as `VIS_Release_20260925`; Sourcing side installed
