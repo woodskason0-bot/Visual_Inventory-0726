@@ -74,10 +74,21 @@ rather than assuming one exists.
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
   schema change. A build from `9cfea2a` carries every audit fix, VIS-1 to VIS-14,
   on top of Passes 39/40 and the cookie fix, and would supersede the staged
-  `VIS_Release_20260925`, which stops at `1df2e45`. I planned a prod build for
-  2026-10-05; none has been built or staged yet. A published Production build of the
-  tree that became `9cfea2a` passed a smoke test (15 pages, 12 flow checks, no
-  migrations, no errors in the console). Behavior changes to know about: a hidden user's open session
+  `VIS_Release_20260925`, which stops at `1df2e45`. **It is staged: `VIS_Release_20261004\`
+  on USB `LESLISGIFT`** (7.2 GB, FAT32; at the drive's root, where the 9/2 release
+  sat): `VIS_application_10.4.26\` (544 files, built from master @ `3e7f201`, which
+  is `9cfea2a`'s code plus docs; dll `0D360D1C…7845`, exe `E43A97DC…EE5E`) and a
+  standalone `README_FIRST.txt`, no database. All 544 files matched the build by
+  SHA-256 after the copy. It also holds `Check_Host_Apps.ps1`, an optional
+  read-only script for the host (which copies of VIS / the Sourcing Tool are
+  running, from which folder and port, and whether each build has its own session
+  cookie name). I planned the prod install for 2026-10-05. A published Production
+  build of this code passed a smoke test (15 pages, 12 flow checks, no
+  migrations, no errors in the console). The superseded `VIS_Release_20260902\`
+  is still on that drive at the root: Claude Code can't delete on a removable
+  drive, so removing it is mine — its full copy, SHA-256-verified, is in OneDrive
+  `03_Rheem_Projects\Superseded Releases\VIS_Release_20260902` in the master.
+  Behavior changes to know about: a hidden user's open session
   becomes a Viewer with a blank Line on its next click, which reads the whole org
   (what signing in as an unknown name already did); Intake's ItemId prefix now
   follows the item's Line, as Registry's does; Scrap, a downward Adjustment and a

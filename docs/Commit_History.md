@@ -11,6 +11,14 @@ landed, when."
 
 ## 2026-10-04
 
+### docs — release `VIS_Release_20261004` staged on LESLISGIFT
+Docs only. OPEN: the build from master @ `3e7f201` (544 files, dll stamped
+`1.0.0+3e7f201…`) is staged at `\VIS_Release_20261004\` on USB `LESLISGIFT`
+(`VIS_application_10.4.26\`, a README, `Check_Host_Apps.ps1`; no database), every file
+SHA-256-matched after the copy. The superseded `\VIS_Release_20260902\` is still on that
+drive for removal by hand, with a verified copy in OneDrive's Superseded Releases.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/VIS_Debugging_Log.md`, `docs/Commit_History.md`
+
 ### docs — log Pass D
 Docs only. The Pass D entry in `VIS_Debugging_Log.md`, VIS-9's status, and OPEN: every
 audit fix is committed and pushed but in no release, and the two stacks that already
