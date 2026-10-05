@@ -125,6 +125,23 @@
                             <button type="submit" class="btn btn-sm btn-outline-danger">Correct &amp; Pick Up</button>
                         </div>
                     </div>
+                    @* The recorded units on each shelf. If the picker lowers a count below the
+                       units recorded there, this asks which are gone (see InventoryService.
+                       RetireSurplusUnits); empty and hidden otherwise, so nothing posts. *@
+                    @foreach (var loc in line.Locations.Where(l => l.CompressorUnits.Any() || l.MotorUnits.Any()))
+                    {
+                        <div class="short-units mt-2 p-2 border rounded vis-inset-box d-none" data-variant="@loc.VariantId">
+                            <label class="form-label small fw-bold mb-1">Which recorded units are gone from @loc.Fda?</label>
+                            <div class="short-units-list"></div>
+                            <script type="application/json" class="short-units-data">@Html.Raw(System.Text.Json.JsonSerializer.Serialize(new
+                            {
+                                qty = loc.RecordedQty,
+                                tc = loc.RecordedTc,
+                                cunits = loc.CompressorUnits.Select(u => new { id = u.Id, serial = u.Serial, lab = u.Lab }),
+                                munits = loc.MotorUnits.Select(u => new { id = u.Id, lab = u.Lab })
+                            }))</script>
+                        </div>
+                    }
                 </form>
             }
         </div>
@@ -607,6 +624,110 @@
         if (t.id === "partial-pickup-cancel") {
             document.getElementById("partial-pickup-card").classList.add("d-none");
         }
+    });
+
+    // ---- Short-pull correction: which recorded units are gone ----------------
+    // Mirrors OrderService.ReportShortPull / InventoryService.RetireSurplusUnits. A count
+    // typed below the units recorded On Hand on that shelf has to say which of them are
+    // gone (exactly the surplus); a count of 0 takes every one with no question; a count
+    // that is unchanged or higher asks nothing. Motors' rows are TC-only, so their surplus
+    // is rows minus the TC that still fits. The server refuses a pick that doesn't match.
+    document.querySelectorAll(".short-units").forEach(function (box) {
+        var variant = box.getAttribute("data-variant");
+        var form = box.closest("form");
+        var input = form && form.querySelector('input[name="corrected_' + variant + '"]');
+        var dataEl = box.querySelector("script.short-units-data");
+        var list = box.querySelector(".short-units-list");
+        if (!input || !dataEl || !list) return;
+        var data = {};
+        try { data = JSON.parse(dataEl.textContent || "{}"); } catch (e) { return; }
+
+        // The submit button waits until every asked-for tick count is met, so the common
+        // mistake (a count typed, the units forgotten) can't be submitted at all. The
+        // server enforces the same count and puts the form back if it refuses.
+        function syncSubmit() {
+            var btn = form.querySelector("button[type=submit]");
+            if (!btn) return;
+            var unmet = Array.prototype.some.call(form.querySelectorAll(".short-units-list > div[data-need]"), function (w) {
+                return w.querySelectorAll("input[type=checkbox]:checked").length !== parseInt(w.getAttribute("data-need"), 10);
+            });
+            btn.disabled = unmet;
+        }
+
+        function group(name, noun, units, need, labelOf, extraOf, newCount, tcWord) {
+            var wrap = document.createElement("div");
+            wrap.className = "mb-1";
+            wrap.setAttribute("data-need", String(need));
+            units.forEach(function (u) {
+                var lbl = document.createElement("label");
+                lbl.className = "d-block small";
+                var cb = document.createElement("input");
+                cb.type = "checkbox"; cb.name = name; cb.value = String(u.id); cb.className = "me-1";
+                cb.checked = !!(box._was && box._was[name + ":" + u.id]);
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(labelOf(u)));
+                var extra = extraOf(u);
+                if (extra) {
+                    var span = document.createElement("span");
+                    span.className = "text-dim ms-2";
+                    span.textContent = extra;
+                    lbl.appendChild(span);
+                }
+                wrap.appendChild(lbl);
+            });
+            var help = document.createElement("small");
+            help.style.fontSize = "10px";
+            wrap.appendChild(help);
+            function count() {
+                var boxes = Array.prototype.slice.call(wrap.querySelectorAll("input[type=checkbox]"));
+                var ticked = boxes.filter(function (b) { return b.checked; }).length;
+                boxes.forEach(function (b) { if (!b.checked) b.disabled = ticked >= need; });
+                help.textContent = "That leaves " + newCount + tcWord + " on the shelf but " + units.length + " recorded " + noun + "s -- tick exactly "
+                    + need + " that " + (need === 1 ? "is" : "are") + " gone. They are scrapped. Ticked: " + ticked + ".";
+                help.className = "d-block mt-1 " + (ticked < need ? "text-warning fw-bold" : "text-dim");
+                syncSubmit();
+            }
+            wrap.addEventListener("change", count);
+            count();
+            list.appendChild(wrap);
+        }
+        function note(text) {
+            var small = document.createElement("small");
+            small.className = "d-block text-dim";
+            small.style.fontSize = "10px";
+            small.textContent = text;
+            list.appendChild(small);
+        }
+
+        function rebuild() {
+            box._was = {};
+            list.querySelectorAll("input[type=checkbox]:checked").forEach(function (cb) { box._was[cb.name + ":" + cb.value] = true; });
+            list.innerHTML = "";
+            box.classList.add("d-none");
+
+            var after = parseInt(input.value, 10);
+            if (isNaN(after) || after < 0) after = isNaN(after) ? data.qty : 0;
+            var newTc = Math.min(data.tc || 0, after);
+            if (!(after < data.qty || newTc < (data.tc || 0))) { syncSubmit(); return; }   // unchanged or higher: nothing leaves
+
+            var cunits = data.cunits || [], munits = data.munits || [];
+            var cSurplus = cunits.length - after;
+            if (cSurplus > 0) {
+                if (after <= 0) note("A count of 0 takes the whole shelf, so its " + cunits.length + " recorded unit" + (cunits.length === 1 ? "" : "s") + " will be scrapped with it.");
+                else group("leavingUnit_" + variant, "unit", cunits, cSurplus,
+                           function (u) { return u.serial || "(no serial)"; }, function (u) { return u.lab ? "Lab " + u.lab : ""; }, after, "");
+            }
+            var mSurplus = munits.length - newTc;
+            if (mSurplus > 0) {
+                if (newTc <= 0) note("That takes all of the shelf's TC, so its " + munits.length + " recorded TC unit" + (munits.length === 1 ? "" : "s") + " will be scrapped with it.");
+                else group("leavingMotor_" + variant, "TC unit", munits, mSurplus,
+                           function (u) { return u.lab || "(no lab #)"; }, function () { return ""; }, newTc, " TC");
+            }
+            if (list.children.length) box.classList.remove("d-none");
+            syncSubmit();
+        }
+        input.addEventListener("input", rebuild);
+        rebuild();
     });
 })();
 </script>

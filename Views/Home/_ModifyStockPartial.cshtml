@@ -140,6 +140,17 @@
                         <div id="stock-serial-rows"></div>
                     </div>
 
+                    @* Scrap / downward Adjustment: when the new count leaves more recorded units
+                       on this stack than it can hold, say which of them are gone. Built by
+                       refreshLeavingPicker(); emptied (so nothing posts) whenever the rows
+                       still fit, and for a whole-stack scrap, where every recorded unit goes
+                       on its own. The server enforces the same count and refuses a pick
+                       that doesn't match. *@
+                    <div id="stock-leaving-div" class="p-2 mb-3 border rounded vis-inset-box" style="display:none;">
+                        <label class="form-label small fw-bold text-light-gray mb-1">Which recorded units are leaving?</label>
+                        <div id="stock-leaving-list"></div>
+                    </div>
+
                     <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
                         @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
                            (Commercial, Residential) with one LINE (International, which
@@ -628,49 +639,155 @@
         if (!groups.length) return;
 
         groups.forEach(function (g) {
-            const box = document.createElement('div');
-            box.className = 'mb-1';
-            const min = Math.min(g.moving, Math.max(0, g.units.length - g.staying));
-            const max = Math.min(g.moving, g.units.length);
-            g.units.forEach(function (u) {
-                // Built with textContent, never innerHTML -- serials and lab #s are typed-in text.
-                const lbl = document.createElement('label');
-                lbl.className = 'd-block small';
-                const cb = document.createElement('input');
-                cb.type = 'checkbox';
-                cb.name = g.name;
-                cb.value = String(u.id);
-                cb.className = 'me-1';
-                cb.checked = !!was[g.name + ':' + u.id];
-                lbl.appendChild(cb);
-                lbl.appendChild(document.createTextNode(g.label(u)));
-                const extra = g.extra(u);
-                if (extra) {
-                    const span = document.createElement('span');
-                    span.className = 'text-light-gray ms-2';
-                    span.textContent = extra;
-                    lbl.appendChild(span);
-                }
-                box.appendChild(lbl);
-            });
-            const help = document.createElement('small');
-            help.style.fontSize = '10px';
-            box.appendChild(help);
-            const count = function () {
-                const boxes = Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]'));
-                const ticked = boxes.filter(function (b) { return b.checked; }).length;
-                boxes.forEach(function (b) { if (!b.checked) b.disabled = ticked >= max; });
-                const range = (min === max) ? 'exactly ' + min
-                    : (min > 0 ? 'at least ' + min + ', at most ' + max : 'up to ' + max);
-                help.textContent = 'Moving ' + g.moving + ' of ' + (g.moving + g.staying) + (g.noun === 'TC unit' ? ' TC' : '')
+            g.min = Math.min(g.moving, Math.max(0, g.units.length - g.staying));
+            g.max = Math.min(g.moving, g.units.length);
+            renderUnitGroup(list, g, was, function (ticked, range) {
+                return 'Moving ' + g.moving + ' of ' + (g.moving + g.staying) + (g.noun === 'TC unit' ? ' TC' : '')
                     + ' — tick which recorded ' + g.noun + 's go (' + range + '). Unticked ones stay recorded on this stack. Ticked: ' + ticked + '.';
-                help.className = 'd-block mt-1 ' + (ticked < min ? 'text-warning fw-bold' : 'text-light-gray');
-            };
-            box.addEventListener('change', count);
-            count();
-            list.appendChild(box);
+            });
         });
         div.style.display = 'block';
+    }
+    // One checklist of a stack's recorded units, shared by the transfer picker above and
+    // the Scrap / Adjustment "which units are leaving" picker below. g.min / g.max bound
+    // how many may be ticked; once the maximum is ticked the rest grey out, and the help
+    // line turns amber while fewer than the minimum are. describe(ticked, range) is the
+    // sentence. The server applies the same bounds and refuses a pick that doesn't fit.
+    function renderUnitGroup(list, g, was, describe) {
+        const box = document.createElement('div');
+        box.className = 'mb-1';
+        const min = g.min, max = g.max;
+        if (g.requireExact) box.setAttribute('data-need', String(min));   // read by syncLeavingExecute()
+        g.units.forEach(function (u) {
+            // Built with textContent, never innerHTML -- serials and lab #s are typed-in text.
+            const lbl = document.createElement('label');
+            lbl.className = 'd-block small';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.name = g.name;
+            cb.value = String(u.id);
+            cb.className = 'me-1';
+            cb.checked = !!was[g.name + ':' + u.id];
+            lbl.appendChild(cb);
+            lbl.appendChild(document.createTextNode(g.label(u)));
+            const extra = g.extra(u);
+            if (extra) {
+                const span = document.createElement('span');
+                span.className = 'text-light-gray ms-2';
+                span.textContent = extra;
+                lbl.appendChild(span);
+            }
+            box.appendChild(lbl);
+        });
+        const help = document.createElement('small');
+        help.style.fontSize = '10px';
+        box.appendChild(help);
+        const count = function () {
+            const boxes = Array.prototype.slice.call(box.querySelectorAll('input[type=checkbox]'));
+            const ticked = boxes.filter(function (b) { return b.checked; }).length;
+            boxes.forEach(function (b) { if (!b.checked) b.disabled = ticked >= max; });
+            const range = (min === max) ? 'exactly ' + min
+                : (min > 0 ? 'at least ' + min + ', at most ' + max : 'up to ' + max);
+            help.textContent = describe(ticked, range);
+            help.className = 'd-block mt-1 ' + (ticked < min ? 'text-warning fw-bold' : 'text-light-gray');
+            if (g.requireExact) syncLeavingExecute();
+        };
+        box.addEventListener('change', count);
+        count();
+        list.appendChild(box);
+    }
+    // Execute waits until the Scrap / Adjustment checklist has exactly the ticks it asks
+    // for, so a count typed with the units forgotten can't be submitted. The server
+    // enforces the same count and refuses a pick that doesn't match.
+    function syncLeavingExecute() {
+        const btn = document.querySelector('#modifyStockModal .modal-footer .btn-primary');
+        const list = document.getElementById('stock-leaving-list');
+        if (!btn || !list) return;
+        const unmet = Array.prototype.some.call(list.querySelectorAll(':scope > div[data-need]'), function (w) {
+            return w.querySelectorAll('input[type=checkbox]:checked').length !== parseInt(w.getAttribute('data-need'), 10);
+        });
+        btn.disabled = unmet;
+    }
+    // ---- Recorded units on a Scrap or downward Adjustment ------------------------
+    // Mirrors InventoryService.RetireSurplusUnits: once the action has lowered the
+    // stack's count (its TC count, for motors, whose rows are TC-only), recorded On Hand
+    // units can't outnumber what's left. Taking the whole stack takes every row -- just
+    // said, nothing to tick; a count that still has room for every row asks nothing;
+    // otherwise exactly the surplus is ticked. The arithmetic below is the server's, line
+    // for line (Scrap's forced-TC floor, Adjustment's TC reclassify and clamp), because
+    // the question has to match what the server will compute. Rebuilt whenever the stack,
+    // the quantity or the TC box changes, keeping ticks that still apply.
+    function leavingTargets(action, v) {
+        const qty = v.qty || 0, tcHave = v.tcqty || 0;
+        const q = parseInt((document.getElementById('stock-qty-input') || {}).value, 10);
+        if (isNaN(q)) return null;
+        const tcEl = document.getElementById('stock-tc-input');
+        const tcIn = (tcEl && !tcEl.disabled) ? (parseInt(tcEl.value, 10) || 0) : 0;
+        let newQty, newTc = tcHave;
+        if (action === 'Scrap') {
+            const scrap = Math.min(Math.max(q, 0), qty);
+            newQty = qty - scrap;
+            const nonTc = qty - tcHave;
+            const forcedTc = Math.max(0, scrap - nonTc);
+            const tcScrap = Math.min(tcHave, Math.max(forcedTc, Math.min(tcIn, scrap)));
+            newTc = Math.max(0, tcHave - tcScrap);
+        } else {
+            newQty = qty + Math.max(q, -qty);
+            if (tcIn > 0) newTc = Math.min(tcHave + tcIn, newQty);
+            if (newTc > newQty) newTc = Math.max(0, newQty);
+        }
+        return { qty: qty, tcHave: tcHave, newQty: newQty, newTc: newTc };
+    }
+    function refreshLeavingPicker() {
+        const div = document.getElementById('stock-leaving-div');
+        const list = document.getElementById('stock-leaving-list');
+        if (!div || !list) return;
+
+        const was = {};
+        list.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { was[cb.name + ':' + cb.value] = true; });
+        list.innerHTML = '';   // emptied = nothing posts
+        div.style.display = 'none';
+        syncLeavingExecute();  // an empty list never holds Execute back
+
+        const action = document.getElementById('stock-action-type').value;
+        if (action !== 'Scrap' && action !== 'Adjustment') return;
+        const v = getSelectedVariant(getStockItem());
+        if (!v) return;
+        const t = leavingTargets(action, v);
+        if (!t || !(t.newQty < t.qty || t.newTc < t.tcHave)) return;   // the count didn't drop: nothing leaves
+
+        const note = function (text) {
+            const small = document.createElement('small');
+            small.className = 'd-block text-light-gray';
+            small.style.fontSize = '10px';
+            small.textContent = text;
+            list.appendChild(small);
+        };
+        const groups = [];
+        const cunits = v.cunits || [], munits = v.munits || [];
+        const cSurplus = cunits.length - t.newQty;
+        if (cSurplus > 0) {
+            if (t.newQty <= 0) note('This takes the whole stack, so its ' + cunits.length + ' recorded unit' + (cunits.length === 1 ? '' : 's') + ' will be scrapped with it.');
+            else groups.push({ name: 'leavingUnitIds', noun: 'unit', units: cunits, need: cSurplus, newCount: t.newQty,
+                               label: function (u) { return u.serial || '(no serial)'; },
+                               extra: function (u) { return u.lab ? 'Lab ' + u.lab : ''; } });
+        }
+        const mSurplus = munits.length - t.newTc;
+        if (mSurplus > 0) {
+            if (t.newTc <= 0) note('This takes all of the stack\'s TC, so its ' + munits.length + ' recorded TC unit' + (munits.length === 1 ? '' : 's') + ' will be scrapped with it.');
+            else groups.push({ name: 'leavingMotorUnitIds', noun: 'TC unit', units: munits, need: mSurplus, newCount: t.newTc,
+                               label: function (u) { return u.lab || '(no lab #)'; },
+                               extra: function () { return ''; } });
+        }
+        groups.forEach(function (g) {
+            g.min = g.need; g.max = g.need; g.requireExact = true;
+            renderUnitGroup(list, g, was, function (ticked, range) {
+                return 'This leaves ' + g.newCount + (g.noun === 'TC unit' ? ' TC' : '') + ' on the stack but ' + g.units.length + ' recorded '
+                    + g.noun + 's — tick which ' + g.need + ' ' + (g.need === 1 ? 'is' : 'are') + ' gone (' + range + '). They are scrapped. Ticked: ' + ticked + '.';
+            });
+        });
+        if (list.children.length) div.style.display = 'block';
+        syncLeavingExecute();
     }
     function toggleStockUI() {
         const action = document.getElementById('stock-action-type').value;
@@ -769,6 +886,7 @@
         refreshTcFields(action);
         refreshSerialFields(action);
         refreshUnitPicker();
+        refreshLeavingPicker();
     }
     // ---- Quantity bounds ----------------------------------------------------
     // Scrap is capped at the selected stack's quantity -- it acts on ONE
@@ -1045,7 +1163,11 @@
             clampQty(a);
             if (a === 'Add' || a === 'Scrap') refreshTcFields(a);
             if (a === 'Add') refreshSerialFields(a);
+            if (a === 'Scrap' || a === 'Adjustment') refreshLeavingPicker();
         });
+        // How much TC goes (Scrap) or is reclassified (Adjustment) decides whether TC rows need ticking.
+        const stc = document.getElementById('stock-tc-input');
+        if (stc) stc.addEventListener('input', refreshLeavingPicker);
         const mq = document.getElementById('loc-moveqty');
         if (mq) mq.addEventListener('input', function () {
             if (document.getElementById('stock-action-type').value === 'Location Transfer') {
@@ -1078,6 +1200,7 @@
             refreshVariantTeamNote();
             refreshQtyCap(action);   // a different stack is a different Scrap ceiling
             if (typeof refreshTcFields === 'function') refreshTcFields(action);
+            refreshLeavingPicker();  // ...and a different set of recorded units
             if (action === 'Location Transfer') {
                 if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
                 refreshMoveQty();

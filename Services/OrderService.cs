@@ -12,6 +12,20 @@ namespace Visual_Inventory_System.Services
         public int VariantId { get; set; }
         public string Fda { get; set; } = "";
         public int RecordedQty { get; set; }
+        /// <summary>TC count on this stack (motors); a correction that lowers it can leave TC unit rows over.</summary>
+        public int RecordedTc { get; set; }
+        /// <summary>The compressor / TC motor units recorded On Hand here, so a correction that drops the count
+        /// below them can ask which are gone (see InventoryService.RetireSurplusUnits).</summary>
+        public System.Collections.Generic.List<RecordedUnit> CompressorUnits { get; set; } = new();
+        public System.Collections.Generic.List<RecordedUnit> MotorUnits { get; set; } = new();
+    }
+
+    /// <summary>One recorded On Hand unit on a stack: its row id and whatever identifies it.</summary>
+    public class RecordedUnit
+    {
+        public int Id { get; set; }
+        public string? Serial { get; set; }
+        public string? Lab { get; set; }
     }
 
     /// <summary>
@@ -472,8 +486,11 @@ namespace Visual_Inventory_System.Services
                 {
                     (string? Lab, string? Serial) pair = (null, null);
                     unitChoices?.TryGetValue(u, out pair);
+                    // variant.Quantity is already net of this pull, so the units still on
+                    // the shelf with this one included are what's left plus the slots left.
                     AssignOneCompressorUnit(it.ItemId, onHandHere, pair.Lab, pair.Serial, orderId, it.Id, null, now,
-                        claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
+                        claimedThisCall, variant.Quantity + (pickupQty - u), unitChoices != null && unitChoices.ContainsKey(u),
+                        ref missingLab, ref missingSerial, ref matchedUnits);
                 }
 
                 var flagParts = new List<string>();
@@ -512,6 +529,69 @@ namespace Visual_Inventory_System.Services
                 tx.Rollback();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// What the short-pull correction form shows for one line: each active location's
+        /// recorded quantity, and the compressor / TC motor units recorded On Hand there,
+        /// so a count typed below them can ask which are gone (see
+        /// InventoryService.RetireSurplusUnits).
+        /// </summary>
+        private ShortPullLine BuildShortPullLine(OrderItem it, InventoryItem inv, List<ItemVariant> activeVariants)
+        {
+            var variantIds = activeVariants.Select(v => v.Id).ToList();
+            // Tracked, then rechecked in memory: an earlier line of this same pickup
+            // may have flipped a row that isn't saved yet.
+            var compressorsHere = InventoryService.IsCompressorType(inv.Type)
+                ? _db.CompressorUnits
+                    .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand && c.ItemVariantId != null && variantIds.Contains(c.ItemVariantId.Value))
+                    .OrderBy(c => c.RecordedAt).ToList()
+                    .Where(c => c.Status == UnitStatus.OnHand && c.ItemVariantId != null && variantIds.Contains(c.ItemVariantId.Value)).ToList()
+                : new List<CompressorUnit>();
+            var motorsHere = InventoryService.IsMotorType(inv.Type)
+                ? _db.MotorUnits
+                    .Where(m => m.ItemId == it.ItemId && m.Status == UnitStatus.OnHand && m.ItemVariantId != null && variantIds.Contains(m.ItemVariantId.Value))
+                    .OrderBy(m => m.RecordedAt).ToList()
+                    .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId != null && variantIds.Contains(m.ItemVariantId.Value)).ToList()
+                : new List<MotorUnit>();
+
+            return new ShortPullLine
+            {
+                OrderItemId = it.Id,
+                ItemId = it.ItemId,
+                ItemName = inv.ItemName,
+                Requested = it.Quantity,
+                Locations = activeVariants.Select(v => new LocationStock
+                {
+                    VariantId = v.Id,
+                    Fda = v.FdaString,
+                    RecordedQty = v.Quantity,
+                    RecordedTc = v.ThermocoupledQty,
+                    CompressorUnits = compressorsHere.Where(c => c.ItemVariantId == v.Id)
+                        .Select(c => new RecordedUnit { Id = c.Id, Serial = c.SerialNumber, Lab = c.LabNumber }).ToList(),
+                    MotorUnits = motorsHere.Where(m => m.ItemVariantId == v.Id)
+                        .Select(m => new RecordedUnit { Id = m.Id, Lab = m.LabNumber }).ToList()
+                }).ToList()
+            };
+        }
+
+        /// <summary>
+        /// The correction form's data for a line that is STILL flagged short, or null.
+        /// The form only ever comes from TempData, so a correction that was refused
+        /// (units not ticked, say) used to strand the order: the line stayed flagged
+        /// short in the database and nothing could bring the form back. The controller
+        /// puts it back from here.
+        /// </summary>
+        public ShortPullLine? GetShortPullLine(int orderId, int orderItemId)
+        {
+            var it = _db.OrderItems.FirstOrDefault(o => o.Id == orderItemId && o.OrderId == orderId);
+            if (it == null || it.Status != "Cancelled") return null;
+            var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
+            if (inv == null) return null;
+            var active = inv.Variants
+                .Where(v => !v.IsRetired && (string.IsNullOrEmpty(it.Team) || v.Team == it.Team))
+                .ToList();
+            return BuildShortPullLine(it, inv, active);
         }
 
         /// <summary>
@@ -557,19 +637,7 @@ namespace Visual_Inventory_System.Services
                 // variation. Stock stays untouched; the picker reports the real
                 // count via ReportShortPull, location by location.
                 it.Status = "Cancelled";
-                return new ShortPullLine
-                {
-                    OrderItemId = it.Id,
-                    ItemId = it.ItemId,
-                    ItemName = inv.ItemName,
-                    Requested = it.Quantity,
-                    Locations = activeVariants.Select(v => new LocationStock
-                    {
-                        VariantId = v.Id,
-                        Fda = v.FdaString,
-                        RecordedQty = v.Quantity
-                    }).ToList()
-                };
+                return BuildShortPullLine(it, inv, activeVariants);
             }
 
             // Which location to pull from first: the engineer's request
@@ -697,12 +765,20 @@ namespace Visual_Inventory_System.Services
                 }
 
                 var claimedThisCall = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                // Slots still to assign per shelf: each variant's quantity is already net
+                // of this pull, so quantity + slots left = units on the shelf with the
+                // current one included (AssignOneCompressorUnit's "No serial" check).
+                var slotsLeft = variantPulls.ToDictionary(p => p.VariantId, p => p.Take);
                 for (int u = 0; u < pulledQty; u++)
                 {
                     string? lab = (pairs != null && u < pairs.Count) ? pairs[u].Lab : null;
                     string? serial = (pairs != null && u < pairs.Count) ? pairs[u].Serial : null;
-                    AssignOneCompressorUnit(it.ItemId, OnHandAt(unitVariant[u]), lab, serial, orderId, it.Id, null, now,
-                        claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
+                    int vid = unitVariant[u];
+                    AssignOneCompressorUnit(it.ItemId, OnHandAt(vid), lab, serial, orderId, it.Id, null, now,
+                        claimedThisCall, inv.Variants.First(x => x.Id == vid).Quantity + slotsLeft[vid],
+                        pairs != null && u < pairs.Count,
+                        ref missingLab, ref missingSerial, ref matchedUnits);
+                    slotsLeft[vid]--;
                 }
             }
 
@@ -756,7 +832,7 @@ namespace Visual_Inventory_System.Services
         private void AssignOneCompressorUnit(
             string itemId, List<CompressorUnit> onHandHere, string? lab, string? serial,
             int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now,
-            HashSet<string> claimedThisCall,
+            HashSet<string> claimedThisCall, int shelfUnitsLeft, bool slotChosenByPicker,
             ref int missingLab, ref int missingSerial, ref int matchedUnits)
         {
             lab = string.IsNullOrWhiteSpace(lab) ? null : lab.Trim();
@@ -791,6 +867,25 @@ namespace Visual_Inventory_System.Services
                 // it. Mirrors the motor TC fallback, which never had this gap
                 // since motors never try to match by serial to begin with.
                 known = onHandHere.FirstOrDefault(c => string.IsNullOrWhiteSpace(c.SerialNumber));
+
+                // No unnamed unit on the roster for this shelf. If every unit still
+                // physically on it (this one included) is already recorded WITH a
+                // serial, the one leaving can only be one of those -- minting a fresh
+                // unnamed Picked Up row here would leave a named row On Hand for a
+                // unit that's gone, a phantom the roster can never shed. When the
+                // picker deliberately chose "No serial", make them say which; when no
+                // per-unit choice was made at all (a short-pull correction's own
+                // re-pickup), take the oldest recorded unit -- FIFO, same as the
+                // fallback motors have. When the shelf holds more units than rows, an
+                // unrecorded unit exists, so a new row is the right outcome.
+                if (known == null && onHandHere.Count >= shelfUnitsLeft)
+                {
+                    if (slotChosenByPicker)
+                        throw new System.InvalidOperationException(
+                            "Every unit left on that shelf already has a recorded serial, so \"No serial\" can't be the one leaving -- "
+                            + "pick its serial from the list (or \"Serial not in list\" if it truly isn't recorded). Nothing was picked up.");
+                    known = onHandHere.FirstOrDefault();
+                }
             }
 
             if (known != null)
@@ -962,8 +1057,16 @@ namespace Visual_Inventory_System.Services
         /// corrections: VariantId -> the count the picker actually saw there.
         /// Only include locations that need correcting; anything left out keeps
         /// its current recorded quantity.
+        ///
+        /// leavingCompressorUnits / leavingMotorUnits: VariantId -> the recorded
+        /// units the picker ticked as gone. Needed only where the corrected count
+        /// drops below the units recorded On Hand there (see
+        /// InventoryService.RetireSurplusUnits); the whole correction is refused,
+        /// nothing changed, when a stack's ticks don't fit.
         /// </summary>
-        public PickupResult ReportShortPull(int orderId, int orderItemId, Dictionary<int, int> corrections)
+        public PickupResult ReportShortPull(int orderId, int orderItemId, Dictionary<int, int> corrections,
+            Dictionary<int, IReadOnlyCollection<int>>? leavingCompressorUnits = null,
+            Dictionary<int, IReadOnlyCollection<int>>? leavingMotorUnits = null)
         {
             using var tx = _db.Database.BeginTransaction();
             try
@@ -987,11 +1090,24 @@ namespace Visual_Inventory_System.Services
                     var v = inv.Variants.FirstOrDefault(x => x.Id == kv.Key && !x.IsRetired);
                     if (v == null) continue;
                     int before = v.Quantity;
+                    int tcBefore = v.ThermocoupledQty;
                     int after = System.Math.Max(0, kv.Value);
                     if (after == before) continue;
 
                     v.Quantity = after;
                     v.ThermocoupledQty = System.Math.Min(v.ThermocoupledQty, after);
+
+                    // A count that drops below the units recorded On Hand here has to
+                    // say which of them are gone, or they stay on the roster as
+                    // phantoms. A correction upward never asks.
+                    string unitNote = "";
+                    if (v.Quantity < before || v.ThermocoupledQty < tcBefore)
+                    {
+                        IReadOnlyCollection<int>? gone = null, goneMotors = null;
+                        leavingCompressorUnits?.TryGetValue(v.Id, out gone);
+                        leavingMotorUnits?.TryGetValue(v.Id, out goneMotors);
+                        unitNote = InventoryService.RetireSurplusUnits(_db, inv, v, gone, goneMotors);
+                    }
 
                     _db.TransactionLogs.Add(new TransactionLog
                     {
@@ -1000,7 +1116,7 @@ namespace Visual_Inventory_System.Services
                         ItemId = it.ItemId,
                         ItemName = inv.ItemName,
                         QuantityChange = after - before,
-                        Details = $"Short-pull correction on Order #{orderId}: V{v.VariantNumber} ({v.FdaString}) recorded {before}, actually {after}.",
+                        Details = $"Short-pull correction on Order #{orderId}: V{v.VariantNumber} ({v.FdaString}) recorded {before}, actually {after}." + unitNote,
                         User = _currentUser.Name
                     });
                 }
@@ -1057,7 +1173,15 @@ namespace Visual_Inventory_System.Services
                 tx.Commit();
                 return result;
             }
-            catch { tx.Rollback(); throw; }
+            catch
+            {
+                tx.Rollback();
+                // The rolled-back changes are still tracked in memory (the line's flip to
+                // Corrected, the corrected counts); what the controller reads next, to put
+                // the form back, has to be what the database actually holds.
+                _db.ChangeTracker.Clear();
+                throw;
+            }
         }
 
         /// <summary>
@@ -1560,12 +1684,17 @@ namespace Visual_Inventory_System.Services
                     }
 
                     var claimedThisCall = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                    var slotsLeft = variantPulls.ToDictionary(p => p.VariantId, p => p.Take);   // see FulfillOrderItem
                     for (int u = 0; u < pulledQty; u++)
                     {
                         string? lab = (compressorUnits != null && u < compressorUnits.Count) ? compressorUnits[u].Lab : null;
                         string? serial = (compressorUnits != null && u < compressorUnits.Count) ? compressorUnits[u].Serial : null;
-                        AssignOneCompressorUnit(req.ItemId, OnHandAt(unitVariant[u]), lab, serial, null, null, req.Id, now,
-                            claimedThisCall, ref missingLab, ref missingSerial, ref matchedUnits);
+                        int vid = unitVariant[u];
+                        AssignOneCompressorUnit(req.ItemId, OnHandAt(vid), lab, serial, null, null, req.Id, now,
+                            claimedThisCall, item.Variants.First(x => x.Id == vid).Quantity + slotsLeft[vid],
+                            compressorUnits != null && u < compressorUnits.Count,
+                            ref missingLab, ref missingSerial, ref matchedUnits);
+                        slotsLeft[vid]--;
                     }
                 }
 

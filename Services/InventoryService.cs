@@ -1691,6 +1691,106 @@ namespace Visual_Inventory_System.Services
             return picked;
         }
 
+        /// <summary>
+        /// Which of a stack's recorded On Hand units leave when its count drops
+        /// below the number of units on record (Scrap, a downward Adjustment, a
+        /// short-pull correction). `mustLeave` is the surplus: recorded rows minus
+        /// what the stack can still hold. Refuses (nothing has changed yet) when a
+        /// ticked unit isn't recorded On Hand on this stack any more, or when the
+        /// number ticked isn't exactly the surplus.
+        /// </summary>
+        private static List<T> TickedUnitsLeaving<T>(List<T> here, System.Func<T, int> idOf,
+            IReadOnlyCollection<int>? ticked, int mustLeave, string noun)
+        {
+            var ids = (ticked ?? System.Array.Empty<int>()).Distinct().ToList();
+            var picked = here.Where(u => ids.Contains(idOf(u))).ToList();
+
+            if (picked.Count != ids.Count)
+                throw new InvalidOperationException(
+                    "One or more ticked units aren't recorded on that stack any more -- refresh and try again. Nothing was changed.");
+            if (picked.Count != mustLeave)
+            {
+                int room = here.Count - mustLeave;
+                throw new InvalidOperationException(
+                    $"That leaves room for {room} recorded {noun}{(room == 1 ? "" : "s")} but {here.Count} {(here.Count == 1 ? "is" : "are")} on record there -- "
+                    + $"tick exactly which {mustLeave} {(mustLeave == 1 ? "is" : "are")} leaving ({picked.Count} ticked). Nothing was changed.");
+            }
+            return picked;
+        }
+
+        /// <summary>
+        /// Keeps a stack's recorded On Hand units from outnumbering the stack: once a
+        /// Scrap, a downward Adjustment or a short-pull correction has lowered the
+        /// variant's quantity (its TC count, for motors, which are TC-only), the
+        /// surplus rows leave as Scrapped. Taking the whole stack (or all its TC)
+        /// takes every row with no question asked; anything short of that needs the
+        /// person to say WHICH recorded units are gone. Without this the count went
+        /// down and the roster kept the serials, so phantom units were offered at
+        /// pickup, shown on the Item Card, and blocked Delete Stack for good.
+        ///
+        /// Call it AFTER the variant's new Quantity/ThermocoupledQty are set. Throws
+        /// before changing any unit row when the ticks don't fit; the caller restores
+        /// its own count. Returns a note for the log line ("" when nothing left).
+        /// </summary>
+        public static string RetireSurplusUnits(AppDbContext db, InventoryItem item, ItemVariant v,
+            IReadOnlyCollection<int>? leavingCompressorIds, IReadOnlyCollection<int>? leavingMotorIds)
+        {
+            var names = new List<string>();
+            int count = 0;
+
+            if (IsCompressorType(item.Type))
+            {
+                var rows = db.CompressorUnits
+                    .Where(c => c.ItemId == item.ItemId && c.ItemVariantId == v.Id && c.Status == UnitStatus.OnHand)
+                    .OrderBy(c => c.RecordedAt)
+                    .ToList()
+                    // Rechecked in memory: an earlier step of this same request may have
+                    // flipped a row that is tracked but not saved yet.
+                    .Where(c => c.Status == UnitStatus.OnHand && c.ItemVariantId == v.Id)
+                    .ToList();
+                int surplus = rows.Count - v.Quantity;
+                if (surplus > 0)
+                {
+                    var leaving = v.Quantity <= 0
+                        ? rows
+                        : TickedUnitsLeaving(rows, c => c.Id, leavingCompressorIds, surplus, "unit");
+                    foreach (var c in leaving)
+                    {
+                        c.Status = UnitStatus.Scrapped;
+                        c.ItemVariantId = null;
+                        names.Add(string.IsNullOrWhiteSpace(c.SerialNumber) ? (string.IsNullOrWhiteSpace(c.LabNumber) ? "no serial" : c.LabNumber!) : c.SerialNumber!);
+                    }
+                    count = leaving.Count;
+                }
+            }
+            else if (IsMotorType(item.Type))
+            {
+                var rows = db.MotorUnits
+                    .Where(m => m.ItemId == item.ItemId && m.ItemVariantId == v.Id && m.Status == UnitStatus.OnHand)
+                    .OrderBy(m => m.RecordedAt)
+                    .ToList()
+                    .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId == v.Id)
+                    .ToList();
+                int surplus = rows.Count - v.ThermocoupledQty;
+                if (surplus > 0)
+                {
+                    var leaving = v.ThermocoupledQty <= 0
+                        ? rows
+                        : TickedUnitsLeaving(rows, m => m.Id, leavingMotorIds, surplus, "TC unit");
+                    foreach (var m in leaving)
+                    {
+                        m.Status = UnitStatus.Scrapped;
+                        m.ItemVariantId = null;
+                        names.Add(string.IsNullOrWhiteSpace(m.LabNumber) ? "no lab #" : m.LabNumber!);
+                    }
+                    count = leaving.Count;
+                }
+            }
+
+            if (count == 0) return "";
+            return $" {count} recorded unit{(count == 1 ? "" : "s")} scrapped [{string.Join(", ", names)}].";
+        }
+
         // serials: compressors only, Add action only -- mirrors CreateItem/
         // CommitIntake's own optional per-unit serial capture (Pass 17), just
         // reached from the Modify Stock jump-in (registry name-match click)
@@ -1705,7 +1805,8 @@ namespace Visual_Inventory_System.Services
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
             string? newLine = null, List<string>? serials = null, string? variantTeam = null,
-            IReadOnlyCollection<int>? movingCompressorIds = null, IReadOnlyCollection<int>? movingMotorIds = null)
+            IReadOnlyCollection<int>? movingCompressorIds = null, IReadOnlyCollection<int>? movingMotorIds = null,
+            IReadOnlyCollection<int>? leavingCompressorIds = null, IReadOnlyCollection<int>? leavingMotorIds = null)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -1742,6 +1843,11 @@ namespace Visual_Inventory_System.Services
             int oldQty = item.Quantity;
             int qtyChange = 0;
             string details = "";
+            // The stack's own numbers before this action -- Scrap/Adjustment restore
+            // them if the recorded-unit check below refuses, so a refusal leaves the
+            // tracked variant exactly as it was.
+            int pvQtyBefore = pv?.Quantity ?? 0;
+            int pvTcBefore = pv?.ThermocoupledQty ?? 0;
             // Which variant received an Add's stock -- captured here so the
             // serial-logging step after SaveChanges knows where to point,
             // whichever of the two Add branches ran (existing stack vs NEW).
@@ -2068,6 +2174,25 @@ namespace Visual_Inventory_System.Services
                 // branch, changed nothing, and still logged and reported success.
                 throw new System.InvalidOperationException(
                     $"'{actionType}' isn't a recognized stock action -- nothing was changed.");
+            }
+
+            // Scrap and a downward Adjustment can leave more recorded units on the
+            // stack than its new count can hold; the surplus has to leave with it.
+            // Only when the stack actually shrank -- an Adjustment that changes
+            // nothing, or only adds, never asks about units.
+            if ((actionType == "Scrap" || actionType == "Adjustment") && pv != null
+                && (pv.Quantity < pvQtyBefore || pv.ThermocoupledQty < pvTcBefore))
+            {
+                try
+                {
+                    details += RetireSurplusUnits(_db, item, pv, leavingCompressorIds, leavingMotorIds);
+                }
+                catch
+                {
+                    pv.Quantity = pvQtyBefore;
+                    pv.ThermocoupledQty = pvTcBefore;
+                    throw;
+                }
             }
 
             item.LastUpdated = System.DateTime.UtcNow;

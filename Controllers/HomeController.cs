@@ -522,7 +522,8 @@ namespace Visual_Inventory_System.Controllers
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
             string? newRheemPart = null, string? newDescription = null, string? newBrand = null,
             string? newLine = null, string? variantTeam = null,
-            int[]? movingUnitIds = null, int[]? movingMotorUnitIds = null)
+            int[]? movingUnitIds = null, int[]? movingMotorUnitIds = null,
+            int[]? leavingUnitIds = null, int[]? leavingMotorUnitIds = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return SmartRedirect();
 
@@ -566,7 +567,8 @@ namespace Visual_Inventory_System.Controllers
             {
                 var result = _inventoryService.ModifyStock(itemId, actionType, quantity, newGroup, newTeam,
                     newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
-                    newLine, serials, variantTeam, movingUnitIds, movingMotorUnitIds);
+                    newLine, serials, variantTeam, movingUnitIds, movingMotorUnitIds,
+                    leavingUnitIds, leavingMotorUnitIds);
                 if (result != null)
                 {
                     TempData["Success"] = $"Transaction '{actionType}' applied to {itemId}.";
@@ -2174,7 +2176,22 @@ namespace Visual_Inventory_System.Controllers
                     }
                 }
 
-                var result = _orderService.ReportShortPull(orderId, orderItemId, corrections);
+                // leavingUnit_{variantId} / leavingMotor_{variantId}: the recorded units the
+                // picker ticked as gone from a stack whose count they lowered below them.
+                // One form field per ticked unit, so the same name repeats.
+                var leavingUnits = new Dictionary<int, IReadOnlyCollection<int>>();
+                var leavingMotors = new Dictionary<int, IReadOnlyCollection<int>>();
+                foreach (var key in Request.Form.Keys)
+                {
+                    bool compressor = key.StartsWith("leavingUnit_");
+                    bool motor = key.StartsWith("leavingMotor_");
+                    if (!compressor && !motor) continue;
+                    if (!int.TryParse(key.Substring(compressor ? "leavingUnit_".Length : "leavingMotor_".Length), out int variantId)) continue;
+                    var ids = Request.Form[key].Select(s => int.TryParse(s, out int id) ? id : -1).Where(id => id > 0).ToList();
+                    (compressor ? leavingUnits : leavingMotors)[variantId] = ids;
+                }
+
+                var result = _orderService.ReportShortPull(orderId, orderItemId, corrections, leavingUnits, leavingMotors);
 
                 if (result.HasShortLines)
                 {
@@ -2191,7 +2208,23 @@ namespace Visual_Inventory_System.Controllers
                     TempData["Success"] = "Stock corrected. Nothing was actually on the shelf, so no pickup was issued.";
                 }
             }
-            catch (Exception ex) { TempData["Error"] = ex.Message; }
+            catch (Exception ex)
+            {
+                TempData["Error"] = ex.Message;
+                // A refused correction (units not ticked, say) rolled everything back, so the
+                // line is still flagged short -- but the form only ever came from TempData,
+                // so without this the order was stranded. Put the same form back.
+                try
+                {
+                    var again = _orderService.GetShortPullLine(orderId, orderItemId);
+                    if (again != null)
+                    {
+                        TempData["ShortPullOrderId"] = orderId;
+                        TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(new List<ShortPullLine> { again });
+                    }
+                }
+                catch { /* the refusal toast already says what happened */ }
+            }
 
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("PickupQueue") : Redirect(referer);
