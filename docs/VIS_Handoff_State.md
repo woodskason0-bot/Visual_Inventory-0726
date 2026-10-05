@@ -69,19 +69,32 @@ rather than assuming one exists.
 
 ### Still to do
 
-- **The 2026-09-26 audit's fixes are committed and pushed but in no release:**
+- **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
-  `d39553d`, 2026-10-04). No migration, no schema change. A build from `d39553d`
-  carries them on top of `1df2e45` and would supersede the staged
-  `VIS_Release_20260925`, which stops at `1df2e45`. **VIS-9 is the one audit item
-  still open** — recorded compressor/motor units drifting above a stack's quantity
-  (CCR-0005 V1: 4 on the shelf, 5 recorded; CCR-0213 V2: 0 and 9). It needs a new
-  mechanic, so it gets its own scope and my go before anything is built. Two
-  behavior changes to know about: a hidden user's open session becomes a Viewer
-  with a blank Line on its next click, which reads the whole org (what signing in
-  as an unknown name already did); and Intake's ItemId prefix now follows the
-  item's Line, as Registry's does. The record (what changed, the checks, the live
-  runs) is the 2026-10-04 entry in `docs/VIS_Debugging_Log.md`.
+  `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
+  schema change. A build from `9cfea2a` carries every audit fix, VIS-1 to VIS-14,
+  on top of Passes 39/40 and the cookie fix, and would supersede the staged
+  `VIS_Release_20260925`, which stops at `1df2e45`. I planned a prod build for
+  2026-10-05; none has been built or staged yet. A published Production build of the
+  tree that became `9cfea2a` passed a smoke test (15 pages, 12 flow checks, no
+  migrations, no errors in the console). Behavior changes to know about: a hidden user's open session
+  becomes a Viewer with a blank Line on its next click, which reads the whole org
+  (what signing in as an unknown name already did); Intake's ItemId prefix now
+  follows the item's Line, as Registry's does; Scrap, a downward Adjustment and a
+  short-pull correction ask "which recorded units are leaving?" when the new count
+  can't hold every recorded unit, and Execute waits for the ticks; a "No serial"
+  picked on purpose is refused when every unit left on the shelf is recorded with a
+  serial. The record (what changed, the checks, the live runs) is the 2026-10-04
+  entries in `docs/VIS_Debugging_Log.md`.
+- **Repair the drift already in the data by hand — the code only stops new drift.**
+  In the 9/24 dev copy: CCR-0213 V2 (quantity 0) carries 9 unnamed On Hand rows,
+  ids 196 to 204, left from the 8/25 Add of 9 whose pickup (Order #8) was
+  Loan-Scrapped for "wrong model number on intake"; they should be Scrapped.
+  CCR-0005 V1 (quantity 4) carries 5 serials (`25DD8075L`, `25DD8086L`,
+  `25EA6354L`, `25EA6312L`, `25EA6346L`) and one isn't physically there — I have to
+  say which. The repair sets Status to Scrapped and ItemVariantId to NULL on those
+  rows. Back up the host's database first and re-check the ids against it: it has
+  taken writes since 9/23.
 - **`SessionMiddleware[7]` in the Sourcing console on the host isn't explained
   yet.** Both apps use their own cookie names now and the Sourcing fix is in the
   10/02 release, so VIS can't be what's logging it there. I reproduced the error

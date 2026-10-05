@@ -11,6 +11,33 @@ landed, when."
 
 ## 2026-10-04
 
+### docs — log Pass D
+Docs only. The Pass D entry in `VIS_Debugging_Log.md`, VIS-9's status, and OPEN: every
+audit fix is committed and pushed but in no release, and the two stacks that already
+carry the drift still need a data repair by hand.
+*Files:* `docs/VIS_Debugging_Log.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `9cfea2a` — Fix: audit VIS-9 (Pass D), recorded units can't outnumber their stack
+No migration, no schema change. Scrap, a downward Adjustment and a short-pull
+correction lowered a stack's count and left its recorded On Hand units behind, so
+phantom serials were offered at pickup, shown on the Item Card and blocked Delete Stack
+for good; a "No serial" pickup on a shelf where every unit was recorded did the same
+by minting an unnamed Picked Up row. `InventoryService.RetireSurplusUnits` runs once the
+new count is set: taking the whole stack (or all its TC) scraps every recorded row, a
+count that still has room asks nothing, otherwise exactly the surplus has to be ticked
+or the action is refused with nothing changed. Retired units become Scrapped, named in
+the log; it only fires when the stack actually shrank. `AssignOneCompressorUnit` now
+knows how many units are left on the shelf: a "No serial" chosen on purpose is refused
+when every remaining unit is recorded, and slots with no per-unit choice (a short-pull
+correction's own re-pickup) take the oldest recorded unit. Modify Stock's Scrap and
+Adjustment panes and the short-pull form ask "which recorded units are leaving?",
+sharing one checklist renderer with the Location Transfer picker; Execute and Correct &
+Pick Up wait for the right number of ticks, and a refused correction puts its form back
+(`GetShortPullLine`) instead of stranding the order. 106 checks against copies of the
+dev db, live runs through the real pages, and a smoke test of a published Production
+build (15 pages, 12 flow checks across Passes A to D).
+*Files:* `Services/InventoryService.cs`, `Services/OrderService.cs`, `Controllers/HomeController.cs`, `Views/Home/PickupQueue.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`
+
 ### docs — log Passes A to C
 Docs only. The 2026-10-04 entry in `VIS_Debugging_Log.md` (what changed, the checks and
 live runs, the `SessionMiddleware[7]` findings, what's left), the register's statuses,
