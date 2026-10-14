@@ -251,11 +251,19 @@ namespace Visual_Inventory_System.Services
         // ----------------------------------------------------------------------
         // ITEM ID GENERATOR  (format: <GroupInitial><Type first+last>-NNNN)
         //   e.g. Commercial + Valve -> "CVE-0001", Residential + Coil -> "RCL-0001"
-        // The 4-digit number is sequenced PER PREFIX: the highest existing number
-        // for that exact prefix + 1, zero-padded to 4 (spills to 5+ past 9999).
-        // Legacy IDs that don't match the "<PREFIX>-<digits>" shape are ignored,
-        // so old-style codes (e.g. CNEA) can't poison the count. The result is
-        // re-checked for collisions before returning.
+        // The 4-digit number is sequenced PER PREFIX: the highest number ever
+        // used for that exact prefix + 1, zero-padded to 4 (spills to 5+ past
+        // 9999). Legacy IDs that don't match the "<PREFIX>-<digits>" shape are
+        // ignored, so old-style codes (e.g. CNEA) can't poison the count. The
+        // result is re-checked for collisions before returning.
+        //
+        // "Ever used", not "on a live item": Delete Item removes the item row but
+        // leaves its TransactionLogs, Returned/Scrapped unit rows, completed order
+        // lines and decided transfers under the old ItemId, and the Item Card,
+        // View Logs, My Activity and the rosters all read those back by that
+        // string. Counting live items only handed a deleted top-numbered ID --
+        // and its whole history -- to the next registration with that prefix
+        // (CCO-0001, deleted 2026-09-10, was next in line).
         // ----------------------------------------------------------------------
         public string GenerateItemId(string? group, string? type)
         {
@@ -263,9 +271,17 @@ namespace Visual_Inventory_System.Services
 
             int max = 0;
             var matches = _db.InventoryItems.AsNoTracking()
-                .Where(i => i.ItemId.StartsWith(prefix))
-                .Select(i => i.ItemId)
-                .ToList();
+                .Where(i => i.ItemId.StartsWith(prefix)).Select(i => i.ItemId).ToList();
+            matches.AddRange(_db.TransactionLogs.AsNoTracking()
+                .Where(t => t.ItemId.StartsWith(prefix)).Select(t => t.ItemId).Distinct().ToList());
+            matches.AddRange(_db.OrderItems.AsNoTracking()
+                .Where(o => o.ItemId.StartsWith(prefix)).Select(o => o.ItemId).Distinct().ToList());
+            matches.AddRange(_db.CompressorUnits.AsNoTracking()
+                .Where(c => c.ItemId.StartsWith(prefix)).Select(c => c.ItemId).Distinct().ToList());
+            matches.AddRange(_db.MotorUnits.AsNoTracking()
+                .Where(m => m.ItemId.StartsWith(prefix)).Select(m => m.ItemId).Distinct().ToList());
+            matches.AddRange(_db.TransferRequests.AsNoTracking()
+                .Where(t => t.ItemId.StartsWith(prefix)).Select(t => t.ItemId).Distinct().ToList());
             foreach (var id in matches)
             {
                 var numPart = id.Substring(prefix.Length);
