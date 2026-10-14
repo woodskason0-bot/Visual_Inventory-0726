@@ -85,10 +85,12 @@ rather than assuming one exists.
   cookie name). I planned the prod install for 2026-10-05. A published Production
   build of this code passed a smoke test (15 pages, 12 flow checks, no
   migrations, no errors in the console). The superseded `VIS_Release_20260902\`
-  is still on that drive at the root: Claude Code can't delete on a removable
-  drive, so removing it is mine — its full copy, SHA-256-verified, is in OneDrive
-  `03_Rheem_Projects\Superseded Releases\VIS_Release_20260902` in the master.
-  Behavior changes to know about: a hidden user's open session
+  has been removed from that drive (by hand: Claude Code can't delete on a removable
+  drive); its full copy, SHA-256-verified, is in OneDrive
+  `03_Rheem_Projects\Superseded Releases\VIS_Release_20260902` in the master. On
+  `LESLISGIFT` the release folders are now exactly `VIS_Release_20261004\` and
+  `Sourcing Bus\Sourcing_Release_20261002\`; `Releases\VIS_Inventory\` is my raw host
+  pull, not a release, and stays. Behavior changes to know about: a hidden user's open session
   becomes a Viewer with a blank Line on its next click, which reads the whole org
   (what signing in as an unknown name already did); Intake's ItemId prefix now
   follows the item's Line, as Registry's does; Scrap, a downward Adjustment and a
@@ -97,6 +99,19 @@ rather than assuming one exists.
   picked on purpose is refused when every unit left on the shelf is recorded with a
   serial. The record (what changed, the checks, the live runs) is the 2026-10-04
   entries in `docs/VIS_Debugging_Log.md`.
+- **VIS-15 (2026-10-14): deleted item IDs were being reissued — fixed in `1ca6651`
+  (committed, not pushed), in no release.** `GenerateItemId` now counts every number ever used for a prefix
+  (live items plus the logs, unit rows, order lines and transfers a delete leaves
+  behind), so a deleted item's ID and its history can't land on a new item. No
+  migration. Verified live on copies of the dev db: before the fix a "Contro"
+  registration minted the deleted `CCO-0001` and showed its Scrap of 10; after, it
+  minted `CCO-0002`, and a delete-then-register minted `CCO-0003`. Record:
+  `docs/VIS_Debugging_Log.md`, 2026-10-14. **Already in the data, and mine to decide:**
+  CCR-0255 (YRH083WAA, Samurai, 8/27) reuses the ID of the "just a test model" item
+  deleted by hand on 8/19, and its Item Card shows that item's New Registry and Item
+  Deleted rows (TransactionLogs Ids 684, 690) as its own. Same in dev and local
+  production; check the host. Leaving them is harmless (their ItemName snapshot reads
+  "just a test model"); re-keying them is a hand SQL edit on the host after a backup.
 - **Repair the drift already in the data by hand — the code only stops new drift.**
   In the 9/24 dev copy: CCR-0213 V2 (quantity 0) carries 9 unnamed On Hand rows,
   ids 196 to 204, left from the 8/25 Add of 9 whose pickup (Order #8) was
@@ -464,8 +479,13 @@ on a `CompressorUnit`/`MotorUnit`, no line on a `Pending` order. Removes the
 `InventoryItem` and its `ItemVariants`. Deliberately does **not** touch `TransactionLogs`
 or already-`Returned`/`Scrapped` unit history rows — those keep reading under the
 now-defunct `ItemId`, same soft-hide philosophy as Team/User, just applied to a real
-delete for the first time. Re-registering the same model later mints a fresh `ItemId`;
-numbers are never reused. Gated Admin (5). Pass 23 added a second, narrower hard-delete
+delete for the first time. Re-registering the same model later mints a fresh `ItemId`,
+and numbers are never reused — **but only since VIS-15 (2026-10-14).** Until then
+`GenerateItemId` counted live items only, so deleting the top-numbered item of a prefix
+freed its number and the next registration inherited the dead item's logs, unit rows and
+order lines (CCR-0255 already did, see OPEN). It now takes the highest number ever used
+across `InventoryItems`, `TransactionLogs`, `OrderItems`, `CompressorUnits`, `MotorUnits`
+and `TransferRequests`. Gated Admin (5). Pass 23 added a second, narrower hard-delete
 alongside this one — see `DeleteVariant` below — for the case Delete Item doesn't cover:
 one empty stack on an item that still carries stock elsewhere.
 

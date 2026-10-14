@@ -6,6 +6,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-10-04:** VIS-7, VIS-8 and VIS-10 through VIS-14 are fixed in `0b03c94` (Pass A), `a077663` (Pass B) and `d39553d` (Pass C), committed and pushed; none of it is in a release yet. VIS-9 was held back as a new mechanic, scoped on 2026-10-04 and built the same night as Pass D (`9cfea2a`), also committed, pushed and in no release. That leaves no audit item open in code; the two stacks that already carry the drift still need a data repair by hand. See the 2026-10-04 entries below.
 
+**Update 2026-10-14:** VIS-15 is new, found while checking the Unit Tracker spec: a deleted item's ItemId was handed to the next registration with the same prefix, history and all. Fixed and verified the same day in `1ca6651` (committed, not pushed, in no release); see the 2026-10-14 entry below. CCR-0255 already carries one reissue in the data.
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
@@ -28,6 +30,7 @@ The rows below preserve the latest recorded per-issue status. Historical finding
 | VIS-12 | P2 | New Item Registry accepts a negative quantity (form.submit() skips min; no server bound) | Fixed in 0b03c94 (Pass A); not in a release |
 | VIS-13 | P2 | AccessLevel/Line/Branch cached in the session: demoting or hiding a user doesn't reach an open session | Fixed in d39553d (Pass C); not in a release |
 | VIS-14 | P2 | Intake mints the ItemId prefix from the submitter's Line, Registry from the item's; whole-Branch users always get C | Fixed in a077663 (Pass B): the item's Line decides, as Registry does; not in a release |
+| VIS-15 | P2 | GenerateItemId counts live items only: deleting the top-numbered item of a prefix reissues its ItemId, and the new item inherits the old one's logs, unit rows and order lines | Fixed in 1ca6651; not in a release. CCR-0255 was already reissued (8/27) and still shows the deleted test item's two log rows: a data decision |
 
 ## 2026-09-24 — Initial VIS business logic audit
 
@@ -333,6 +336,27 @@ Remaining issues:
 - The minor audit items not done are unchanged from the entry above: short-pull corrections aren't team-scoped, no concurrency tokens, CSV export escaping, unencoded HTML in emails, deliveries addressed to someone who leaves, Intake's silent quantity coercion. Also unchanged: `BuildRackRowMap` and the host's `SessionMiddleware[7]` report.
 Deployment status: committed and pushed (`9cfea2a`). No release has been built or staged from it. `VIS_Release_20260925` (built from `1df2e45`) is still the staged one and still recorded as not installed on the host. A build from `9cfea2a` carries every audit fix, VIS-1 to VIS-14, plus Passes 39 and 40 and the cookie fix. No migration, so it runs on the host's current database as-is. A build was planned for prod on 2026-10-05. Later the same night it was built from master @ `3e7f201` (the code of `9cfea2a` with docs on top) and staged as `VIS_Release_20261004\` on USB `LESLISGIFT`: `VIS_application_10.4.26\` (544 files, all matched the build by SHA-256 after the copy) with a README and a read-only host check script; no database. Not installed on the host as of this entry.
 Links to saved artifacts: [Pass D](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-04_VIS_PassD>): the extended harness (`Reproduction`), `results_pre-PassD_ffac7b4.json` and `results_fixed_tree.json`, and the two smoke scripts (`smoke_pages.py`, `release_smoke.py`).
+
+
+## 2026-10-14 — VIS-15, deleted item IDs reissued
+
+Date: 2026-10-14
+Purpose: Stop `GenerateItemId` handing a deleted item's ItemId to a new item. Found on 2026-10-13 while checking the Unit Tracker spec (`docs/Unit_Tracker_Spec.md`), whose unit tags need the same never-reissued rule.
+Source revision: VIS `7b7ae7e` (docs only on top of `7a57d74`). No schema change, no migration.
+Issues investigated: VIS-15 (new).
+The defect: `GenerateItemId` took the highest number among **live** `InventoryItems` with the prefix. Delete Item, and the hand-SQL deletions done as data cleanup, remove the item row but keep everything else under the old ItemId: its `TransactionLogs`, Returned/Scrapped `CompressorUnits`/`MotorUnits`, completed `OrderItems` and decided `TransferRequests`. The Item Card, View Logs, My Activity and the compressor/motor rosters all read those back by that string. Deleting the top-numbered item of a prefix freed its number, and the next registration with that prefix took it, along with the dead item's history. `DeleteItem`'s own comment said "numbers are never reused", which held only for an item that wasn't the highest of its prefix.
+Live data:
+- **CCR-0255 was already reissued.** The "just a test model" Intake item (2026-08-13) was deleted by hand on 2026-08-19, leaving its New Registry and Item Deleted log rows (Ids 684 and 690). YRH083WAA (Samurai, Intake 2026-08-27) then minted CCR-0255 again, and its Item Card lists those two rows as its own history. The same rows are in `inventory.dev.db` and `inventory.db` (local production); the host most likely has them too, since dev is its 9/23 copy.
+- Next in line under the old code: `CCO-0001` (deleted on the host 2026-09-10, the "Contro" typo). No live `CCO-` item exists, so the next Commercial item with a type starting C and ending O would have become CCO-0001 and shown its Scrap of 10. The other orphaned log IDs (`CCL-0001`, `CCL-0034`, `CMR-0028`, `CMR-0040`) sit below their prefix's live maximum and were safe.
+Changes made: `GenerateItemId` takes the highest number ever used for the prefix across `InventoryItems`, `TransactionLogs`, `OrderItems`, `CompressorUnits`, `MotorUnits` and `TransferRequests` (each a `StartsWith(prefix)` query; the same `<PREFIX>-<digits>` parse, non-matching shapes ignored). The live-item collision guard is unchanged. Both callers (`HomeController.CreateItem` and `InventoryService.CommitIntake`) get it. Registry's client-side ID box is still a preview counted from the items on the page, and the success toast shows the real ID; it is unchanged.
+Verification and observed results:
+- The real app (`dotnet run --no-build`, Development profile) on localhost against two copies of `inventory.dev.db` (md5 `e05cfdd4…`), the connection string overridden on the command line. Signed in as Kason.Woods; the Registry form's own FormData posted with its antiforgery token.
+- Before the fix (old build): registering Type "Contro" on Commercial Packaged/Splits minted **CCO-0001**, and its Item Card listed the old item's New Registry +10, Scrap -10 and Item Deleted.
+- After the fix: the same registration minted **CCO-0002**, whose card shows only its own registration; CCO-0001 still 404s. Deleting CCO-0002 through Delete Item and registering again minted **CCO-0003**. Intake (the other caller) minted **CCO-0004**. A normal prefix is unchanged (`CCL-0046`, live max 0045), and a never-used one starts at 1 (`CGO-0001`).
+- Both copies `integrity_check ok` afterward; `inventory.dev.db` md5 unchanged. Build: 0 errors, 14 warnings.
+Remaining issues: the two CCR-0255 log rows from the deleted test item (684, 690) still sit under the real item's ID. The code no longer creates new cases; whether to re-key or annotate those two rows on the host is a data decision.
+Deployment status: committed as `1ca6651` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
+Links to saved artifacts: [2026-10-14_VIS-15_ItemIdReuse](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-14_VIS-15_ItemIdReuse>): `results.md`, `verify_in_page.js` (what was run in the browser console), and the two copies after the runs (`before.db`, `after.db`).
 
 
 ## Continuing a debugging session

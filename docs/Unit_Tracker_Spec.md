@@ -759,14 +759,21 @@ fixes are already folded into the sections above.
     deleted unit's number, and its log history, to a new unit. Minting now
     reads `TransactionLogs` too (§4.2).
 
-**Found in existing code, outside this spec's scope (not fixed here):**
-- **Item IDs can be reissued.** `InventoryService.GenerateItemId` takes the
+**Found in existing code, outside this spec's scope:**
+- **Item IDs can be reissued.** `InventoryService.GenerateItemId` took the
   highest *existing* `ItemId` for a prefix, so deleting the top-numbered item
-  frees its number. The handoff says "numbers are never reused", which is true
+  freed its number. The handoff said "numbers are never reused", which was true
   only when the deleted item wasn't the highest.
-  - Live case in the dev db (and on the host per the handoff): `CCO-0001` was
-    deleted 9/10 and still has log rows; no `CCO-` item exists.
-  - The next item minted with a `CCO-` prefix would be `CCO-0001` again, and its
-    Item Card would show the deleted item's Scrap of 10.
+  - At risk in the dev db (and on the host per the handoff): `CCO-0001` was
+    deleted 9/10 and still has log rows; no `CCO-` item exists. The next item
+    minted with a `CCO-` prefix would have been `CCO-0001` again, showing the
+    deleted item's Scrap of 10.
   - The other orphaned log IDs (`CCL-0001`, `CCL-0034`, `CMR-0028`, `CMR-0040`)
     sit below their prefix's current maximum and are safe.
+  - **Correction (2026-10-14): the orphan scan above missed a reissue that had
+    already happened.** A reused ID isn't an orphan, because it's live again.
+    CCR-0255 (YRH083WAA, 8/27) took the ID of a test item deleted 8/19 and
+    shows that item's two log rows as its own.
+  - **Fixed separately as VIS-15 (2026-10-14).** `GenerateItemId` now counts
+    every number ever used, across the tables a delete leaves behind. See
+    `VIS_Debugging_Log.md`. §4.2's rule for unit tags is the same one.

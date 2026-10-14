@@ -9,7 +9,52 @@ landed, when."
 
 ---
 
+## 2026-10-14
+
+### docs — log VIS-15; the 10/04 LESLISGIFT notes committed with it
+Docs only. `VIS_Debugging_Log.md`: the VIS-15 register row, the 10-14 update line and
+the dated entry. Handoff: the Delete Item "numbers are never reused" sentence corrected,
+and an OPEN entry for VIS-15 and the CCR-0255 reissue already in the data. The Unit
+Tracker spec's debug-log note corrected (its orphan scan missed CCR-0255; VIS-15 fixed
+it). Also commits the 2026-10-04 notes that had sat uncommitted: the 9/2 release
+removed from LESLISGIFT by hand.
+*Files:* `docs/VIS_Debugging_Log.md`, `docs/VIS_Handoff_State.md`,
+`docs/Unit_Tracker_Spec.md`, `docs/Commit_History.md`
+
+### `1ca6651` — Fix: VIS-15, deleted item IDs are never reissued
+No migration, no schema change. `GenerateItemId` took the highest number among live
+items with the prefix, so deleting the top-numbered item freed its ID, and the next
+registration with that prefix inherited the dead item's logs, unit rows and order lines
+(all keyed by the ItemId string). It now takes the highest number ever used across
+`InventoryItems`, `TransactionLogs`, `OrderItems`, `CompressorUnits`, `MotorUnits` and
+`TransferRequests`; both callers (Registry, Intake) get it. Reproduced on a copy of the
+dev db with the old build (a "Contro" registration minted the deleted `CCO-0001` and
+showed its Scrap of 10). Verified with the fixed build: `CCO-0002`, then `CCO-0003`
+after a delete, `CCO-0004` through Intake; `CCL-0046` and `CGO-0001` unchanged in
+behavior. Already in the data, not changed: CCR-0255 was reissued on 8/27 and carries
+two log rows from the test item deleted 8/19.
+*Files:* `Services/InventoryService.cs`
+
+## 2026-10-13
+
+### `7b7ae7e` — docs: Unit Tracker build spec (scoped and debugged, tag rule pending)
+Docs only. `docs/Unit_Tracker_Spec.md`: tracking whole AC units (Conner's G-cab count)
+as their own table, page and card, findable from Search Center, information only. Data
+model, the model / tonnage / Sample # rules, Line visibility, Search Center wiring,
+logging, access levels, edge cases, passes, definition of done. Pass 1 waits on §4 (the
+unit tag) until Kason's code list arrives. Its debug log records 11 fixes found by
+checking the spec against the code and the dev db.
+*Files:* `docs/Unit_Tracker_Spec.md`
+
 ## 2026-10-04
+
+### docs — superseded `VIS_Release_20260902` removed from LESLISGIFT
+Docs only. OPEN: the 9/2 release folder was removed from USB `LESLISGIFT` by hand (its
+SHA-256-verified copy stays in OneDrive's Superseded Releases). Checked afterwards:
+the drive's release folders are `\VIS_Release_20261004\` (546 files, the dll and exe
+hashes unchanged) and `\Sourcing Bus\Sourcing_Release_20261002\`; `\Releases\VIS_Inventory\`,
+the rest of `Sourcing Bus` and `Software` are untouched.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
 
 ### docs — release `VIS_Release_20261004` staged on LESLISGIFT
 Docs only. OPEN: the build from master @ `3e7f201` (544 files, dll stamped
