@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-10-14
 
+### docs — Unit List holdover build spec
+Docs only. `docs/Unit_List_Holdover_Spec.md`: the interim whole-unit list to build
+before the full Unit Tracker. No tag. Free-text model number, Package/Split, free-text
+serial and Sample #, Branch/Line/Team autofilled the way Bulk Intake does it, and notes
+editable by everyone. Delete is Engineer and up. It uses the `TrackedUnit` table the
+full tracker will extend later. One pass, with a 13-step definition of done; written
+for a Sonnet build.
+*Files:* `docs/Unit_List_Holdover_Spec.md`, `docs/Commit_History.md`
+
 ### docs — log VIS-15; the 10/04 LESLISGIFT notes committed with it
 Docs only. `VIS_Debugging_Log.md`: the VIS-15 register row, the 10-14 update line and
 the dated entry. Handoff: the Delete Item "numbers are never reused" sentence corrected,
