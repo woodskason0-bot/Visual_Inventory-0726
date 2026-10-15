@@ -1,0 +1,607 @@
+@using Visual_Inventory_System.Models
+@using Visual_Inventory_System.Services
+@inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
+@functions {
+    // First ~80 characters with line breaks folded to spaces. Cutting between the
+    // halves of a surrogate pair would leave a broken character, so back up one.
+    static string NotesPreview(string notes)
+    {
+        var flat = System.Text.RegularExpressions.Regex.Replace(notes ?? "", @"\s+", " ").Trim();
+        if (flat.Length <= 80) return flat;
+        int cut = 80;
+        if (char.IsHighSurrogate(flat[cut - 1])) cut--;
+        return flat.Substring(0, cut).TrimEnd() + "…";
+    }
+}
+@{
+    ViewData["Title"] = "Unit Tracker";
+    var units = (List<TrackedUnit>)(ViewBag.Units ?? new List<TrackedUnit>());
+    var teams = (List<Team>)(ViewBag.ActiveTeams ?? new List<Team>());
+    var teamOptions = (List<string>)(ViewBag.TeamOptions ?? new List<string>());
+    var lineOptions = (List<string>)(ViewBag.LineOptions ?? new List<string>());
+    string fQ = (string)(ViewBag.FilterQ ?? "");
+    string fPkg = (string)(ViewBag.FilterPkg ?? "");
+    string fTeam = (string)(ViewBag.FilterTeam ?? "");
+    string fLine = (string)(ViewBag.FilterLine ?? "");
+    bool filtered = fQ != "" || fPkg != "" || fTeam != "" || fLine != "";
+
+    // Cosmetic only: every rule below is enforced again on the server.
+    int level = CurrentUser.Level;
+    bool canAdd = level >= AccessLevels.Standard;
+    bool canEditCore = level >= AccessLevels.Standard;
+    bool canMove = level >= AccessLevels.Engineer;
+    bool canDelete = level >= AccessLevels.Engineer;
+
+    int pkgCount = units.Count(u => u.PackageType == TrackedUnitPackage.Package);
+    int splitCount = units.Count(u => u.PackageType == TrackedUnitPackage.Split);
+
+    // A filtered link can name a Team/Line no row carries; keep it selectable so
+    // the controls tell the truth about what the list is filtered by.
+    if (fTeam != "" && !teamOptions.Contains(fTeam)) { teamOptions = new List<string>(teamOptions) { fTeam }; }
+    if (fLine != "" && !lineOptions.Contains(fLine)) { lineOptions = new List<string>(lineOptions) { fLine }; }
+}
+
+<style>
+    .ut-page { padding: 28px 32px 48px; max-width: 1440px; margin: 0 auto; }
+    @@media (max-width: 575.98px) { .ut-page { padding: 16px 0 32px; } }
+
+    .ut-title { font-size: 26px; font-weight: 800; color: var(--vis-text); margin: 0; }
+    .ut-sub { color: var(--vis-text-muted); font-size: 13px; margin: 2px 0 0; }
+    .ut-count { color: var(--vis-text-muted); font-size: 13px; font-weight: 600; }
+    .ut-count strong { color: var(--vis-text); font-weight: 800; }
+    .ut-label { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--vis-text-muted); }
+
+    .ut-filter { padding: 14px 16px; margin-bottom: 16px; }
+    .ut-tablecard { padding: 0; overflow: hidden; }
+
+    .ut-table { margin-bottom: 0; }
+    .ut-table thead th {
+        background: var(--vis-bg);
+        color: var(--vis-text-muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        white-space: nowrap;
+        border-bottom: 1px solid var(--vis-card-border);
+    }
+    .ut-table td { font-size: 13px; vertical-align: middle; border-color: var(--vis-card-border); }
+    .ut-id { font-weight: 800; white-space: nowrap; }
+    .ut-model { font-weight: 700; overflow-wrap: anywhere; }
+    .ut-dim { color: var(--vis-text-muted); }
+    .ut-by { display: block; font-size: 11px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
+    .ut-notes { max-width: 260px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
+    .ut-actions { white-space: nowrap; }
+
+    /* Fixed-colour surface: white on these fills is 6.4:1 / 6.5:1 in both themes. */
+    .ut-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: #FFFFFF; }
+    .ut-pill-package { background: #0A58CA; }
+    .ut-pill-split { background: #146C43; }
+
+    /* Bootstrap's outline-danger red is ~3.7:1 on the dark card. */
+    .ut-btn-del { color: #FF8A90; border-color: #FF8A90; background: transparent; }
+    .ut-btn-del:hover, .ut-btn-del:focus { background: #A61E2B; border-color: #A61E2B; color: #FFFFFF; }
+    :root[data-theme="light"] .ut-btn-del { color: #A61E2B; border-color: #A61E2B; }
+    :root[data-theme="light"] .ut-btn-del:hover, :root[data-theme="light"] .ut-btn-del:focus { background: #A61E2B; border-color: #A61E2B; color: #FFFFFF; }
+
+    /* Bootstrap's text-danger red is 3.7:1 on the dark card. */
+    .ut-req { color: #FF8A90; }
+    :root[data-theme="light"] .ut-req { color: #A61E2B; }
+
+    /* The page-wide placeholder grey is 3:1 on the dark input and 3.1:1 on the light one. */
+    .ut-form .form-control::placeholder, .ut-filter .form-control::placeholder { color: #94A3B8 !important; }
+    :root[data-theme="light"] .ut-form .form-control::placeholder,
+    :root[data-theme="light"] .ut-filter .form-control::placeholder { color: #6B7480 !important; }
+
+    /* Modals above the sidebar/holo layers (z-index registry: backdrop 2150, modal 2200). */
+    .modal { z-index: 2200 !important; }
+    .modal-backdrop { z-index: 2150 !important; }
+</style>
+
+<div class="ut-page">
+    <div class="mb-3">
+        <h2 class="ut-title">Unit Tracker</h2>
+        <p class="ut-sub">Holdover list &mdash; model numbers, serials and samples while the full tracker is built.</p>
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <span class="ut-count" id="ut-count">
+            <strong>@units.Count</strong> unit@(units.Count == 1 ? "" : "s") &middot;
+            <strong>@pkgCount</strong> Package &middot;
+            <strong>@splitCount</strong> Split
+        </span>
+        @if (canAdd)
+        {
+            <button type="button" class="btn btn-primary" id="addUnitBtn"><i class="bi bi-plus-lg me-1"></i>Add Unit</button>
+        }
+    </div>
+
+    <form asp-controller="UnitTracker" asp-action="Index" method="get" class="cc-card ut-filter ut-form" id="filterForm">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-3">
+                <label class="ut-label" for="f-q">Search</label>
+                <input type="text" name="q" id="f-q" class="form-control" value="@fQ" placeholder="Model, serial, sample, notes, line, team" autocomplete="off" />
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="ut-label" for="f-pkg">Package / Split</label>
+                <select name="pkg" id="f-pkg" class="form-select">
+                    <option value="">Any</option>
+                    @foreach (var p in TrackedUnitPackage.All)
+                    {
+                        <option value="@p" selected="@(fPkg == p)">@p</option>
+                    }
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="ut-label" for="f-team">Team</label>
+                <select name="team" id="f-team" class="form-select">
+                    <option value="">Any</option>
+                    @foreach (var t in teamOptions)
+                    {
+                        <option value="@t" selected="@(fTeam == t)">@t</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="ut-label" for="f-line">Line</label>
+                <select name="line" id="f-line" class="form-select">
+                    <option value="">Any</option>
+                    @foreach (var l in lineOptions)
+                    {
+                        <option value="@l" selected="@(fLine == l)">@l</option>
+                    }
+                </select>
+            </div>
+            <div class="col-12 col-md-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
+                <a href="/UnitTracker" class="btn btn-outline-secondary flex-grow-1">Clear</a>
+            </div>
+        </div>
+    </form>
+
+    @if (units.Count == 0)
+    {
+        <div class="cc-card p-4 text-center" id="ut-empty">
+            @if (filtered)
+            {
+                <div class="fw-bold">No units match these filters.</div>
+                <div class="ut-dim small mt-1"><a href="/UnitTracker">Clear the filters</a> to see every unit.</div>
+            }
+            else
+            {
+                <div class="fw-bold">No units yet.</div>
+                @if (!canAdd)
+                {
+                    <div class="ut-dim small mt-1">Ask someone at Standard or above to add one.</div>
+                }
+            }
+        </div>
+    }
+    else
+    {
+        <div class="cc-card ut-tablecard">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle ut-table" style="min-width: 1100px;" id="ut-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Model</th>
+                            <th>Pkg/Split</th>
+                            <th>Serial</th>
+                            <th>Sample</th>
+                            <th>Branch &rsaquo; Line</th>
+                            <th>Team</th>
+                            <th>Notes</th>
+                            <th>Added</th>
+                            <th>Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var u in units)
+                        {
+                            var branch = OrgStructure.BranchFor(u.Line);
+                            <tr data-unit-id="@u.Id">
+                                <td class="ut-id">#@u.Id</td>
+                                <td class="ut-model">@u.ModelNumber</td>
+                                <td><span class="ut-pill ut-pill-@u.PackageType.ToLower()">@u.PackageType</span></td>
+                                <td>@(u.SerialNumber == "" ? "—" : u.SerialNumber)</td>
+                                <td>@(u.SampleNumber == "" ? "—" : u.SampleNumber)</td>
+                                <td>@(branch == null ? u.Line : branch + " › " + u.Line)</td>
+                                <td>@(u.Team == "" ? "—" : u.Team)</td>
+                                <td class="ut-notes" title="@(u.Notes == "" ? null : u.Notes)">@(u.Notes == "" ? "—" : NotesPreview(u.Notes))</td>
+                                <td>
+                                    <span title="@u.RecordedAt.ToLocalTime().ToString("g")">@u.RecordedAt.ToLocalTime().ToString("MMM d, yyyy")</span>
+                                    <span class="ut-by">by @u.RecordedBy</span>
+                                </td>
+                                <td>
+                                    @if (u.UpdatedAt == null)
+                                    {
+                                        <span>&mdash;</span>
+                                    }
+                                    else
+                                    {
+                                        <span title="@u.UpdatedAt.Value.ToLocalTime().ToString("g")">@u.UpdatedAt.Value.ToLocalTime().ToString("MMM d, yyyy")</span>
+                                        <span class="ut-by">by @u.UpdatedBy</span>
+                                    }
+                                </td>
+                                <td class="ut-actions">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary ut-edit" data-id="@u.Id">Edit</button>
+                                    @if (canDelete)
+                                    {
+                                        <button type="button" class="btn btn-sm ut-btn-del ut-del" data-id="@u.Id" data-label="#@u.Id (@u.ModelNumber, @u.PackageType)">Delete</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@if (canAdd)
+{
+    <div class="modal fade" id="addUnitModal" tabindex="-1" aria-labelledby="addUnitTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+            <div class="modal-content ut-form">
+                <form asp-controller="UnitTracker" asp-action="Add" method="post" id="addUnitForm" class="d-flex flex-column" style="min-height: 0;">
+                    @Html.AntiForgeryToken()
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="addUnitTitle">Add Unit</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row g-3">
+                            <div class="col-12 col-md-7">
+                                <label class="form-label small" for="ua-model">Model number <span class="ut-req">*</span></label>
+                                <input type="text" name="modelNumber" id="ua-model" class="form-control" maxlength="60" required placeholder="e.g. RACG180D" autocomplete="off" />
+                            </div>
+                            <div class="col-12 col-md-5">
+                                <label class="form-label small d-block">Package / Split <span class="ut-req">*</span></label>
+                                <div class="btn-group" role="group" aria-label="Package or Split">
+                                    @foreach (var p in TrackedUnitPackage.All)
+                                    {
+                                        <input type="radio" class="btn-check" name="packageType" id="ua-pkg-@p" value="@p" required autocomplete="off" />
+                                        <label class="btn btn-outline-light" for="ua-pkg-@p">@p</label>
+                                    }
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label small" for="ua-serial">Serial #</label>
+                                <input type="text" name="serialNumber" id="ua-serial" class="form-control" maxlength="60" autocomplete="off" />
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label class="form-label small" for="ua-sample">Sample #</label>
+                                <input type="text" name="sampleNumber" id="ua-sample" class="form-control" maxlength="30" placeholder="e.g. Sample 1a" autocomplete="off" />
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label small" for="ua-branch">Branch</label>
+                                <select id="ua-branch" class="form-select"><option value="">-- Branch --</option></select>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label small" for="ua-line">Line <span class="ut-req">*</span></label>
+                                <select name="line" id="ua-line" class="form-select" required><option value="">-- Select a Line --</option></select>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <label class="form-label small" for="ua-team">Team / Project</label>
+                                <select name="team" id="ua-team" class="form-select">
+                                    <option value="">N/A &mdash; no team</option>
+                                    @foreach (var t in teams) { <option value="@t.Name">@t.Name</option> }
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small" for="ua-notes">Notes</label>
+                                <textarea name="notes" id="ua-notes" class="form-control" rows="3" maxlength="2000"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" name="addAnother" value="1" class="btn btn-outline-success">Save &amp; add another</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="modal fade" id="editUnitModal" tabindex="-1" aria-labelledby="editUnitTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+        <div class="modal-content ut-form">
+            <form asp-controller="UnitTracker" asp-action="@(canEditCore ? "Update" : "UpdateNotes")" method="post" id="editUnitForm" class="d-flex flex-column" style="min-height: 0;">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="id" id="ue-id" value="" />
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editUnitTitle">Edit Unit</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!canEditCore)
+                    {
+                        <p class="text-light-gray small mb-3">At Viewer access you can edit a unit&rsquo;s Notes only.</p>
+                    }
+                    <div class="row g-3">
+                        <div class="col-12 col-md-7">
+                            <label class="form-label small" for="ue-model">Model number</label>
+                            <input type="text" name="modelNumber" id="ue-model" class="form-control" maxlength="60" required="@canEditCore" readonly="@(!canEditCore)" autocomplete="off" />
+                        </div>
+                        <div class="col-12 col-md-5">
+                            <label class="form-label small d-block">Package / Split</label>
+                            <div class="btn-group" role="group" aria-label="Package or Split">
+                                @foreach (var p in TrackedUnitPackage.All)
+                                {
+                                    <input type="radio" class="btn-check" name="packageType" id="ue-pkg-@p" value="@p" required="@canEditCore" disabled="@(!canEditCore)" autocomplete="off" />
+                                    <label class="btn btn-outline-light" for="ue-pkg-@p">@p</label>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small" for="ue-serial">Serial #</label>
+                            <input type="text" name="serialNumber" id="ue-serial" class="form-control" maxlength="60" readonly="@(!canEditCore)" autocomplete="off" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small" for="ue-sample">Sample #</label>
+                            <input type="text" name="sampleNumber" id="ue-sample" class="form-control" maxlength="30" readonly="@(!canEditCore)" autocomplete="off" />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small" for="ue-branch">Branch</label>
+                            <select id="ue-branch" class="form-select" disabled="@(!canMove)"><option value="">-- Branch --</option></select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small" for="ue-line">Line</label>
+                            <select name="line" id="ue-line" class="form-select" required="@canMove" disabled="@(!canMove)"><option value="">-- Select a Line --</option></select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small" for="ue-team">Team / Project</label>
+                            <select name="team" id="ue-team" class="form-select" disabled="@(!canMove)">
+                                <option value="">N/A &mdash; no team</option>
+                                @foreach (var t in teams) { <option value="@t.Name">@t.Name</option> }
+                            </select>
+                        </div>
+                        @if (canEditCore && !canMove)
+                        {
+                            <div class="col-12 text-light-gray small">Moving a unit to another Line or Team needs Engineer access.</div>
+                        }
+                        <div class="col-12">
+                            <label class="form-label small" for="ue-notes">Notes</label>
+                            <textarea name="notes" id="ue-notes" class="form-control" rows="3" maxlength="2000"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">@(canEditCore ? "Save" : "Save Notes")</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@if (canDelete)
+{
+    <div class="modal fade" id="deleteUnitModal" tabindex="-1" aria-labelledby="deleteUnitTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content ut-form">
+                <form asp-controller="UnitTracker" asp-action="Delete" method="post" id="deleteUnitForm">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="id" id="ud-id" value="" />
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="deleteUnitTitle">Delete Unit</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="mb-0" id="ud-text"></p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Delete</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+}
+
+<script>
+    // Branch -> Line -> Team data, declared before anything below uses it. site.js
+    // loads first and its cascade helpers read orgStructure as a global at call time.
+    const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
+    // Team -> home Line (metadata, suggestion only) and the signed-in user's own
+    // assignment, for autofilling Branch/Line on open and on Team change.
+    const teamLines    = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
+    const myLine       = @Html.Raw(ViewBag.MyLineJson ?? "\"\"");
+    const myBranch     = @Html.Raw(ViewBag.MyBranchJson ?? "\"\"");
+    // Every listed row, keyed by id, for the Edit modal (no second request).
+    const unitRows     = @Html.Raw(ViewBag.UnitRowsJson ?? "{}");
+    // Set for exactly one load after "Save & add another".
+    let   unitAddCarry = @Html.Raw(ViewBag.UnitAddCarryJson ?? "null");
+
+    (function () {
+        function utBranchFor(line) {
+            for (const b in orgStructure) {
+                if ((orgStructure[b] || []).includes(line)) return b;
+            }
+            return '';
+        }
+        function mkOption(value, text) {
+            return Object.assign(document.createElement('option'), { value: value, textContent: text });
+        }
+        function setSelect(sel, value) {
+            // A value with no matching option would leave the select blank-but-selected.
+            sel.value = Array.prototype.some.call(sel.options, function (o) { return o.value === value; }) ? value : '';
+        }
+        function setPackage(prefix, pkg) {
+            document.querySelectorAll('input[name="packageType"][id^="' + prefix + '"]').forEach(function (r) {
+                r.checked = (r.value === pkg);
+            });
+        }
+
+        // Same Branch -> Line cascade as Bulk Intake (Views/Home/Intake.cshtml), used by
+        // both modals. keepCurrent: a Line hidden in Settings since the row was saved
+        // is not in orgStructure, so it is added back as "(current, hidden)" -- without
+        // it the select would silently blank and an untouched Save would fail.
+        function fillLines(lSel, branch, selected, keepCurrent) {
+            lSel.innerHTML = '';
+            lSel.appendChild(mkOption('', '-- Select a Line --'));
+            const lines = orgStructure[branch] || [];
+            lines.forEach(function (l) {
+                const opt = mkOption(l, l);
+                if (selected && l === selected) opt.selected = true;
+                lSel.appendChild(opt);
+            });
+            if (keepCurrent && selected && lines.indexOf(selected) === -1) {
+                const opt = mkOption(selected, selected + ' (current, hidden)');
+                opt.selected = true;
+                lSel.appendChild(opt);
+            }
+        }
+
+        // Branch drives Line; a Team with a recognized home Line overwrites both to
+        // match (a deliberate act, so it wins) and a Team without one, or going back
+        // to N/A, changes nothing. Both stay editable afterwards.
+        function wireCascade(bSel, lSel, tSel) {
+            Object.keys(orgStructure).forEach(function (b) { bSel.appendChild(mkOption(b, b)); });
+            bSel.addEventListener('change', function () { fillLines(lSel, bSel.value, null, false); });
+            tSel.addEventListener('change', function () {
+                const line = teamLines[tSel.value];
+                if (!line) return;
+                const branch = utBranchFor(line);
+                if (!branch) return;
+                bSel.value = branch;
+                fillLines(lSel, branch, line, false);
+            });
+        }
+
+        // Forms here post for real; a second tap while the first is in flight would
+        // add the unit twice. Disable the buttons only after the browser has built
+        // the entry list, or the clicked button's own name/value (addAnother) is lost.
+        const guarded = [];
+        function guardSubmit(form) {
+            guarded.push(form);
+            form.addEventListener('submit', function (e) {
+                if (form.dataset.busy === '1') { e.preventDefault(); return; }
+                form.dataset.busy = '1';
+                setTimeout(function () {
+                    form.querySelectorAll('button[type="submit"]').forEach(function (b) { b.disabled = true; });
+                }, 0);
+            });
+        }
+        function releaseForm(form) {
+            form.dataset.busy = '';
+            form.querySelectorAll('button[type="submit"]').forEach(function (b) { b.disabled = false; });
+        }
+        window.addEventListener('pageshow', function (e) {
+            if (e.persisted) guarded.forEach(releaseForm);
+        });
+
+        // ---- Add ---------------------------------------------------------
+        const addEl = document.getElementById('addUnitModal');
+        if (addEl) {
+            const form = document.getElementById('addUnitForm');
+            const bSel = document.getElementById('ua-branch'), lSel = document.getElementById('ua-line'), tSel = document.getElementById('ua-team');
+            wireCascade(bSel, lSel, tSel);
+            guardSubmit(form);
+
+            // Re-seeded on EVERY open, so a second Add after a partly-filled first
+            // one starts clean.
+            addEl.addEventListener('shown.bs.modal', function () {
+                form.reset();
+                releaseForm(form);
+                let branch = '', line = '', team = '', carried = false;
+                if (unitAddCarry) {
+                    carried = true;
+                    // After "Save & add another": Model, Package/Split, Line and Team
+                    // stay; Serial, Sample and Notes start empty. Branch comes from
+                    // the kept Line, and this replaces the user's own seed.
+                    document.getElementById('ua-model').value = unitAddCarry.model || '';
+                    setPackage('ua-pkg-', unitAddCarry.pkg || '');
+                    line = unitAddCarry.line || '';
+                    branch = utBranchFor(line);
+                    team = unitAddCarry.team || '';
+                    unitAddCarry = null;
+                } else if (myLine) {
+                    // A specific Line wins (Branch derived from it); else a whole-Branch
+                    // user gets Branch only and must pick the Line; else nothing.
+                    branch = utBranchFor(myLine);
+                    line = branch ? myLine : '';
+                } else if (myBranch) {
+                    branch = myBranch;
+                }
+                setSelect(bSel, branch);
+                fillLines(lSel, bSel.value, line, false);
+                setSelect(tSel, team);
+                // The next unit differs by serial/sample, so start there after a carry.
+                // Skipped on a touch device: focusing pops the keyboard over the form.
+                if (!window.matchMedia('(pointer: coarse)').matches) {
+                    document.getElementById(carried ? 'ua-serial' : 'ua-model').focus();
+                }
+            });
+
+            const addBtn = document.getElementById('addUnitBtn');
+            if (addBtn) addBtn.addEventListener('click', function () { bootstrap.Modal.getOrCreateInstance(addEl).show(); });
+            if (unitAddCarry) bootstrap.Modal.getOrCreateInstance(addEl).show();
+        }
+
+        // ---- Edit --------------------------------------------------------
+        const editEl = document.getElementById('editUnitModal');
+        if (editEl) {
+            const form = document.getElementById('editUnitForm');
+            const bSel = document.getElementById('ue-branch'), lSel = document.getElementById('ue-line'), tSel = document.getElementById('ue-team');
+            wireCascade(bSel, lSel, tSel);
+            guardSubmit(form);
+
+            function openEdit(id) {
+                const u = unitRows[String(id)];
+                if (!u) return;
+                form.reset();
+                releaseForm(form);
+                document.getElementById('ue-id').value = u.id;
+                document.getElementById('editUnitTitle').textContent = 'Edit Unit #' + u.id;
+                document.getElementById('ue-model').value = u.model;
+                setPackage('ue-pkg-', u.pkg);
+                document.getElementById('ue-serial').value = u.serial;
+                document.getElementById('ue-sample').value = u.sample;
+                document.getElementById('ue-notes').value = u.notes;
+
+                // Seed from the row's CURRENT Line. A Line hidden in Settings has no
+                // Branch here; it stays selectable as "(current, hidden)".
+                const branch = utBranchFor(u.line);
+                setSelect(bSel, branch);
+                fillLines(lSel, branch, u.line, true);
+
+                // Same for a Team hidden in Settings since the row was saved.
+                Array.prototype.slice.call(tSel.options).forEach(function (o) {
+                    if (o.dataset.hiddenCurrent) o.remove();
+                });
+                if (u.team && !Array.prototype.some.call(tSel.options, function (o) { return o.value === u.team; })) {
+                    const opt = mkOption(u.team, u.team + ' (current, hidden)');
+                    opt.dataset.hiddenCurrent = '1';
+                    tSel.appendChild(opt);
+                }
+                setSelect(tSel, u.team || '');
+
+                bootstrap.Modal.getOrCreateInstance(editEl).show();
+            }
+            document.querySelectorAll('.ut-edit').forEach(function (btn) {
+                btn.addEventListener('click', function () { openEdit(btn.dataset.id); });
+            });
+        }
+
+        // ---- Delete (a button on the table row, never inside another modal) ----
+        const delEl = document.getElementById('deleteUnitModal');
+        if (delEl) {
+            guardSubmit(document.getElementById('deleteUnitForm'));
+            document.querySelectorAll('.ut-del').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    releaseForm(document.getElementById('deleteUnitForm'));
+                    document.getElementById('ud-id').value = btn.dataset.id;
+                    document.getElementById('ud-text').textContent =
+                        'Delete unit ' + btn.dataset.label + "? This can't be undone. The audit log keeps a record.";
+                    bootstrap.Modal.getOrCreateInstance(delEl).show();
+                });
+            });
+        }
+    })();
+</script>

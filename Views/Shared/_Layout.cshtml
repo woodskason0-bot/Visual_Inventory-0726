@@ -78,8 +78,13 @@
 
     // Active-state helper for sidebar links -- same action/controller checks
     // the old top navbar used, just applied to the new markup.
-    Func<string, bool> isActiveAction = action => currentAction == action;
+    // The Home links match on the action name alone, so they must also require the
+    // Home controller: UnitTracker/Index (and Settings/Index) would otherwise light
+    // up Command Center too, since all of them are an action called "Index".
+    string currentController = ViewContext.RouteData.Values["controller"]?.ToString() ?? "Home";
+    Func<string, bool> isActiveAction = action => currentController == "Home" && currentAction == action;
     bool isSettingsActive = ViewContext.RouteData.Values["controller"]?.ToString() == "Settings";
+    bool isUnitTrackerActive = currentController == "UnitTracker";
 
     // Sign-in has nothing to navigate to yet -- every other route just
     // bounces back here pre-authentication -- so the shell adds nothing but
@@ -313,6 +318,11 @@
                    deliberately left this out while it was still a dead link. *@
                 <a class="sidebar-link @(isActiveAction("SearchCenter") ? "active" : "")" asp-controller="Home" asp-action="SearchCenter">
                     <i class="bi bi-search"></i><span class="sidebar-link-text">Search Center</span>
+                </a>
+                @* Unit Tracker holdover: a plain list of whole AC units, visible to
+                   every signed-in user (adding needs Standard, deleting Engineer). *@
+                <a class="sidebar-link @(isUnitTrackerActive ? "active" : "")" asp-controller="UnitTracker" asp-action="Index">
+                    <i class="bi bi-boxes"></i><span class="sidebar-link-text">Unit Tracker</span>
                 </a>
                 <a class="sidebar-link @(isActiveAction("Logs") ? "active" : "")" asp-controller="Home" asp-action="Logs">
                     <i class="bi bi-journal-text"></i><span class="sidebar-link-text">View Logs</span>

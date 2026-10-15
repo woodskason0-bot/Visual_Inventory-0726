@@ -33,6 +33,7 @@ namespace Visual_Inventory_System.Data
         public DbSet<UserTeam> UserTeams { get; set; } = null!;
         public DbSet<Delivery> Deliveries { get; set; } = null!;
         public DbSet<TransferRequest> TransferRequests { get; set; } = null!;
+        public DbSet<TrackedUnit> TrackedUnits { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -223,6 +224,16 @@ namespace Visual_Inventory_System.Data
                 // roster does).
                 b.HasIndex(x => x.RequesterUserName);
                 b.HasIndex(x => x.ItemId);
+            });
+
+            modelBuilder.Entity<TrackedUnit>(b =>
+            {
+                // The Unit Tracker list filters on Line. This block must exist
+                // BEFORE `migrations add`: the migration creates
+                // IX_TrackedUnits_Line, so the snapshot declares it, and an index
+                // the model lacks raises PendingModelChangesWarning, which aborts
+                // Migrate() before any SQL runs (handoff Pass 5 trap).
+                b.HasIndex(u => u.Line);
             });
         }
     }
