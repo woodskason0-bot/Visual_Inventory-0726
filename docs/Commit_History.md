@@ -9,6 +9,42 @@ landed, when."
 
 ---
 
+## 2026-10-15
+
+### docs — log the Unit List holdover (`bfd55ea`)
+Docs only. OPEN: the holdover is committed, not pushed and in no release, and it
+carries migration 40, so the first release that includes it moves a db from 39 to 40 on
+start (back up first). The Pass log entry "Unit List holdover" in Current state: what it
+is, who can do what, the logging, the checks run and the points where the spec was silent
+or wrong. The Deployed-state migration line notes that the code is at 40 and no db the
+host or local production uses is.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `bfd55ea` — Add: Unit Tracker holdover list (TrackedUnits table, migration 40)
+Migration `20261015052146_AddTrackedUnits`, the 40th: creates `TrackedUnits` and
+`IX_TrackedUnits_Line` and touches no other table. The interim whole-unit list from
+`docs/Unit_List_Holdover_Spec.md`: a page at `/UnitTracker` with a sidebar link, no tag
+(a row is `#<Id>`), free-text model number, Package/Split, serial and Sample #,
+Branch → Line → Team autofilled the way Bulk Intake does it, and notes. Every signed-in
+user sees every row and can edit Notes (`UpdateNotes` takes the id and the text only);
+add and edit are Standard and up, changing Line or Team on an existing unit and Delete are
+Engineer and up, all enforced on the server. A Line or Team hidden in Settings stays
+selectable as "(current, hidden)" and is validated only when it changed. One
+`TransactionLog` row per action (`Tracked Unit Added` / `Updated` / `Notes Edited` /
+`Deleted`, blank `ItemId`, note text never logged); a duplicate serial, or the same model
++ Sample # with no serial, warns in the toast and never blocks. Every query and write is
+in `TrackedUnitService`. Also fixes the sidebar's active-link check, which compared the
+action name alone, so Settings (and the new page) lit Command Center. Add is one
+transaction with two saves rather than one `SaveChanges`, since its log names the new Id.
+Verified against a scratch copy of the dev db as real roster users at all four access
+levels, in both themes after a real `SetTheme` and at 375 px, with the XSS payload and raw
+POSTs for every refusal; 14-warning baseline unchanged. Not checked on a real phone yet.
+*Files:* `Models/TrackedUnit.cs`, `Services/TrackedUnitService.cs`,
+`Controllers/UnitTrackerController.cs`, `Views/UnitTracker/Index.cshtml`,
+`Data/AppDbContext.cs`, `Program.cs`, `Views/Shared/_Layout.cshtml`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Migrations/20261015052146_AddTrackedUnits.cs`,
+`Migrations/20261015052146_AddTrackedUnits.Designer.cs`
+
 ## 2026-10-14
 
 ### docs — Unit List holdover build spec

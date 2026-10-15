@@ -69,6 +69,20 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **The Unit List holdover is committed, not pushed, and in no release
+  (2026-10-15, `bfd55ea`). Migration 40 is included.** `AddTrackedUnits` creates one
+  new table, `TrackedUnits`, and its Line index, and touches nothing else. It's the
+  first migration since `AddPerTeamQuantityOwnership` (39), so a build from this tree
+  is **not** a "no migration" release like `VIS_Release_20261004\` (built from
+  `3e7f201`, before it) or the 9/25 one: the app runs `Migrate()` on start and will
+  move whichever db it's pointed at from 39 to 40. Back up the host's `inventory.db`
+  before installing it, and don't hand-copy a dev or scratch db over the host's to
+  "carry" the table. `C:\VIS_Inventory\inventory.dev.db` is still at 39 (it was
+  never written; the checks ran on a scratchpad copy), so the first dev run of this
+  code migrates it; its backup is
+  `inventory.dev.db.pre-trackedunits-backup-20261015-001518`, same folder. The phone
+  check is mine to do. What it is and how it was checked: the Pass log entry "Unit
+  List holdover" in Current state.
 - **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
@@ -280,7 +294,9 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  AddTransferRequests and AddPerTeamQuantityOwnership shipped
                  in Pass 30/31 without it being updated. Count Migrations/,
                  don't trust this number. All 39 are now applied to the REAL
-                 db as well, not just the code -- see Pass 33.)
+                 db as well, not just the code -- see Pass 33. The CODE is at
+                 40 as of bfd55ea (20261015052146_AddTrackedUnits, 2026-10-15);
+                 no db the host or local production uses has it yet -- see OPEN.)
 Items           505   (host, per the 2026-09-23 copy -- 11 registered on the
                  host since the Sept 2 merge; CCO-0001 was registered as
                  "Contro" and deleted again on 9/10, the typo Pass 39's Type
@@ -3407,3 +3423,104 @@ test setup, not the fix — the host runs one copy of each app. Commit `185f788`
 **Brand red decided: leave it.** Rheem red as text on dark (~3.4:1) stays as
 is — sidebar active link, Sign Out, outline-primary buttons, the V/I/S. It's
 readable, just under AA, and it's the brand colour.
+
+**Unit List holdover (2026-10-15, `bfd55ea`) — a plain list of whole AC units,
+so people can start filling it while the full Unit Tracker is scoped.** One new
+table (`TrackedUnits`), one migration (`20261015052146_AddTrackedUnits`, the
+40th) and a new page at `/UnitTracker`, built to
+`docs/Unit_List_Holdover_Spec.md` in one pass. Nothing from
+`docs/Unit_Tracker_Spec.md` was built. The full tracker extends this same table
+later, which is why the class is `TrackedUnit` and not `Unit` (that collides with
+the `CompressorUnit` / `MotorUnit` / `UnitStatus` vocabulary).
+
+- **What a row is.** Model number (free text, required), Package or Split
+  (required; `TrackedUnitPackage`), serial and Sample # (free text, optional),
+  Line, Team, free-text notes, and who/when for the add and the last change.
+  **No tag yet** (it waits on my code list): a row is its database Id, shown
+  `#12`. **Branch isn't stored**; it's `OrgStructure.BranchFor(Line)`, the way
+  items do it. Information only: units can't be ordered, aren't counted anywhere
+  else and don't appear in Search Center. Every signed-in user sees every row,
+  across Lines. Every query and write is in `TrackedUnitService`; the controller
+  holds no LINQ.
+- **Who can do what, all enforced on the server.** Add, and edit of model /
+  Package-Split / serial / sample: Standard and up. Changing Line or Team on an
+  existing unit: Engineer and up, so a Standard edit that leaves them alone passes
+  and one that changes either is refused. Notes: every signed-in user, Viewer
+  included, through a separate `UpdateNotes` action that takes the id and the text
+  and nothing else. Delete: Engineer and up. A Standard form's Line/Team selects are
+  disabled, so they post nothing; `Update` reads "not posted" as "leave alone",
+  because once MVC folds a posted `""` to null a blank Team can't otherwise be told
+  from an absent one.
+- **The form.** Add and Edit autofill Branch → Line → Team the way Bulk Intake does
+  (the same four feeds, re-seeded every time the modal opens), and "Save & add
+  another" keeps Model, Package/Split, Line and Team while clearing Serial, Sample
+  and Notes. A Line or Team hidden in Settings since the row was saved stays
+  selectable as "(current, hidden)", and Line and Team are validated only when they
+  changed, so an untouched Save on such a row says "Nothing changed." and writes
+  nothing. The server refuses a blank model, a Package/Split that isn't one of the
+  two, an over-length value (naming the field; nothing is ever truncated), an
+  unknown Line and an inactive Team. Notes' line breaks are folded to one
+  character before the 2000 check, since a textarea counts a break as one and posts
+  two.
+- **Logging.** One `TransactionLog` row per unit per action (`Tracked Unit Added` /
+  `Updated` / `Notes Edited` / `Deleted`) with a blank `ItemId`, so it reads as "not
+  about an inventory item" (Pass 14): View Logs and the Command Center feed show it
+  to everyone. Notes text is never logged, and an edit that changes nothing writes
+  nothing. Update, notes and delete write the log in the same `SaveChanges` as the
+  change. **Add can't:** its Details name the new Id, which exists only after the
+  INSERT, so Add is one transaction with two saves.
+- **Duplicates warn, never block.** After an Add or Update the toast appends a
+  heads-up for the same serial on another row, or for the same model + Sample # when
+  neither row has a serial. Whether either should block is a question for Conner.
+- **The sidebar's active-link check had a latent bug, fixed here.**
+  `isActiveAction` compared the action name alone, so any controller's `Index` lit
+  Command Center; Settings already did, and Unit Tracker would have. The Home links
+  now also require the Home controller, and Unit Tracker has its own flag.
+- **Where the spec was silent or wrong.** (1) The Sample # placeholder reads
+  `e.g. Sample 1a`, but the log and toast formats add the word "Sample" themselves,
+  so a typed "Sample 1a" would print "Sample Sample 1a"; the prefix is only added
+  when the value doesn't already start with "sample". (2) `_Layout` writes the toast
+  into a JS string literal, so a backslash or a line break in a typed model or serial
+  could stop the toast showing; the toast text drops both (the stored value and the
+  log keep exactly what was typed) and is capped at 400 characters for the TempData
+  cookie. (3) "Nothing changed." uses the green toast, since the layout has only
+  success and error. (4) The Update log names the Package/Split column `Pkg/Split`,
+  which the spec gave no label for. (5) The duplicate heads-up fires on every
+  successful Update, notes-only edits included, as the spec reads; it could get
+  noisy on a row that already has a duplicate.
+
+**Verified live on a scratchpad copy of `inventory.dev.db`; the dev db itself was
+never written.** Signed in through the real sign-in page as Hunter Little (Viewer),
+Colton Reather (Standard), Apoorva Kini (Engineer), Karthig Kathirvel (whole
+Branch) and me, with raw `fetch` POSTs that bypass the form for every refusal. The
+migration applied at startup: history 39 → 40, `integrity_check ok`, `TrackedUnits`
+the only new table, no `PendingModelChangesWarning`. Refused with the row count
+unchanged: a blank model, Package/Split `Packaged`, a 61-character model, serial,
+sample and notes over their limits, an unknown Line, an inactive Team, a POST with
+no token (400), a changed Line or Team from Standard, Add / Update / Delete from a
+Viewer and Delete from Standard. A Viewer's notes save changed only the notes even
+with every other field posted alongside. The log ended at 20 rows (9 Added, 7
+Updated, 3 Notes Edited, 1 Deleted), all with a blank `ItemId`, null `ItemName`,
+the right quantity change and the formats above, and none containing any note text;
+a no-change save wrote nothing, and Karthig, on another Line, saw them in View Logs
+and the feed. Both duplicate warnings fired without blocking, a row on a hidden
+Line and Team opened with both "(current, hidden)" and an untouched Save gave
+"Nothing changed.", the filters matched what the rows say, and the sidebar lit
+exactly one link on each of eight pages, and only Settings on Settings. The XSS
+payload (`<img src=x onerror=…>` in Model and Notes) rendered as literal text in
+the table, the tooltip, the Edit and Delete modals and the toast, and
+`document.body.dataset.x` stayed unset. Contrast was measured after a real
+`SetTheme`, in both themes and at 375 px: the page's own content and all three
+modals had zero failures (minimum 4.87:1 dark, 4.74:1 light), the page doesn't
+overflow horizontally at 375 px and Add and Edit fill the screen. The one thing the
+scan flags is the sidebar's active link, brand red on a red tint at 3.15:1 dark and
+4.06:1 light, which is the "Brand red decided: leave it" item above (the sidebar
+active link is named there) and now covers the Unit Tracker link too. Zero server `fail` or error lines, zero console errors from
+the page. Build still at the 14-warning baseline, none from the new files.
+**Not verified:** a real phone (the in-app browser only proves layout, Pass 26),
+which is mine to check, and Luis Zapata as a second whole-Branch user (Karthig
+covers that case).
+
+**Changes the OPEN state at the top of this file:** the holdover is committed and
+not pushed, in no release, and its migration means the next release moves a db
+from 39 to 40.
