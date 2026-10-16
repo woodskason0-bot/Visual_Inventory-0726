@@ -69,20 +69,23 @@ rather than assuming one exists.
 
 ### Still to do
 
-- **The Unit List holdover is committed, not pushed, and in no release
-  (2026-10-15, `bfd55ea`). Migration 40 is included.** `AddTrackedUnits` creates one
-  new table, `TrackedUnits`, and its Line index, and touches nothing else. It's the
-  first migration since `AddPerTeamQuantityOwnership` (39), so a build from this tree
-  is **not** a "no migration" release like `VIS_Release_20261004\` (built from
-  `3e7f201`, before it) or the 9/25 one: the app runs `Migrate()` on start and will
-  move whichever db it's pointed at from 39 to 40. Back up the host's `inventory.db`
-  before installing it, and don't hand-copy a dev or scratch db over the host's to
-  "carry" the table. `C:\VIS_Inventory\inventory.dev.db` is still at 39 (it was
-  never written; the checks ran on a scratchpad copy), so the first dev run of this
-  code migrates it; its backup is
-  `inventory.dev.db.pre-trackedunits-backup-20261015-001518`, same folder. The phone
-  check is mine to do. What it is and how it was checked: the Pass log entry "Unit
-  List holdover" in Current state.
+- **The Unit List holdover is committed and pushed, but in no release
+  (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`). Migrations 40 and
+  41 are included.** `AddTrackedUnits` (40) creates one new table, `TrackedUnits`,
+  and its Line index; `AddTrackedUnitWhereabouts` (41) adds one column to it,
+  `Whereabouts`, blank for every row. They're the first migrations since
+  `AddPerTeamQuantityOwnership` (39), so a build from this tree is **not** a "no
+  migration" release like `VIS_Release_20261004\` (built from `3e7f201`, before them)
+  or the 9/25 one: the app runs `Migrate()` on start and will move whichever db it's
+  pointed at from 39 to 41. Back up the host's `inventory.db` before installing it,
+  and don't hand-copy a dev or scratch db over the host's to "carry" the table.
+  `C:\VIS_Inventory\inventory.dev.db` stands at 40 with 42 test units (mine, plus 41
+  added to try the features; dev data only, none of it is on the host), and the first
+  dev run of the 41 code applies the column. Backups in the same folder:
+  `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
+  `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
+  check is mine to do. What they are and how they were checked: the Pass log entries
+  "Unit List holdover" and "Unit Tracker Where boxes" in Current state.
 - **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
@@ -295,8 +298,9 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  in Pass 30/31 without it being updated. Count Migrations/,
                  don't trust this number. All 39 are now applied to the REAL
                  db as well, not just the code -- see Pass 33. The CODE is at
-                 40 as of bfd55ea (20261015052146_AddTrackedUnits, 2026-10-15);
-                 no db the host or local production uses has it yet -- see OPEN.)
+                 41 as of 5e3267f (20261016153407_AddTrackedUnitWhereabouts,
+                 2026-10-16; 40 is AddTrackedUnits, bfd55ea); no db the host or
+                 local production uses has either yet -- see OPEN.)
 Items           505   (host, per the 2026-09-23 copy -- 11 registered on the
                  host since the Sept 2 merge; CCO-0001 was registered as
                  "Contro" and deleted again on 9/10, the typo Pass 39's Type
@@ -3521,6 +3525,78 @@ the page. Build still at the 14-warning baseline, none from the new files.
 which is mine to check, and Luis Zapata as a second whole-Branch user (Karthig
 covers that case).
 
-**Changes the OPEN state at the top of this file:** the holdover is committed and
-not pushed, in no release, and its migration means the next release moves a db
-from 39 to 40.
+**Changes the OPEN state at the top of this file:** the holdover is committed, in no
+release, and its migration means the next release moves a db off 39 (the Where entry
+below says to where).
+
+**Unit Tracker Where boxes (2026-10-16, `5e3267f`) — three optional boxes on every
+row: In Lab, In Storage, Outbound.** One new column, `TrackedUnit.Whereabouts`, and
+migration `20261016153407_AddTrackedUnitWhereabouts` (the 41st), which adds only that
+column (NOT NULL, default `''`), so every unit starts unset. I asked for them after
+trying the page: always there, on the left of each row, never required, so whoever
+knows for sure can say. Scoped in full before any file was opened, and three calls
+were mine: one at a time, Standard and up can set it, and a filter too.
+
+- **What it is.** A first column on every row with the three boxes, none ticked by
+  default (not recorded). One at a time: ticking a second moves it, ticking the lit
+  one clears it, and blank is "nobody has said". A click saves in place through a
+  new `POST /UnitTracker/SetWhereabouts` that answers JSON, so a long list keeps its
+  scroll position, and the Updated column and a toast change without a reload. A
+  refused save puts the box back and says why. The Edit modal doesn't show it and
+  can't change it. A Where filter beside Team and Line (Any / the three / Not set)
+  feeds the same count line.
+- **Why it isn't called Location or Status.** The full tracker spec already uses
+  `Status` (On Hand / Transferred Out / Scrapped) and `Parent/Major/Sub` for the real
+  shelf location, and this is a quick yes-I-know flag, not either of those. It's also
+  a slice of what that spec holds back from the holdover, pulled forward on purpose.
+  When the full tracker replaces the holdover, this column either maps onto Status
+  and the location columns or stays as its own flag; that's a decision for then.
+- **Who and the log.** Standard and up can set it, enforced by `[RequireLevel]`;
+  Viewers see the saved state on disabled boxes, and a direct POST from one gets a
+  403. The service takes only the three values (any case in, canonical out) or blank,
+  reports a deleted id as "Unit #N no longer exists.", and writes nothing for the
+  value the unit already has. A real change sets `UpdatedAt` / `UpdatedBy` and writes
+  one `Tracked Unit Whereabouts Changed` row, blank `ItemId`, quantity 0:
+  `Unit #12 (RACG180D): Whereabouts '' → 'In Lab'.` The toast text is escaped before
+  it reaches `showToast`, which writes `innerHTML`.
+- **Also in this commit.** The grey "Holdover list — ..." line under the page title is
+  gone, with its CSS; that was my call after seeing it, and the spec's section 6.2
+  still lists it. The filter row wraps below 1200px so no field is squeezed beside the
+  sidebar.
+- **Three things found while checking, fixed before the commit.** (1) With the Where
+  filter added the row gave each field about 80px at the pane's tablet width; it now
+  wraps (6+3+3, then 4+5+3) and goes to one row from 1200px. (2) The checked blue was
+  2.59:1 against the dark card; the dark theme uses a lighter blue (4.53:1 against the
+  card, 3.68:1 for the tick on it) and light keeps the deeper one (6.44:1). The
+  unchecked edge is 5.24:1 dark and 3.18:1 light. (3) On a touch screen each box row
+  is a 30px tap target instead of about 20px.
+
+**Verified live on a scratchpad copy of the dev db; the real dev db was never written
+by the checks.** Migration 41 applied as a single `ALTER TABLE ... ADD`, with no error
+and no `PendingModelChangesWarning`. As me: ticking In Lab saved with a toast and no
+reload, Outbound then moved it, clicking the lit box cleared it, and an invalid value,
+an unknown id and a missing token were refused, with a value it already had giving
+"Nothing changed." and no log row. The filter returned the right rows for each choice
+and for Not set, and its count line followed. As Hunter Little (Viewer) every box was
+disabled and both a raw AJAX POST (403) and a raw form POST (bounced to Command Center
+with the banner) were refused; as Colton Reather (Standard) a real click saved. Editing
+the notes of a unit that had a box ticked left the box alone. Ten log rows, all with a
+blank `ItemId`, quantity 0 and the format above. Contrast after a real `SetTheme`, both
+themes: the page's own text had zero failures (minimum 4.87:1 dark, 4.74:1 light); the
+only whole-page flags are the shared "leave it" items. No horizontal overflow at 375px,
+Where is the leftmost column there, and a click fired from inside the page saved. The
+browser tool's own tap missed at phone width (the scaled view puts its coordinates in
+the wrong place and the page never saw the click), so a real finger is the one thing
+not proven; that's mine to do. Build at the 14-warning baseline, none from the new
+files.
+
+**Dev data.** Before this, 41 test units were added to the dev db through the real Add
+endpoint, signed in as me (Kason.Woods): AC / GE / HP across C, D and G cabinets from
+5 T to 25 T (060 to 300), Package and Split, several teams and Lines, some with no
+serial or sample, one with a long two-line note, and the long-form `RHPDYB...`
+models (like the first unit I added) beside the short `RACG180D` form. They and their 41 `Tracked Unit Added` rows exist in
+`inventory.dev.db` only.
+
+**Changes the OPEN state at the top of this file:** the holdover is pushed and in no
+release, with migrations 40 and 41 included, so the next release moves a db from 39
+to 41.

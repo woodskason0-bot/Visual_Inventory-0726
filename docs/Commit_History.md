@@ -9,6 +9,41 @@ landed, when."
 
 ---
 
+## 2026-10-16
+
+### docs — log the Where boxes (`5e3267f`)
+Docs only. OPEN: the Unit List holdover is pushed and in no release, with migrations 40
+and 41 included, so the next release moves a db from 39 to 41 (back up the host's first).
+The Pass log entry "Unit Tracker Where boxes" (what it is, who can set it, the log, the
+checks and the three things found and fixed while checking), the Deployed-state migration
+line (the code is at 41), and the holdover entry's closing line brought up to date.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `5e3267f` — Add: Where boxes (In Lab / In Storage / Outbound) and filter on the Unit Tracker; migration 41
+Migration `20261016153407_AddTrackedUnitWhereabouts`, the 41st: adds one column,
+`TrackedUnits.Whereabouts` (NOT NULL, default `''`), and nothing else, so every existing unit
+starts unset. A first column on every unit row holds three optional boxes, In Lab, In Storage
+and Outbound, none ticked by default, one at a time (ticking a second moves it, ticking the
+lit one clears it). A click saves in place through a new `POST /UnitTracker/SetWhereabouts`
+that answers JSON, so a long list keeps its scroll position and the Updated column and a
+toast change without a reload. Standard and up can set it, enforced by `[RequireLevel]`;
+Viewers see the saved state on disabled boxes. The service accepts only the three values or
+blank, reports a deleted id, and writes nothing for a value the unit already has; a real
+change writes one `Tracked Unit Whereabouts Changed` log row (blank `ItemId`). The Edit modal
+neither shows nor changes it. A Where filter beside Team and Line (Any / the three / Not set)
+feeds the same count line, and the filter row now wraps at tablet width instead of squeezing
+every field to about 80 px. The column is `Whereabouts`, not `Location` or `Status`, because
+the full Unit Tracker spec already uses `Status` and `Parent/Major/Sub`. Also removes the grey
+"Holdover list ..." line under the page title and its CSS. Checked boxes use a lighter blue on
+the dark card (the first blue was 2.59:1 there), and each box row is a 30 px tap target on a
+touch screen. Verified against a scratch copy of the dev db at Viewer, Standard and Admin, in
+both themes after a real `SetTheme` and at 375 px; 14-warning baseline unchanged. A tap on a
+real phone is still to do.
+*Files:* `Models/TrackedUnit.cs`, `Services/TrackedUnitService.cs`,
+`Controllers/UnitTrackerController.cs`, `Views/UnitTracker/Index.cshtml`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Migrations/20261016153407_AddTrackedUnitWhereabouts.cs`,
+`Migrations/20261016153407_AddTrackedUnitWhereabouts.Designer.cs`
+
 ## 2026-10-15
 
 ### docs — log the Unit List holdover (`bfd55ea`)
