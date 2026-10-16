@@ -17,6 +17,7 @@ namespace Visual_Inventory_System.Controllers
     ///   Update (model/pkg/serial/sample/notes)   Standard+
     ///   Update changing Line/Team Engineer+ (checked inside the service)
     ///   UpdateNotes               any signed-in user, Viewer included
+    ///   SetWhereabouts            Standard+ (the In Lab / In Storage / Outbound boxes)
     ///   Delete                    Engineer+
     /// All of it is enforced here and in the service, not by hidden buttons. The
     /// controller holds no LINQ of its own -- every query and write is in
@@ -35,15 +36,20 @@ namespace Visual_Inventory_System.Controllers
 
         // Filters live in the query string so a filtered view can be linked, and
         // SmartRedirect keeps the user on it after a write.
-        public IActionResult Index(string? q, string? pkg, string? team, string? line)
+        public IActionResult Index(string? q, string? pkg, string? team, string? line,
+            [FromQuery(Name = "where")] string? whereabouts)
         {
-            var units = _units.Query(q, pkg, team, line);
+            var units = _units.Query(q, pkg, team, line, whereabouts);
             ViewBag.Units = units;
 
             ViewBag.FilterQ = (q ?? "").Trim();
             ViewBag.FilterPkg = TrackedUnitPackageName(pkg);
             ViewBag.FilterTeam = (team ?? "").Trim();
             ViewBag.FilterLine = (line ?? "").Trim();
+            ViewBag.FilterWhere = string.Equals((whereabouts ?? "").Trim(), Models.TrackedUnitWhereabouts.NotSet,
+                    System.StringComparison.OrdinalIgnoreCase)
+                ? Models.TrackedUnitWhereabouts.NotSet
+                : (Models.TrackedUnitWhereabouts.Canonical(whereabouts) ?? "");
             ViewBag.TeamOptions = _units.TeamsInUse();
             ViewBag.LineOptions = _units.LinesInUse();
 
@@ -126,6 +132,29 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult UpdateNotes(int id, string? notes)
         {
             return Finish(_units.UpdateNotes(id, notes));
+        }
+
+        // The row boxes save on click, so this answers JSON instead of redirecting
+        // (a redirect would reload a long list and lose the user's place). Sent with
+        // X-Requested-With so [RequireLevel] answers a refusal with a 403 the page
+        // can read instead of redirecting to Command Center. Takes id + the one
+        // value and nothing else.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SetWhereabouts(int id, string? whereabouts)
+        {
+            var result = _units.SetWhereabouts(id, whereabouts);
+            var unit = result.Unit;
+            return Json(new
+            {
+                ok = result.Ok,
+                message = result.Message,
+                whereabouts = unit?.Whereabouts ?? "",
+                updatedDate = unit?.UpdatedAt?.ToLocalTime().ToString("MMM d, yyyy"),
+                updatedTitle = unit?.UpdatedAt?.ToLocalTime().ToString("g"),
+                updatedBy = unit?.UpdatedBy ?? ""
+            });
         }
 
         [HttpPost]

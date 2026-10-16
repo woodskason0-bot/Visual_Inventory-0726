@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 
 namespace Visual_Inventory_System.Models
 {
@@ -55,6 +56,18 @@ namespace Visual_Inventory_System.Models
         [MaxLength(2000)]
         public string Notes { get; set; } = "";
 
+        /// <summary>
+        /// Where the unit is, when someone knows: exactly "In Lab", "In Storage" or
+        /// "Outbound", or "" for not recorded (the default, and what unticking
+        /// writes). One value at a time. Deliberately NOT called Location or Status:
+        /// the full Unit Tracker spec already uses Status (On Hand / Transferred
+        /// Out / Scrapped) and Parent/Major/Sub for the real shelf location, and
+        /// this is a quick yes-I-know flag, not either of those. See
+        /// TrackedUnitWhereabouts.
+        /// </summary>
+        [MaxLength(20)]
+        public string Whereabouts { get; set; } = "";
+
         /// <summary>UTC, set on Add, never changed.</summary>
         public DateTime RecordedAt { get; set; }
 
@@ -75,5 +88,27 @@ namespace Visual_Inventory_System.Models
         public const string Package = "Package";
         public const string Split = "Split";
         public static readonly string[] All = { Package, Split };
+    }
+
+    /// <summary>
+    /// Allowed TrackedUnit.Whereabouts values (blank means not recorded). The page
+    /// renders its three boxes from All, so a fourth option is one line here.
+    /// </summary>
+    public static class TrackedUnitWhereabouts
+    {
+        public const string InLab = "In Lab";
+        public const string InStorage = "In Storage";
+        public const string Outbound = "Outbound";
+        public static readonly string[] All = { InLab, InStorage, Outbound };
+
+        /// <summary>The list filter's "nothing recorded" choice. Never stored.</summary>
+        public const string NotSet = "none";
+
+        /// <summary>The canonical spelling of a value (case-insensitive in), or null if it isn't one of the three.</summary>
+        public static string? Canonical(string? value)
+        {
+            var v = (value ?? "").Trim();
+            return All.FirstOrDefault(w => string.Equals(w, v, StringComparison.OrdinalIgnoreCase));
+        }
     }
 }

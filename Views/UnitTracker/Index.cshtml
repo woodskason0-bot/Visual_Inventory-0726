@@ -23,7 +23,8 @@
     string fPkg = (string)(ViewBag.FilterPkg ?? "");
     string fTeam = (string)(ViewBag.FilterTeam ?? "");
     string fLine = (string)(ViewBag.FilterLine ?? "");
-    bool filtered = fQ != "" || fPkg != "" || fTeam != "" || fLine != "";
+    string fWhere = (string)(ViewBag.FilterWhere ?? "");
+    bool filtered = fQ != "" || fPkg != "" || fTeam != "" || fLine != "" || fWhere != "";
 
     // Cosmetic only: every rule below is enforced again on the server.
     int level = CurrentUser.Level;
@@ -46,7 +47,6 @@
     @@media (max-width: 575.98px) { .ut-page { padding: 16px 0 32px; } }
 
     .ut-title { font-size: 26px; font-weight: 800; color: var(--vis-text); margin: 0; }
-    .ut-sub { color: var(--vis-text-muted); font-size: 13px; margin: 2px 0 0; }
     .ut-count { color: var(--vis-text-muted); font-size: 13px; font-weight: 600; }
     .ut-count strong { color: var(--vis-text); font-weight: 800; }
     .ut-label { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--vis-text-muted); }
@@ -71,6 +71,26 @@
     .ut-by { display: block; font-size: 11px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
     .ut-notes { max-width: 260px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
     .ut-actions { white-space: nowrap; }
+
+    /* The In Lab / In Storage / Outbound boxes: one column, always the first thing in
+       a row, so it stays on screen when the table scrolls sideways on a phone.
+       Bootstrap's white unchecked box and its ~1.5:1 border vanish on a white card, so
+       the box is transparent with a 3.3:1+ edge in both themes. Checked is a solid blue
+       that clears 3:1 against its own card: a lighter blue on the dark card (the
+       light-theme blue is 2.6:1 there), the deeper one on white. */
+    .ut-where { white-space: nowrap; min-width: 118px; }
+    .ut-wh { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; line-height: 1.7; color: var(--vis-text); cursor: pointer; }
+    .ut-wh .form-check-input { margin: 0; flex-shrink: 0; background-color: transparent; border-color: #8B9198; }
+    .ut-wh .form-check-input:checked { background-color: #3B82F6; border-color: #3B82F6; }
+    :root[data-theme="light"] .ut-wh .form-check-input:checked { background-color: #0A58CA; border-color: #0A58CA; }
+    .ut-wh .form-check-input:disabled { cursor: not-allowed; }
+    .ut-wh .form-check-input:disabled ~ span { cursor: not-allowed; }
+    /* Units get counted in the yard on a phone: on a touch screen each row of the
+       label is a 28px-tall tap target instead of ~20px, and the box itself is bigger. */
+    @@media (pointer: coarse) {
+        .ut-wh { padding: 4px 0; font-size: 13px; }
+        .ut-wh .form-check-input { width: 1.3em; height: 1.3em; }
+    }
 
     /* Fixed-colour surface: white on these fills is 6.4:1 / 6.5:1 in both themes. */
     .ut-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: #FFFFFF; }
@@ -100,7 +120,6 @@
 <div class="ut-page">
     <div class="mb-3">
         <h2 class="ut-title">Unit Tracker</h2>
-        <p class="ut-sub">Holdover list &mdash; model numbers, serials and samples while the full tracker is built.</p>
     </div>
 
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
@@ -117,11 +136,13 @@
 
     <form asp-controller="UnitTracker" asp-action="Index" method="get" class="cc-card ut-filter ut-form" id="filterForm">
         <div class="row g-2 align-items-end">
-            <div class="col-12 col-md-3">
+            @* One row from 1200px; two rows at tablet width (6+3+3, then 4+5+3), so no
+               field is squeezed to a sliver beside the sidebar. *@
+            <div class="col-12 col-md-6 col-xl-3">
                 <label class="ut-label" for="f-q">Search</label>
                 <input type="text" name="q" id="f-q" class="form-control" value="@fQ" placeholder="Model, serial, sample, notes, line, team" autocomplete="off" />
             </div>
-            <div class="col-6 col-md-2">
+            <div class="col-6 col-md-3 col-xl">
                 <label class="ut-label" for="f-pkg">Package / Split</label>
                 <select name="pkg" id="f-pkg" class="form-select">
                     <option value="">Any</option>
@@ -131,7 +152,18 @@
                     }
                 </select>
             </div>
-            <div class="col-6 col-md-2">
+            <div class="col-6 col-md-3 col-xl">
+                <label class="ut-label" for="f-where">Where</label>
+                <select name="where" id="f-where" class="form-select">
+                    <option value="">Any</option>
+                    @foreach (var w in TrackedUnitWhereabouts.All)
+                    {
+                        <option value="@w" selected="@(fWhere == w)">@w</option>
+                    }
+                    <option value="@TrackedUnitWhereabouts.NotSet" selected="@(fWhere == TrackedUnitWhereabouts.NotSet)">Not set</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-4 col-xl">
                 <label class="ut-label" for="f-team">Team</label>
                 <select name="team" id="f-team" class="form-select">
                     <option value="">Any</option>
@@ -141,7 +173,7 @@
                     }
                 </select>
             </div>
-            <div class="col-12 col-md-3">
+            <div class="col-6 col-md-5 col-xl">
                 <label class="ut-label" for="f-line">Line</label>
                 <select name="line" id="f-line" class="form-select">
                     <option value="">Any</option>
@@ -151,7 +183,7 @@
                     }
                 </select>
             </div>
-            <div class="col-12 col-md-2 d-flex gap-2">
+            <div class="col-12 col-md-3 col-xl-auto d-flex gap-2">
                 <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
                 <a href="/UnitTracker" class="btn btn-outline-secondary flex-grow-1">Clear</a>
             </div>
@@ -180,9 +212,10 @@
     {
         <div class="cc-card ut-tablecard">
             <div class="table-responsive">
-                <table class="table table-hover align-middle ut-table" style="min-width: 1100px;" id="ut-table">
+                <table class="table table-hover align-middle ut-table" style="min-width: 1230px;" id="ut-table">
                     <thead>
                         <tr>
+                            <th>Where</th>
                             <th>#</th>
                             <th>Model</th>
                             <th>Pkg/Split</th>
@@ -200,7 +233,19 @@
                         @foreach (var u in units)
                         {
                             var branch = OrgStructure.BranchFor(u.Line);
-                            <tr data-unit-id="@u.Id">
+                            <tr data-unit-id="@u.Id" data-whereabouts="@u.Whereabouts">
+                                <td class="ut-where">
+                                    @foreach (var w in TrackedUnitWhereabouts.All)
+                                    {
+                                        @* One at a time: ticking one clears the others (page script). Saved on click
+                                           for Standard and up; below that the boxes show the state but are disabled. *@
+                                        <label class="ut-wh">
+                                            <input type="checkbox" class="form-check-input ut-wh-box" data-id="@u.Id" data-value="@w"
+                                                   checked="@(u.Whereabouts == w)" disabled="@(!canEditCore)" aria-label="@w, unit #@u.Id" />
+                                            <span>@w</span>
+                                        </label>
+                                    }
+                                </td>
                                 <td class="ut-id">#@u.Id</td>
                                 <td class="ut-model">@u.ModelNumber</td>
                                 <td><span class="ut-pill ut-pill-@u.PackageType.ToLower()">@u.PackageType</span></td>
@@ -213,7 +258,7 @@
                                     <span title="@u.RecordedAt.ToLocalTime().ToString("g")">@u.RecordedAt.ToLocalTime().ToString("MMM d, yyyy")</span>
                                     <span class="ut-by">by @u.RecordedBy</span>
                                 </td>
-                                <td>
+                                <td class="ut-updated">
                                     @if (u.UpdatedAt == null)
                                     {
                                         <span>&mdash;</span>
@@ -600,6 +645,81 @@
                     document.getElementById('ud-text').textContent =
                         'Delete unit ' + btn.dataset.label + "? This can't be undone. The audit log keeps a record.";
                     bootstrap.Modal.getOrCreateInstance(delEl).show();
+                });
+            });
+        }
+
+        // ---- Where: In Lab / In Storage / Outbound, saved on click --------------
+        // One at a time: ticking a box clears the other two, ticking the lit one clears
+        // it (blank = nobody has said). Saves in place, no reload, so a long list keeps
+        // its scroll position. The boxes are disabled for Viewers by the server; the
+        // server refuses the POST below Standard regardless.
+        const whBoxes = document.querySelectorAll('.ut-wh-box');
+        const csrfEl = document.querySelector('#editUnitForm input[name="__RequestVerificationToken"]');
+        if (whBoxes.length && csrfEl) {
+            // Server text goes through escapeHtml (site.js): showToast writes innerHTML.
+            function whToast(message, kind) { showToast(escapeHtml(message), kind); }
+            function whShow(id, value) {
+                document.querySelectorAll('.ut-wh-box[data-id="' + id + '"]').forEach(function (b) {
+                    b.checked = (b.dataset.value === value);
+                });
+            }
+            function whLock(id, locked) {
+                document.querySelectorAll('.ut-wh-box[data-id="' + id + '"]').forEach(function (b) { b.disabled = locked; });
+            }
+            function whStamp(row, d) {
+                // Updated column, rebuilt from nodes (never innerHTML) so it shows the
+                // change without a reload.
+                const cell = row.querySelector('.ut-updated');
+                if (!cell || !d.updatedDate) return;
+                cell.textContent = '';
+                const when = document.createElement('span');
+                when.title = d.updatedTitle || '';
+                when.textContent = d.updatedDate;
+                const by = document.createElement('span');
+                by.className = 'ut-by';
+                by.textContent = 'by ' + d.updatedBy;
+                cell.appendChild(when);
+                cell.appendChild(by);
+            }
+
+            whBoxes.forEach(function (box) {
+                box.addEventListener('change', async function () {
+                    const id = box.dataset.id;
+                    const row = box.closest('tr');
+                    const before = row.dataset.whereabouts || '';
+                    const next = box.checked ? box.dataset.value : '';
+                    whShow(id, next);
+                    whLock(id, true);
+                    try {
+                        const r = await fetch('/UnitTracker/SetWhereabouts', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                                'RequestVerificationToken': csrfEl.value,
+                                'X-Requested-With': 'XMLHttpRequest'
+                            },
+                            body: 'id=' + encodeURIComponent(id) + '&whereabouts=' + encodeURIComponent(next)
+                        });
+                        const text = await r.text();
+                        let d = null;
+                        try { d = JSON.parse(text); } catch (e) { /* a 403 carries plain text */ }
+                        if (d && d.ok) {
+                            row.dataset.whereabouts = d.whereabouts;
+                            whShow(id, d.whereabouts);
+                            whStamp(row, d);
+                            whToast(d.message, 'success');
+                        } else {
+                            whShow(id, before);
+                            whToast(d ? d.message : (r.status === 403 ? text : 'Couldn’t save that (error ' + r.status + ').'), 'error');
+                        }
+                    } catch (e) {
+                        whShow(id, before);
+                        whToast('Couldn’t reach the server. Nothing was saved.', 'error');
+                    } finally {
+                        whLock(id, false);
+                    }
                 });
             });
         }

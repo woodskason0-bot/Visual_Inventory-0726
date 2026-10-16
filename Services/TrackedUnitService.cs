@@ -59,7 +59,7 @@ namespace Visual_Inventory_System.Services
         /// The list, newest first. Every signed-in user sees every row (units are
         /// visible across Lines), so there is deliberately no Line scoping here.
         /// </summary>
-        public List<TrackedUnit> Query(string? q, string? pkg, string? team, string? line)
+        public List<TrackedUnit> Query(string? q, string? pkg, string? team, string? line, string? whereabouts = null)
         {
             var query = _db.TrackedUnits.AsNoTracking().AsQueryable();
 
@@ -83,6 +83,19 @@ namespace Visual_Inventory_System.Services
 
             var lineFilter = (line ?? "").Trim();
             if (lineFilter != "") query = query.Where(u => u.Line == lineFilter);
+
+            // "none" asks for the units nobody has said anything about; one of the
+            // three labels asks for just those; anything else means Any.
+            var whFilter = (whereabouts ?? "").Trim();
+            if (string.Equals(whFilter, TrackedUnitWhereabouts.NotSet, StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(u => u.Whereabouts == "");
+            }
+            else
+            {
+                var canonicalWh = TrackedUnitWhereabouts.Canonical(whFilter);
+                if (canonicalWh != null) query = query.Where(u => u.Whereabouts == canonicalWh);
+            }
 
             return query.OrderByDescending(u => u.Id).ToList();
         }
@@ -293,6 +306,42 @@ namespace Visual_Inventory_System.Services
 
             if (!TrySave()) return Gone(id);
             return new TrackedUnitResult { Ok = true, Unit = unit, Message = $"Unit #{unit.Id} notes saved." };
+        }
+
+        /// <summary>
+        /// Standard and up (the action carries [RequireLevel]). Sets or clears where
+        /// a unit is: one of In Lab / In Storage / Outbound, or blank for "not
+        /// recorded". Touches the Whereabouts column and nothing else, so it can't
+        /// move a unit's Line or Team. Posting the value it already has changes
+        /// nothing and writes no log. The message deliberately carries no typed
+        /// text (the page shows it in a toast built with innerHTML).
+        /// </summary>
+        public TrackedUnitResult SetWhereabouts(int id, string? value)
+        {
+            var unit = _db.TrackedUnits.Find(id);
+            if (unit == null) return Gone(id);
+
+            var raw = Clean(value);
+            var target = raw == "" ? "" : TrackedUnitWhereabouts.Canonical(raw);
+            if (target == null) return Fail("Where must be In Lab, In Storage or Outbound.");
+
+            if (string.Equals(unit.Whereabouts, target, StringComparison.Ordinal))
+                return new TrackedUnitResult { Ok = true, Unit = unit, Message = "Nothing changed." };
+
+            var old = unit.Whereabouts;
+            unit.Whereabouts = target;
+            unit.UpdatedAt = DateTime.UtcNow;
+            unit.UpdatedBy = _user.Name;
+            Log("Tracked Unit Whereabouts Changed", 0,
+                $"Unit #{unit.Id} ({unit.ModelNumber}): Whereabouts '{old}' → '{target}'.");
+
+            if (!TrySave()) return Gone(id);
+            return new TrackedUnitResult
+            {
+                Ok = true,
+                Unit = unit,
+                Message = target == "" ? $"Unit #{unit.Id}: whereabouts cleared." : $"Unit #{unit.Id}: {target}."
+            };
         }
 
         /// <summary>
