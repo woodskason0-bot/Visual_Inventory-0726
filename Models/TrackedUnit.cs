@@ -32,8 +32,14 @@ namespace Visual_Inventory_System.Models
         [Required, MaxLength(60)]
         public string ModelNumber { get; set; } = "";
 
-        /// <summary>Exactly "Package" or "Split". See TrackedUnitPackage.</summary>
-        [Required, MaxLength(10)]
+        /// <summary>
+        /// Exactly "Package" or "Split", or "" for not recorded (the default, and what
+        /// "Not set" writes). Optional on purpose: the list gets filled from sheets that
+        /// don't say. Still a NOT NULL column (a non-nullable string under
+        /// &lt;Nullable&gt;), so "not recorded" is "", the same as Whereabouts and
+        /// BuildStatus. See TrackedUnitPackage.
+        /// </summary>
+        [MaxLength(10)]
         public string PackageType { get; set; } = "";
 
         /// <summary>Optional free text, no format rules.</summary>
@@ -94,12 +100,25 @@ namespace Visual_Inventory_System.Models
         public string UpdatedBy { get; set; } = "";
     }
 
-    /// <summary>Allowed TrackedUnit.PackageType values. Plain strings, same shape as UnitStatus.</summary>
+    /// <summary>
+    /// Allowed TrackedUnit.PackageType values (blank means not recorded). Plain strings,
+    /// same shape as UnitStatus.
+    /// </summary>
     public static class TrackedUnitPackage
     {
         public const string Package = "Package";
         public const string Split = "Split";
         public static readonly string[] All = { Package, Split };
+
+        /// <summary>The list filter's "nothing recorded" choice. Never stored.</summary>
+        public const string NotSet = "none";
+
+        /// <summary>The canonical spelling of a value (case-insensitive in), or null if it isn't Package or Split (blank included).</summary>
+        public static string? Canonical(string? value)
+        {
+            var v = (value ?? "").Trim();
+            return All.FirstOrDefault(p => string.Equals(p, v, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>

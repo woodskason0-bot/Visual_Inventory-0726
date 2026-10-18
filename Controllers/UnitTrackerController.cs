@@ -127,8 +127,11 @@ namespace Visual_Inventory_System.Controllers
             // whether the field was posted.
             string? lineArg = Request.Form.ContainsKey("line") ? (line ?? "") : null;
             string? teamArg = Request.Form.ContainsKey("team") ? (team ?? "") : null;
+            // Package/Split is optional now, and its "Not set" radio posts a blank:
+            // not posted leaves it alone, posted blank clears it.
+            string? pkgArg = Request.Form.ContainsKey("packageType") ? (packageType ?? "") : null;
 
-            return Finish(_units.Update(id, modelNumber, packageType, serialNumber, sampleNumber, lineArg, teamArg, notes));
+            return Finish(_units.Update(id, modelNumber, pkgArg, serialNumber, sampleNumber, lineArg, teamArg, notes));
         }
 
         // Deliberately no level attribute: Notes is the one field a Viewer may edit.
@@ -212,11 +215,14 @@ namespace Visual_Inventory_System.Controllers
             return flat.Length > 400 ? flat.Substring(0, 400) + "…" : flat;
         }
 
+        // What the Package/Split filter shows as selected: "none" for the
+        // not-recorded choice, the canonical label, or "" for Any.
         private static string TrackedUnitPackageName(string? pkg)
         {
             var v = (pkg ?? "").Trim();
-            return Models.TrackedUnitPackage.All
-                .FirstOrDefault(p => string.Equals(p, v, System.StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (string.Equals(v, Models.TrackedUnitPackage.NotSet, System.StringComparison.OrdinalIgnoreCase))
+                return Models.TrackedUnitPackage.NotSet;
+            return Models.TrackedUnitPackage.Canonical(v) ?? "";
         }
 
         // Same three lines as HomeController.SmartRedirect (private there): back to

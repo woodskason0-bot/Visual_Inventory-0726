@@ -76,8 +76,19 @@ namespace Visual_Inventory_System.Services
                     u.Team.ToLower().Contains(term));
             }
 
-            var canonicalPkg = CanonicalPackage(pkg);
-            if (canonicalPkg != null) query = query.Where(u => u.PackageType == canonicalPkg);
+            // Same three-way rule as Where and Build below: "none" asks for the units
+            // with no Package/Split recorded, one of the two labels asks for just those,
+            // anything else means Any.
+            var pkgFilter = (pkg ?? "").Trim();
+            if (string.Equals(pkgFilter, TrackedUnitPackage.NotSet, StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(u => u.PackageType == "");
+            }
+            else
+            {
+                var canonicalPkg = TrackedUnitPackage.Canonical(pkgFilter);
+                if (canonicalPkg != null) query = query.Where(u => u.PackageType == canonicalPkg);
+            }
 
             var teamFilter = (team ?? "").Trim();
             if (teamFilter != "") query = query.Where(u => u.Team == teamFilter);
@@ -151,8 +162,9 @@ namespace Visual_Inventory_System.Services
                       ?? TooLong("Notes", noteText, NotesMax);
             if (err != null) return Fail(err);
 
+            // Optional: blank (or not posted) is stored as "" = not recorded.
             var pkg = CanonicalPackage(packageType);
-            if (pkg == null) return Fail("Package / Split must be Package or Split.");
+            if (pkg == null) return Fail(PackageRefusal);
 
             var lineClean = Clean(line);
             if (lineClean == "") return Fail("Line is required.");
@@ -186,7 +198,8 @@ namespace Visual_Inventory_System.Services
             _db.TrackedUnits.Add(unit);
             _db.SaveChanges();
             Log("Tracked Unit Added", +1,
-                $"Unit #{unit.Id} · {model} · {pkg}"
+                $"Unit #{unit.Id} · {model}"
+                + (pkg != "" ? $" · {pkg}" : "")
                 + (serial != "" ? $" · Serial {serial}" : "")
                 + (sample != "" ? $" · {SampleLabel(sample)}" : "")
                 + $" · {Place(canonLine)}"
@@ -198,7 +211,7 @@ namespace Visual_Inventory_System.Services
             {
                 Ok = true,
                 Unit = unit,
-                Message = $"Unit #{unit.Id} added ({model}, {pkg})." + DuplicateWarnings(unit)
+                Message = $"Unit #{unit.Id} added ({ModelAndPackage(model, pkg)})." + DuplicateWarnings(unit)
             };
         }
 
@@ -244,8 +257,10 @@ namespace Visual_Inventory_System.Services
                       ?? TooLong("Notes", noteText, NotesMax);
             if (err != null) return Fail(err);
 
-            var pkg = CanonicalPackage(packageType);
-            if (pkg == null) return Fail("Package / Split must be Package or Split.");
+            // Same posted-vs-not rule as line/team: null means the form didn't post the
+            // field, which leaves it alone; a posted blank ("Not set") clears it.
+            var pkg = packageType == null ? unit.PackageType : CanonicalPackage(packageType);
+            if (pkg == null) return Fail(PackageRefusal);
 
             string newLine = unit.Line, newTeam = unit.Team;
             if (lineChange != null)
@@ -295,7 +310,7 @@ namespace Visual_Inventory_System.Services
             {
                 Ok = true,
                 Unit = unit,
-                Message = $"Unit #{unit.Id} updated ({unit.ModelNumber}, {unit.PackageType})." + DuplicateWarnings(unit)
+                Message = $"Unit #{unit.Id} updated ({ModelAndPackage(unit.ModelNumber, unit.PackageType)})." + DuplicateWarnings(unit)
             };
         }
 
@@ -403,7 +418,8 @@ namespace Visual_Inventory_System.Services
             if (unit == null) return Gone(id);
 
             Log("Tracked Unit Deleted", -1,
-                $"Unit #{unit.Id} deleted · {unit.ModelNumber} · {unit.PackageType}"
+                $"Unit #{unit.Id} deleted · {unit.ModelNumber}"
+                + (unit.PackageType != "" ? $" · {unit.PackageType}" : "")
                 + (unit.SerialNumber != "" ? $" · Serial {unit.SerialNumber}" : "")
                 + (unit.SampleNumber != "" ? $" · {SampleLabel(unit.SampleNumber)}" : "")
                 + $" · {unit.Line}"
@@ -414,7 +430,7 @@ namespace Visual_Inventory_System.Services
             return new TrackedUnitResult
             {
                 Ok = true,
-                Message = $"Unit #{unit.Id} deleted ({unit.ModelNumber}, {unit.PackageType})."
+                Message = $"Unit #{unit.Id} deleted ({ModelAndPackage(unit.ModelNumber, unit.PackageType)})."
             };
         }
 
@@ -437,11 +453,18 @@ namespace Visual_Inventory_System.Services
         private static string? TooLong(string label, string value, int max) =>
             value.Length > max ? $"{label} can be at most {max} characters (this is {value.Length})." : null;
 
+        private const string PackageRefusal = "Package / Split must be Package, Split or left blank.";
+
+        /// <summary>"" for blank (not recorded), the canonical spelling of Package/Split, or null for anything else.</summary>
         private static string? CanonicalPackage(string? value)
         {
             var v = (value ?? "").Trim();
-            return TrackedUnitPackage.All.FirstOrDefault(p => string.Equals(p, v, StringComparison.OrdinalIgnoreCase));
+            return v == "" ? "" : TrackedUnitPackage.Canonical(v);
         }
+
+        /// <summary>"RACG180D, Split", or just "RACG180D" when no Package/Split is recorded.</summary>
+        private static string ModelAndPackage(string model, string pkg) =>
+            pkg == "" ? model : $"{model}, {pkg}";
 
         /// <summary>The vocabulary's own spelling of a Line, or null if it isn't an active Line.</summary>
         private static string? CanonicalLine(string line)

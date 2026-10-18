@@ -36,6 +36,7 @@
 
     int pkgCount = units.Count(u => u.PackageType == TrackedUnitPackage.Package);
     int splitCount = units.Count(u => u.PackageType == TrackedUnitPackage.Split);
+    int pkgNotSetCount = units.Count(u => u.PackageType == "");
 
     // A filtered link can name a Team/Line no row carries; keep it selectable so
     // the controls tell the truth about what the list is filtered by.
@@ -129,6 +130,10 @@
             <strong>@units.Count</strong> unit@(units.Count == 1 ? "" : "s") &middot;
             <strong>@pkgCount</strong> Package &middot;
             <strong>@splitCount</strong> Split
+            @if (pkgNotSetCount > 0)
+            {
+                <text>&middot; <strong>@pkgNotSetCount</strong> not set</text>
+            }
         </span>
         @if (canAdd)
         {
@@ -153,6 +158,7 @@
                     {
                         <option value="@p" selected="@(fPkg == p)">@p</option>
                     }
+                    <option value="@TrackedUnitPackage.NotSet" selected="@(fPkg == TrackedUnitPackage.NotSet)">Not set</option>
                 </select>
             </div>
             <div class="col-6 col-md-3 col-xxl">
@@ -273,7 +279,16 @@
                                 </td>
                                 <td class="ut-id">#@u.Id</td>
                                 <td class="ut-model">@u.ModelNumber</td>
-                                <td><span class="ut-pill ut-pill-@u.PackageType.ToLower()">@u.PackageType</span></td>
+                                <td>
+                                    @if (u.PackageType == "")
+                                    {
+                                        <span>&mdash;</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="ut-pill ut-pill-@u.PackageType.ToLower()">@u.PackageType</span>
+                                    }
+                                </td>
                                 <td>@(u.SerialNumber == "" ? "—" : u.SerialNumber)</td>
                                 <td>@(u.SampleNumber == "" ? "—" : u.SampleNumber)</td>
                                 <td>@(branch == null ? u.Line : branch + " › " + u.Line)</td>
@@ -298,7 +313,7 @@
                                     <button type="button" class="btn btn-sm btn-outline-secondary ut-edit" data-id="@u.Id">Edit</button>
                                     @if (canDelete)
                                     {
-                                        <button type="button" class="btn btn-sm ut-btn-del ut-del" data-id="@u.Id" data-label="#@u.Id (@u.ModelNumber, @u.PackageType)">Delete</button>
+                                        <button type="button" class="btn btn-sm ut-btn-del ut-del" data-id="@u.Id" data-label="#@u.Id (@(u.PackageType == "" ? u.ModelNumber : u.ModelNumber + ", " + u.PackageType))">Delete</button>
                                     }
                                 </td>
                             </tr>
@@ -328,13 +343,16 @@
                                 <input type="text" name="modelNumber" id="ua-model" class="form-control" maxlength="60" required placeholder="e.g. RACG180D" autocomplete="off" />
                             </div>
                             <div class="col-12 col-md-5">
-                                <label class="form-label small d-block">Package / Split <span class="ut-req">*</span></label>
-                                <div class="btn-group" role="group" aria-label="Package or Split">
+                                <label class="form-label small d-block">Package / Split</label>
+                                <div class="btn-group" role="group" aria-label="Package, Split or not set">
                                     @foreach (var p in TrackedUnitPackage.All)
                                     {
-                                        <input type="radio" class="btn-check" name="packageType" id="ua-pkg-@p" value="@p" required autocomplete="off" />
+                                        <input type="radio" class="btn-check" name="packageType" id="ua-pkg-@p" value="@p" autocomplete="off" />
                                         <label class="btn btn-outline-light" for="ua-pkg-@p">@p</label>
                                     }
+                                    @* Optional: "Not set" is the default and posts a blank, which the server stores as not recorded. *@
+                                    <input type="radio" class="btn-check" name="packageType" id="ua-pkg-none" value="" checked autocomplete="off" />
+                                    <label class="btn btn-outline-light" for="ua-pkg-none">Not set</label>
                                 </div>
                             </div>
                             <div class="col-12 col-md-6">
@@ -399,12 +417,14 @@
                         </div>
                         <div class="col-12 col-md-5">
                             <label class="form-label small d-block">Package / Split</label>
-                            <div class="btn-group" role="group" aria-label="Package or Split">
+                            <div class="btn-group" role="group" aria-label="Package, Split or not set">
                                 @foreach (var p in TrackedUnitPackage.All)
                                 {
-                                    <input type="radio" class="btn-check" name="packageType" id="ue-pkg-@p" value="@p" required="@canEditCore" disabled="@(!canEditCore)" autocomplete="off" />
+                                    <input type="radio" class="btn-check" name="packageType" id="ue-pkg-@p" value="@p" disabled="@(!canEditCore)" autocomplete="off" />
                                     <label class="btn btn-outline-light" for="ue-pkg-@p">@p</label>
                                 }
+                                <input type="radio" class="btn-check" name="packageType" id="ue-pkg-none" value="" checked disabled="@(!canEditCore)" autocomplete="off" />
+                                <label class="btn btn-outline-light" for="ue-pkg-none">Not set</label>
                             </div>
                         </div>
                         <div class="col-12 col-md-6">
