@@ -24,7 +24,8 @@
     string fTeam = (string)(ViewBag.FilterTeam ?? "");
     string fLine = (string)(ViewBag.FilterLine ?? "");
     string fWhere = (string)(ViewBag.FilterWhere ?? "");
-    bool filtered = fQ != "" || fPkg != "" || fTeam != "" || fLine != "" || fWhere != "";
+    string fBuild = (string)(ViewBag.FilterBuild ?? "");
+    bool filtered = fQ != "" || fPkg != "" || fTeam != "" || fLine != "" || fWhere != "" || fBuild != "";
 
     // Cosmetic only: every rule below is enforced again on the server.
     int level = CurrentUser.Level;
@@ -72,13 +73,14 @@
     .ut-notes { max-width: 260px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
     .ut-actions { white-space: nowrap; }
 
-    /* The In Lab / In Storage / Outbound boxes: one column, always the first thing in
-       a row, so it stays on screen when the table scrolls sideways on a phone.
+    /* The In Lab / In Storage / Outbound boxes and the Built / Not Built boxes: the two
+       leftmost columns, so they stay on screen when the table scrolls sideways on a phone.
        Bootstrap's white unchecked box and its ~1.5:1 border vanish on a white card, so
        the box is transparent with a 3.3:1+ edge in both themes. Checked is a solid blue
        that clears 3:1 against its own card: a lighter blue on the dark card (the
        light-theme blue is 2.6:1 there), the deeper one on white. */
     .ut-where { white-space: nowrap; min-width: 118px; }
+    .ut-where.ut-build { min-width: 100px; }
     .ut-wh { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; line-height: 1.7; color: var(--vis-text); cursor: pointer; }
     .ut-wh .form-check-input { margin: 0; flex-shrink: 0; background-color: transparent; border-color: #8B9198; }
     .ut-wh .form-check-input:checked { background-color: #3B82F6; border-color: #3B82F6; }
@@ -136,13 +138,14 @@
 
     <form asp-controller="UnitTracker" asp-action="Index" method="get" class="cc-card ut-filter ut-form" id="filterForm">
         <div class="row g-2 align-items-end">
-            @* One row from 1200px; two rows at tablet width (6+3+3, then 4+5+3), so no
-               field is squeezed to a sliver beside the sidebar. *@
-            <div class="col-12 col-md-6 col-xl-3">
+            @* One row from 1400px; below that it wraps (Search + Package/Split + Where, then
+               Build + Team + Line, then the buttons), so no field is squeezed to a sliver
+               beside the sidebar. *@
+            <div class="col-12 col-md-6 col-xxl-3">
                 <label class="ut-label" for="f-q">Search</label>
                 <input type="text" name="q" id="f-q" class="form-control" value="@fQ" placeholder="Model, serial, sample, notes, line, team" autocomplete="off" />
             </div>
-            <div class="col-6 col-md-3 col-xl">
+            <div class="col-6 col-md-3 col-xxl">
                 <label class="ut-label" for="f-pkg">Package / Split</label>
                 <select name="pkg" id="f-pkg" class="form-select">
                     <option value="">Any</option>
@@ -152,7 +155,7 @@
                     }
                 </select>
             </div>
-            <div class="col-6 col-md-3 col-xl">
+            <div class="col-6 col-md-3 col-xxl">
                 <label class="ut-label" for="f-where">Where</label>
                 <select name="where" id="f-where" class="form-select">
                     <option value="">Any</option>
@@ -163,7 +166,18 @@
                     <option value="@TrackedUnitWhereabouts.NotSet" selected="@(fWhere == TrackedUnitWhereabouts.NotSet)">Not set</option>
                 </select>
             </div>
-            <div class="col-6 col-md-4 col-xl">
+            <div class="col-6 col-md-3 col-xxl">
+                <label class="ut-label" for="f-build">Build</label>
+                <select name="build" id="f-build" class="form-select">
+                    <option value="">Any</option>
+                    @foreach (var b in TrackedUnitBuildStatus.All)
+                    {
+                        <option value="@b" selected="@(fBuild == b)">@b</option>
+                    }
+                    <option value="@TrackedUnitBuildStatus.NotSet" selected="@(fBuild == TrackedUnitBuildStatus.NotSet)">Not set</option>
+                </select>
+            </div>
+            <div class="col-6 col-md-4 col-xxl">
                 <label class="ut-label" for="f-team">Team</label>
                 <select name="team" id="f-team" class="form-select">
                     <option value="">Any</option>
@@ -173,7 +187,7 @@
                     }
                 </select>
             </div>
-            <div class="col-6 col-md-5 col-xl">
+            <div class="col-6 col-md-5 col-xxl">
                 <label class="ut-label" for="f-line">Line</label>
                 <select name="line" id="f-line" class="form-select">
                     <option value="">Any</option>
@@ -183,7 +197,7 @@
                     }
                 </select>
             </div>
-            <div class="col-12 col-md-3 col-xl-auto d-flex gap-2">
+            <div class="col-12 col-md-3 col-xxl-auto d-flex gap-2">
                 <button type="submit" class="btn btn-primary flex-grow-1">Apply</button>
                 <a href="/UnitTracker" class="btn btn-outline-secondary flex-grow-1">Clear</a>
             </div>
@@ -212,10 +226,11 @@
     {
         <div class="cc-card ut-tablecard">
             <div class="table-responsive">
-                <table class="table table-hover align-middle ut-table" style="min-width: 1230px;" id="ut-table">
+                <table class="table table-hover align-middle ut-table" style="min-width: 1330px;" id="ut-table">
                     <thead>
                         <tr>
                             <th>Where</th>
+                            <th>Build</th>
                             <th>#</th>
                             <th>Model</th>
                             <th>Pkg/Split</th>
@@ -233,16 +248,26 @@
                         @foreach (var u in units)
                         {
                             var branch = OrgStructure.BranchFor(u.Line);
-                            <tr data-unit-id="@u.Id" data-whereabouts="@u.Whereabouts">
+                            <tr data-unit-id="@u.Id" data-whereabouts="@u.Whereabouts" data-build="@u.BuildStatus">
                                 <td class="ut-where">
                                     @foreach (var w in TrackedUnitWhereabouts.All)
                                     {
                                         @* One at a time: ticking one clears the others (page script). Saved on click
                                            for Standard and up; below that the boxes show the state but are disabled. *@
                                         <label class="ut-wh">
-                                            <input type="checkbox" class="form-check-input ut-wh-box" data-id="@u.Id" data-value="@w"
+                                            <input type="checkbox" class="form-check-input ut-wh-box" data-id="@u.Id" data-field="whereabouts" data-value="@w"
                                                    checked="@(u.Whereabouts == w)" disabled="@(!canEditCore)" aria-label="@w, unit #@u.Id" />
                                             <span>@w</span>
+                                        </label>
+                                    }
+                                </td>
+                                <td class="ut-where ut-build">
+                                    @foreach (var b in TrackedUnitBuildStatus.All)
+                                    {
+                                        <label class="ut-wh">
+                                            <input type="checkbox" class="form-check-input ut-wh-box" data-id="@u.Id" data-field="build" data-value="@b"
+                                                   checked="@(u.BuildStatus == b)" disabled="@(!canEditCore)" aria-label="@b, unit #@u.Id" />
+                                            <span>@b</span>
                                         </label>
                                     }
                                 </td>
@@ -649,23 +674,30 @@
             });
         }
 
-        // ---- Where: In Lab / In Storage / Outbound, saved on click --------------
-        // One at a time: ticking a box clears the other two, ticking the lit one clears
-        // it (blank = nobody has said). Saves in place, no reload, so a long list keeps
-        // its scroll position. The boxes are disabled for Viewers by the server; the
-        // server refuses the POST below Standard regardless.
+        // ---- Where and Build: optional boxes, saved on click --------------------
+        // Where is In Lab / In Storage / Outbound; Build is Built / Not Built. Each is its
+        // own group on the row and they work the same way: one at a time (ticking a box
+        // clears the others in its group, ticking the lit one clears it; blank = nobody
+        // has said). Saves in place, no reload, so a long list keeps its scroll position.
+        // The boxes are disabled for Viewers by the server; the server refuses the POST
+        // below Standard regardless.
+        const boxFields = {
+            whereabouts: { url: '/UnitTracker/SetWhereabouts', param: 'whereabouts', row: 'whereabouts' },
+            build: { url: '/UnitTracker/SetBuildStatus', param: 'buildStatus', row: 'build' }
+        };
         const whBoxes = document.querySelectorAll('.ut-wh-box');
         const csrfEl = document.querySelector('#editUnitForm input[name="__RequestVerificationToken"]');
         if (whBoxes.length && csrfEl) {
             // Server text goes through escapeHtml (site.js): showToast writes innerHTML.
             function whToast(message, kind) { showToast(escapeHtml(message), kind); }
-            function whShow(id, value) {
-                document.querySelectorAll('.ut-wh-box[data-id="' + id + '"]').forEach(function (b) {
-                    b.checked = (b.dataset.value === value);
-                });
+            function whGroup(id, field) {
+                return document.querySelectorAll('.ut-wh-box[data-id="' + id + '"][data-field="' + field + '"]');
             }
-            function whLock(id, locked) {
-                document.querySelectorAll('.ut-wh-box[data-id="' + id + '"]').forEach(function (b) { b.disabled = locked; });
+            function whShow(id, field, value) {
+                whGroup(id, field).forEach(function (b) { b.checked = (b.dataset.value === value); });
+            }
+            function whLock(id, field, locked) {
+                whGroup(id, field).forEach(function (b) { b.disabled = locked; });
             }
             function whStamp(row, d) {
                 // Updated column, rebuilt from nodes (never innerHTML) so it shows the
@@ -685,14 +717,17 @@
 
             whBoxes.forEach(function (box) {
                 box.addEventListener('change', async function () {
+                    const field = box.dataset.field;
+                    const cfg = boxFields[field];
+                    if (!cfg) return;
                     const id = box.dataset.id;
                     const row = box.closest('tr');
-                    const before = row.dataset.whereabouts || '';
+                    const before = row.dataset[cfg.row] || '';
                     const next = box.checked ? box.dataset.value : '';
-                    whShow(id, next);
-                    whLock(id, true);
+                    whShow(id, field, next);
+                    whLock(id, field, true);
                     try {
-                        const r = await fetch('/UnitTracker/SetWhereabouts', {
+                        const r = await fetch(cfg.url, {
                             method: 'POST',
                             credentials: 'same-origin',
                             headers: {
@@ -700,25 +735,25 @@
                                 'RequestVerificationToken': csrfEl.value,
                                 'X-Requested-With': 'XMLHttpRequest'
                             },
-                            body: 'id=' + encodeURIComponent(id) + '&whereabouts=' + encodeURIComponent(next)
+                            body: 'id=' + encodeURIComponent(id) + '&' + cfg.param + '=' + encodeURIComponent(next)
                         });
                         const text = await r.text();
                         let d = null;
                         try { d = JSON.parse(text); } catch (e) { /* a 403 carries plain text */ }
                         if (d && d.ok) {
-                            row.dataset.whereabouts = d.whereabouts;
-                            whShow(id, d.whereabouts);
+                            row.dataset[cfg.row] = d[cfg.param];
+                            whShow(id, field, d[cfg.param]);
                             whStamp(row, d);
                             whToast(d.message, 'success');
                         } else {
-                            whShow(id, before);
+                            whShow(id, field, before);
                             whToast(d ? d.message : (r.status === 403 ? text : 'Couldn’t save that (error ' + r.status + ').'), 'error');
                         }
                     } catch (e) {
-                        whShow(id, before);
+                        whShow(id, field, before);
                         whToast('Couldn’t reach the server. Nothing was saved.', 'error');
                     } finally {
-                        whLock(id, false);
+                        whLock(id, field, false);
                     }
                 });
             });

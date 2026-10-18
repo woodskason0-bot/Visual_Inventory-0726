@@ -791,6 +791,11 @@ namespace Visual_Inventory_System.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BuildStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Line")
                         .IsRequired()
                         .HasMaxLength(100)

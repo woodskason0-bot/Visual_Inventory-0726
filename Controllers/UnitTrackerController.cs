@@ -18,6 +18,7 @@ namespace Visual_Inventory_System.Controllers
     ///   Update changing Line/Team Engineer+ (checked inside the service)
     ///   UpdateNotes               any signed-in user, Viewer included
     ///   SetWhereabouts            Standard+ (the In Lab / In Storage / Outbound boxes)
+    ///   SetBuildStatus            Standard+ (the Built / Not Built boxes)
     ///   Delete                    Engineer+
     /// All of it is enforced here and in the service, not by hidden buttons. The
     /// controller holds no LINQ of its own -- every query and write is in
@@ -37,9 +38,10 @@ namespace Visual_Inventory_System.Controllers
         // Filters live in the query string so a filtered view can be linked, and
         // SmartRedirect keeps the user on it after a write.
         public IActionResult Index(string? q, string? pkg, string? team, string? line,
-            [FromQuery(Name = "where")] string? whereabouts)
+            [FromQuery(Name = "where")] string? whereabouts,
+            [FromQuery(Name = "build")] string? buildStatus)
         {
-            var units = _units.Query(q, pkg, team, line, whereabouts);
+            var units = _units.Query(q, pkg, team, line, whereabouts, buildStatus);
             ViewBag.Units = units;
 
             ViewBag.FilterQ = (q ?? "").Trim();
@@ -50,6 +52,10 @@ namespace Visual_Inventory_System.Controllers
                     System.StringComparison.OrdinalIgnoreCase)
                 ? Models.TrackedUnitWhereabouts.NotSet
                 : (Models.TrackedUnitWhereabouts.Canonical(whereabouts) ?? "");
+            ViewBag.FilterBuild = string.Equals((buildStatus ?? "").Trim(), Models.TrackedUnitBuildStatus.NotSet,
+                    System.StringComparison.OrdinalIgnoreCase)
+                ? Models.TrackedUnitBuildStatus.NotSet
+                : (Models.TrackedUnitBuildStatus.Canonical(buildStatus) ?? "");
             ViewBag.TeamOptions = _units.TeamsInUse();
             ViewBag.LineOptions = _units.LinesInUse();
 
@@ -151,6 +157,27 @@ namespace Visual_Inventory_System.Controllers
                 ok = result.Ok,
                 message = result.Message,
                 whereabouts = unit?.Whereabouts ?? "",
+                updatedDate = unit?.UpdatedAt?.ToLocalTime().ToString("MMM d, yyyy"),
+                updatedTitle = unit?.UpdatedAt?.ToLocalTime().ToString("g"),
+                updatedBy = unit?.UpdatedBy ?? ""
+            });
+        }
+
+        // Same shape as SetWhereabouts, for the Built / Not Built boxes: JSON in place of
+        // a redirect, X-Requested-With so a refusal is a readable 403, id + the one value
+        // and nothing else.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult SetBuildStatus(int id, string? buildStatus)
+        {
+            var result = _units.SetBuildStatus(id, buildStatus);
+            var unit = result.Unit;
+            return Json(new
+            {
+                ok = result.Ok,
+                message = result.Message,
+                buildStatus = unit?.BuildStatus ?? "",
                 updatedDate = unit?.UpdatedAt?.ToLocalTime().ToString("MMM d, yyyy"),
                 updatedTitle = unit?.UpdatedAt?.ToLocalTime().ToString("g"),
                 updatedBy = unit?.UpdatedBy ?? ""

@@ -68,6 +68,18 @@ namespace Visual_Inventory_System.Models
         [MaxLength(20)]
         public string Whereabouts { get; set; } = "";
 
+        /// <summary>
+        /// Whether the unit has been built, when someone knows: exactly "Built" or
+        /// "Not Built", or "" for not recorded (the default, and what unticking
+        /// writes). One value at a time, and independent of Whereabouts. This is the
+        /// same field name the full Unit Tracker spec uses for build state
+        /// (BuildStatus), with "Built" where that spec said "Ready", so nothing typed
+        /// here has to move when the full tracker extends this table. See
+        /// TrackedUnitBuildStatus.
+        /// </summary>
+        [MaxLength(20)]
+        public string BuildStatus { get; set; } = "";
+
         /// <summary>UTC, set on Add, never changed.</summary>
         public DateTime RecordedAt { get; set; }
 
@@ -109,6 +121,27 @@ namespace Visual_Inventory_System.Models
         {
             var v = (value ?? "").Trim();
             return All.FirstOrDefault(w => string.Equals(w, v, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// Allowed TrackedUnit.BuildStatus values (blank means not recorded). Same shape
+    /// as TrackedUnitWhereabouts; the page renders its two boxes from All.
+    /// </summary>
+    public static class TrackedUnitBuildStatus
+    {
+        public const string Built = "Built";
+        public const string NotBuilt = "Not Built";
+        public static readonly string[] All = { Built, NotBuilt };
+
+        /// <summary>The list filter's "nothing recorded" choice. Never stored.</summary>
+        public const string NotSet = "none";
+
+        /// <summary>The canonical spelling of a value (case-insensitive in), or null if it isn't one of the two.</summary>
+        public static string? Canonical(string? value)
+        {
+            var v = (value ?? "").Trim();
+            return All.FirstOrDefault(s => string.Equals(s, v, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

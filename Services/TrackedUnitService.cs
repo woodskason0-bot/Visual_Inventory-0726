@@ -59,7 +59,8 @@ namespace Visual_Inventory_System.Services
         /// The list, newest first. Every signed-in user sees every row (units are
         /// visible across Lines), so there is deliberately no Line scoping here.
         /// </summary>
-        public List<TrackedUnit> Query(string? q, string? pkg, string? team, string? line, string? whereabouts = null)
+        public List<TrackedUnit> Query(string? q, string? pkg, string? team, string? line,
+            string? whereabouts = null, string? buildStatus = null)
         {
             var query = _db.TrackedUnits.AsNoTracking().AsQueryable();
 
@@ -95,6 +96,18 @@ namespace Visual_Inventory_System.Services
             {
                 var canonicalWh = TrackedUnitWhereabouts.Canonical(whFilter);
                 if (canonicalWh != null) query = query.Where(u => u.Whereabouts == canonicalWh);
+            }
+
+            // Same three-way rule for Build: "none", one of the two labels, or Any.
+            var bsFilter = (buildStatus ?? "").Trim();
+            if (string.Equals(bsFilter, TrackedUnitBuildStatus.NotSet, StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(u => u.BuildStatus == "");
+            }
+            else
+            {
+                var canonicalBs = TrackedUnitBuildStatus.Canonical(bsFilter);
+                if (canonicalBs != null) query = query.Where(u => u.BuildStatus == canonicalBs);
             }
 
             return query.OrderByDescending(u => u.Id).ToList();
@@ -341,6 +354,42 @@ namespace Visual_Inventory_System.Services
                 Ok = true,
                 Unit = unit,
                 Message = target == "" ? $"Unit #{unit.Id}: whereabouts cleared." : $"Unit #{unit.Id}: {target}."
+            };
+        }
+
+        /// <summary>
+        /// Standard and up (the action carries [RequireLevel]). Sets or clears whether
+        /// a unit has been built: "Built" or "Not Built", or blank for "not recorded".
+        /// Touches the BuildStatus column and nothing else (Whereabouts, Line and Team
+        /// are untouched), and works exactly like SetWhereabouts: only the two values or
+        /// blank, a value the unit already has changes nothing and writes no log, and
+        /// the message carries no typed text.
+        /// </summary>
+        public TrackedUnitResult SetBuildStatus(int id, string? value)
+        {
+            var unit = _db.TrackedUnits.Find(id);
+            if (unit == null) return Gone(id);
+
+            var raw = Clean(value);
+            var target = raw == "" ? "" : TrackedUnitBuildStatus.Canonical(raw);
+            if (target == null) return Fail("Build must be Built or Not Built.");
+
+            if (string.Equals(unit.BuildStatus, target, StringComparison.Ordinal))
+                return new TrackedUnitResult { Ok = true, Unit = unit, Message = "Nothing changed." };
+
+            var old = unit.BuildStatus;
+            unit.BuildStatus = target;
+            unit.UpdatedAt = DateTime.UtcNow;
+            unit.UpdatedBy = _user.Name;
+            Log("Tracked Unit Build Status Changed", 0,
+                $"Unit #{unit.Id} ({unit.ModelNumber}): Build status '{old}' → '{target}'.");
+
+            if (!TrySave()) return Gone(id);
+            return new TrackedUnitResult
+            {
+                Ok = true,
+                Unit = unit,
+                Message = target == "" ? $"Unit #{unit.Id}: build status cleared." : $"Unit #{unit.Id}: {target}."
             };
         }
 
