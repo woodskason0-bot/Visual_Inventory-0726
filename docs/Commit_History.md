@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-10-18
 
+### docs — log the Samurai sheet load; `0e1424b` is pushed
+Docs only. The Pass log entry "Unit Tracker dev data from the Samurai sheet": the dev db was
+restarted from the 39 backup and loaded with the 44 units from the sheet (Package / Split and
+Build blank, `S1a` to Sample # `1a`), what was checked, and two things to confirm with Conner.
+OPEN: the dev db now holds those 44 units instead of the 42 test units. The three places that
+still said `0e1424b` was "not yet pushed" now say it is pushed. Dev data only: no code, no
+migration.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — log optional Package / Split (`0e1424b`)
 Docs only. The holdover spec gets a dated "Changed after approval" note at the top (Package /
 Split is optional now) and the four places that called it required are marked, the original
@@ -21,7 +30,7 @@ optional", with the call, the rules and the checks. No migration, so nothing cha
 *Files:* `docs/Unit_List_Holdover_Spec.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
 
 ### `0e1424b` — Change: Package / Split is optional on the Unit Tracker ("Not set")
-Committed 2026-10-18, not pushed. No migration: the column already takes `''`, and EF reports
+Committed and pushed 2026-10-18. No migration: the column already takes `''`, and EF reports
 no pending model changes. The spec made Package / Split required; the lists this is filled
 from don't say, so it is Package, Split or blank now. Add and Edit get a third choice, "Not
 set", the default on Add; picking it on Edit clears a value. On the server a blank or omitted

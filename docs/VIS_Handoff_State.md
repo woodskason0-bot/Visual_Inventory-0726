@@ -72,8 +72,9 @@ rather than assuming one exists.
 - **The Unit List holdover is committed and pushed, but in no release
   (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`; the Build boxes
   built 2026-10-16 and committed 2026-10-18, `2ea7df1`). Migrations 40, 41 and 42 are
-  included.** On 2026-10-18 Package / Split also became optional (`0e1424b`): code
-  only, no migration, committed here and not yet pushed. `AddTrackedUnits` (40) creates one new table, `TrackedUnits`, and its Line
+  included.** On 2026-10-18 Package / Split also became optional (`0e1424b`, pushed):
+  code only, no migration. `AddTrackedUnits` (40) creates one new table,
+  `TrackedUnits`, and its Line
   index; `AddTrackedUnitWhereabouts` (41) and `AddTrackedUnitBuildStatus` (42) each add
   one column to it, `Whereabouts` and `BuildStatus`, blank for every row. They're the
   first migrations since `AddPerTeamQuantityOwnership` (39), so a build from this tree
@@ -84,14 +85,16 @@ rather than assuming one exists.
   "carry" the table. The same goes for any other machine I pull this onto (I'm testing
   it on ASFLKWOODS): its first start migrates whatever db its `appsettings` point at,
   so that has to be a copy, never the host's. `C:\VIS_Inventory\inventory.dev.db` on
-  this machine stands at 42 with 42 test units (mine, plus 41 added to try the
-  features; dev data only, none of it is on the host), all three migrations applied by
-  my own Visual Studio runs. Backups in the same folder:
+  this machine stands at 42 with 44 units loaded from the Samurai unit sheet on
+  2026-10-18 (dev data only, none of it is on the host; the earlier 42 test units are
+  gone, because I restarted the dev db from the 39 backup and all three migrations
+  applied again on that start). Backups in the same folder:
   `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
   `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
   check is mine to do. What they are and how they were checked: the Pass log entries
-  "Unit List holdover", "Unit Tracker Where boxes", "Unit Tracker Build boxes" and "Unit
-  Tracker Package / Split optional" in Current state.
+  "Unit List holdover", "Unit Tracker Where boxes", "Unit Tracker Build boxes", "Unit
+  Tracker Package / Split optional" and "Unit Tracker dev data from the Samurai sheet" in
+  Current state.
 - **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
@@ -3704,5 +3707,42 @@ were all blank `ItemId`. The live check also caught a Razor slip in the new coun
 (it printed its own `@if` as text), fixed before the commit. Build at the 14-warning
 baseline.
 
-**Changes the OPEN state at the top of this file:** the holdover's code is one commit
-ahead of origin (`0e1424b`, not pushed); there is still no migration after 42.
+**Changes the OPEN state at the top of this file:** the holdover now includes the
+optional Package / Split (`0e1424b`, pushed along with its docs the same day); there is
+still no migration after 42.
+
+**Unit Tracker dev data from the Samurai sheet (2026-10-18) — the dev db's units are
+now my real list, not test units.** Dev data only: no code, no commit and no new
+migration beyond the three that applied again on the restart below.
+
+- **Where it came from.** The sheet `Unit Inventory 12-8-25` in
+  `Unit_Inventory_Tracking_Samurai.xlsm`: Model, Serial and Current Dispostion, 44
+  rows, with the model cell filled green on 32, white on 10 and red on 2. I used that
+  sheet only and read a copy of the workbook, so the original wasn't touched.
+- **What I decided.** Package / Split blank on every unit (I don't have the
+  nomenclature). No Build marks: the colors aren't loaded, because Conner will update
+  them through the week. The two red rows (destroyed, scrap) are loaded like the rest,
+  with their disposition in Notes. The three `S1a` notes become Sample # `1a` and keep
+  their full text in Notes. "In Model shop" stays in Notes (it isn't In Lab, In Storage
+  or Outbound), so Where is blank everywhere. A `?` serial is stored blank. Line is
+  Commercial Packaged/Splits and Team is Samurai (an active team whose home Line that
+  is).
+- **How.** I restarted the dev db from the 39 backup, which dropped the 42 test units
+  and their log rows, ran the committed code against it so migrations 40 to 42
+  applied, and added the 44 rows through the real Add endpoint signed in as me.
+  Unit `#N` is sheet row `N + 1`, and the page lists newest first.
+
+**Verified against the real dev db, read-only.** 44 units, ids 1 to 44 with no gaps;
+every unit's model, serial, sample and notes matched the sheet (0 mismatches), and so
+did the constants (blank Package / Split, Where and Build, Line, Team, recorded by me,
+never updated). 44 `Tracked Unit Added` log rows, all blank `ItemId`, quantity +1. Only
+`TrackedUnits`, `TransactionLogs` (703 to 747) and the migration history differ from the
+39 backup, so nothing else moved. 42 migrations, `integrity_check ok`, no sidecar files.
+
+**To check with Conner.** One unit's disposition says `15T S1a` but its model is a 240
+(20 ton); it's stored as written. `RGEG2T180ACG` is the only model that doesn't fit the
+two families the sheet lists beside it (RGEGYB, RACGYB); it may be a typo.
+
+**Doesn't change the OPEN state**, except the dev db's contents (the Still to do bullet
+says so). The dev db is a sandbox that gets re-seeded from a host copy, so this load is
+overwritten then; getting the list onto the host would be a separate load.
