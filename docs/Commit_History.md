@@ -11,6 +11,35 @@ landed, when."
 
 ## 2026-10-18
 
+### docs — log optional Package / Split (`0e1424b`)
+Docs only. The holdover spec gets a dated "Changed after approval" note at the top (Package /
+Split is optional now) and the four places that called it required are marked, the original
+wording left visible. OPEN: the holdover's first bullet names the change and says it is
+committed here and not yet pushed. A new Pass log entry, "Unit Tracker Package / Split
+optional", with the call, the rules and the checks. No migration, so nothing changes about the
+39 to 42 move.
+*Files:* `docs/Unit_List_Holdover_Spec.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `0e1424b` — Change: Package / Split is optional on the Unit Tracker ("Not set")
+Committed 2026-10-18, not pushed. No migration: the column already takes `''`, and EF reports
+no pending model changes. The spec made Package / Split required; the lists this is filled
+from don't say, so it is Package, Split or blank now. Add and Edit get a third choice, "Not
+set", the default on Add; picking it on Edit clears a value. On the server a blank or omitted
+value on Add is stored as `''`, anything but Package / Split (any case) / blank is still
+refused (now "Package / Split must be Package, Split or left blank."), and on Update the field
+follows the Line / Team rule: not posted leaves it alone, a posted blank clears it. The list
+shows a dash for a blank, the Package / Split filter gains "Not set" (`none`, the same spelling
+as Where and Build), the count line adds "N not set" only when N is above zero, and the log
+text and toasts leave the Package / Split part out when blank. `TrackedUnitPackage` gains
+`Canonical()` and `NotSet`; `[Required]` comes off `PackageType`. Verified in the real app on
+a scratch copy of the dev db at migration 42: adds (omitted, blank, Split, lowercase package
+stored as Package, a refused value), update (omitted keeps, blank clears and logs, blank to
+Package), the filter in each state, the count line, Save & add another with a blank, the Edit
+modal seeding, Viewer (radios disabled, raw POST 403) and 375 px with no overflow. It caught a
+Razor slip in the count line, fixed before the commit. 14-warning baseline unchanged.
+*Files:* `Models/TrackedUnit.cs`, `Services/TrackedUnitService.cs`,
+`Controllers/UnitTrackerController.cs`, `Views/UnitTracker/Index.cshtml`
+
 ### docs — log the Build boxes (`2ea7df1`)
 Docs only. OPEN: the Unit List holdover is pushed and in no release with migrations 40, 41
 and 42 included, so the next release moves a db from 39 to 42 (back up the host's first),

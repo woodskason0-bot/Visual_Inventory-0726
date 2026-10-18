@@ -9,6 +9,18 @@ now, while the nomenclature charts and Conner's answers settle the full Unit Tra
 (more columns, a tag, decoding, statuses), so nothing typed here has to be moved.
 Build exactly what is below and nothing from the full spec.
 
+> **Changed after approval (2026-10-18): Package / Split is optional.** I wasn't told
+> which each unit is and I don't have the nomenclature to tell, and this list is meant
+> to be a long list with optional selections, so requiring it would have meant making a
+> value up. It is now Package, Split or blank, and "Not set" is the default. That
+> overrides every place below that calls it required: the §1 bullet, the `PackageType`
+> row in §3, the Add form field in §6.3 and the validation rule in §8. A blank is stored
+> as `""` (the column stays NOT NULL, so there is no new migration), the list shows a
+> dash for it, the `pkg` filter in §6.2 gains "Not set", and the Added / Updated /
+> Deleted log text in §7 leaves the Package / Split part out when it is blank. Everything
+> else below stands as approved. The Where and Build boxes and the removed header line
+> came after this spec too; they are in the handoff's Pass log, not here.
+
 ---
 
 ## 0. Before writing code
@@ -31,7 +43,8 @@ Build exactly what is below and nothing from the full spec.
 - **A plain list/table. No tag yet.** Rows get the database's own `Id`, shown as
   `#12`. No minted ID of any kind. The tag rule waits on Kason's code list.
 - **Model number is free text**, typed by whoever registers the unit.
-- **A required Package / Split choice** next to it.
+- **A required Package / Split choice** next to it. *(Optional since 2026-10-18; see
+  the change note at the top.)*
 - **Sample # and Serial # are free text**, both optional, with no format rules.
 - **Ownership down to the team:** Branch → Line → Team, **autofilled the way Bulk
   Intake does it**: preset from the signed-in user's own Line or Branch, and
@@ -65,7 +78,7 @@ does.
 |---|---|---|---|
 | `Id` | int | | PK. Shown as `#<Id>`. |
 | `ModelNumber` | string | 60 | Required. Trimmed; stored as typed otherwise (case kept). |
-| `PackageType` | string | 10 | Required. Exactly `Package` or `Split` (see `TrackedUnitPackage`). |
+| `PackageType` | string | 10 | ~~Required.~~ Optional since 2026-10-18: exactly `Package` or `Split`, or `""` for not recorded (see `TrackedUnitPackage`). |
 | `SerialNumber` | string | 60 | Optional, trimmed. |
 | `SampleNumber` | string | 30 | Optional, trimmed. No format rule. |
 | `Line` | string | 100 | Required on Add; must pass `OrgStructure.IsValidLine`. |
@@ -224,7 +237,9 @@ It posts to `POST /UnitTracker/Add` with `[ValidateAntiForgeryToken]` and
 Fields, in this order:
 
 1. **Model number:** text, required, max 60. Placeholder: `e.g. RACG180D`.
-2. **Package / Split:** two radio buttons (`btn-check`), required, none preselected.
+2. **Package / Split:** radio buttons (`btn-check`). ~~Two, required, none preselected.~~
+   Since 2026-10-18: Package, Split and a third, "Not set" (value `""`), preselected,
+   and not required.
 3. **Serial #:** text, optional, max 60.
 4. **Sample #:** text, optional, max 30. Placeholder: `e.g. Sample 1a`.
 5. **Branch:** a select with no `name` (it's never posted). It only drives the
@@ -371,7 +386,9 @@ inventory item" marker (handoff Pass 14):
   forms here submit through `form.submit()`, which skips HTML validation (handoff
   Pass 39 and VIS-12).
 - **PackageType** must be exactly `Package` or `Split` (case-insensitive in,
-  canonical out). Anything else is refused.
+  canonical out). Anything else is refused. Since 2026-10-18 a blank is accepted and
+  stored as `""`; on Update, a field that wasn't posted leaves the value alone and a
+  posted blank clears it.
 - **Line and Team** rules as in §6.3 and §6.4.
 - **Duplicates warn, never block.** After a successful Add or Update, append a
   warning to the success toast when:

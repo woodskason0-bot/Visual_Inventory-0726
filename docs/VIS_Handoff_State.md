@@ -72,7 +72,8 @@ rather than assuming one exists.
 - **The Unit List holdover is committed and pushed, but in no release
   (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`; the Build boxes
   built 2026-10-16 and committed 2026-10-18, `2ea7df1`). Migrations 40, 41 and 42 are
-  included.** `AddTrackedUnits` (40) creates one new table, `TrackedUnits`, and its Line
+  included.** On 2026-10-18 Package / Split also became optional (`0e1424b`): code
+  only, no migration, committed here and not yet pushed. `AddTrackedUnits` (40) creates one new table, `TrackedUnits`, and its Line
   index; `AddTrackedUnitWhereabouts` (41) and `AddTrackedUnitBuildStatus` (42) each add
   one column to it, `Whereabouts` and `BuildStatus`, blank for every row. They're the
   first migrations since `AddPerTeamQuantityOwnership` (39), so a build from this tree
@@ -89,8 +90,8 @@ rather than assuming one exists.
   `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
   `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
   check is mine to do. What they are and how they were checked: the Pass log entries
-  "Unit List holdover", "Unit Tracker Where boxes" and "Unit Tracker Build boxes" in
-  Current state.
+  "Unit List holdover", "Unit Tracker Where boxes", "Unit Tracker Build boxes" and "Unit
+  Tracker Package / Split optional" in Current state.
 - **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
@@ -3661,3 +3662,47 @@ none from the new files.
 **Changes the OPEN state at the top of this file:** the holdover now includes
 migrations 40, 41 and 42, is pushed and in no release, so the next release moves a db
 from 39 to 42.
+
+**Unit Tracker Package / Split optional (2026-10-18, `0e1424b`) — a unit no longer needs
+one.** No new column, no migration: `PackageType` already took `''`. The holdover spec
+made Package / Split required. I'm filling the list from a sheet that doesn't say which
+each unit is, and I don't have the nomenclature to tell, so requiring it meant making a
+value up. I asked for it to be optional like the Where and Build boxes: it's meant to be
+a long list with optional selections. The spec carries a dated note at the top and the
+four places that said "required" are marked, with the original wording left visible.
+
+- **What it is.** Add and Edit get a third choice beside Package and Split, "Not set",
+  the default on Add. Picking it on Edit clears a unit that had a value. The list shows
+  a dash for a blank, the Package / Split filter gains "Not set" (`none`, the same
+  spelling as Where and Build) and combines with every other filter, and the count line
+  adds "N not set" only when N is above zero.
+- **The rules.** A blank or omitted value on Add is stored as `''`. Anything other than
+  Package, Split (any case) or blank is still refused, now with "Package / Split must be
+  Package, Split or left blank." On Update the field follows the same rule as Line and
+  Team: not posted leaves the unit's value alone, a posted blank clears it, so a stale or
+  hand-built POST can't wipe it by leaving the field out. A change is logged as before
+  (`Pkg/Split 'Split' → ''`), and the Added / Deleted log text and the toasts leave the
+  Package / Split part out when it's blank, so there are no doubled separators.
+- **The code.** `TrackedUnitPackage` gains `Canonical()` and `NotSet`, the same shape as
+  the Where and Build vocabularies, and `[Required]` comes off `PackageType` because it
+  was misleading once blank is allowed. The column is still NOT NULL (a non-nullable
+  string under `<Nullable>`), which is why there is no migration: `dotnet ef migrations
+  has-pending-model-changes` says there are none.
+
+**Verified live on a scratch copy of the dev db at migration 42; the real dev db wasn't
+written.** As me: adds with the field omitted, posted blank, `Split` and lowercase
+`package` (stored as `Package`), and `Foo` refused; Update with the field omitted kept
+`Split`, a posted blank cleared it and logged `Pkg/Split 'Split' → ''`, and a blank went
+to `Package`; an untouched blank gave "Nothing changed."; deleting a blank and a set
+unit read "(MODEL)" and "(MODEL, Package)". The filter returned the right rows for Not
+set, Package, Split and an unknown value (which means Any), with a search on top, and the
+count line read "44 units · 35 Package · 8 Split · 1 not set". Save & add another reopened
+with the model kept and Not set ticked; the Edit modal seeded Not set and Split
+correctly. As Hunter Little (Viewer) there is no Add, the three buttons are disabled, and
+a raw Update POST got a 403. At 375px the group fits with no sideways scroll. The log rows
+were all blank `ItemId`. The live check also caught a Razor slip in the new count line
+(it printed its own `@if` as text), fixed before the commit. Build at the 14-warning
+baseline.
+
+**Changes the OPEN state at the top of this file:** the holdover's code is one commit
+ahead of origin (`0e1424b`, not pushed); there is still no migration after 42.
