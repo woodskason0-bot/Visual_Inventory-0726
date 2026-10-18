@@ -70,22 +70,27 @@ rather than assuming one exists.
 ### Still to do
 
 - **The Unit List holdover is committed and pushed, but in no release
-  (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`). Migrations 40 and
-  41 are included.** `AddTrackedUnits` (40) creates one new table, `TrackedUnits`,
-  and its Line index; `AddTrackedUnitWhereabouts` (41) adds one column to it,
-  `Whereabouts`, blank for every row. They're the first migrations since
-  `AddPerTeamQuantityOwnership` (39), so a build from this tree is **not** a "no
-  migration" release like `VIS_Release_20261004\` (built from `3e7f201`, before them)
-  or the 9/25 one: the app runs `Migrate()` on start and will move whichever db it's
-  pointed at from 39 to 41. Back up the host's `inventory.db` before installing it,
-  and don't hand-copy a dev or scratch db over the host's to "carry" the table.
-  `C:\VIS_Inventory\inventory.dev.db` stands at 40 with 42 test units (mine, plus 41
-  added to try the features; dev data only, none of it is on the host), and the first
-  dev run of the 41 code applies the column. Backups in the same folder:
+  (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`; the Build boxes
+  built 2026-10-16 and committed 2026-10-18, `2ea7df1`). Migrations 40, 41 and 42 are
+  included.** `AddTrackedUnits` (40) creates one new table, `TrackedUnits`, and its Line
+  index; `AddTrackedUnitWhereabouts` (41) and `AddTrackedUnitBuildStatus` (42) each add
+  one column to it, `Whereabouts` and `BuildStatus`, blank for every row. They're the
+  first migrations since `AddPerTeamQuantityOwnership` (39), so a build from this tree
+  is **not** a "no migration" release like `VIS_Release_20261004\` (built from
+  `3e7f201`, before them) or the 9/25 one: the app runs `Migrate()` on start and will
+  move whichever db it's pointed at from 39 to 42. Back up the host's `inventory.db`
+  before installing it, and don't hand-copy a dev or scratch db over the host's to
+  "carry" the table. The same goes for any other machine I pull this onto (I'm testing
+  it on ASFLKWOODS): its first start migrates whatever db its `appsettings` point at,
+  so that has to be a copy, never the host's. `C:\VIS_Inventory\inventory.dev.db` on
+  this machine stands at 42 with 42 test units (mine, plus 41 added to try the
+  features; dev data only, none of it is on the host), all three migrations applied by
+  my own Visual Studio runs. Backups in the same folder:
   `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
   `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
   check is mine to do. What they are and how they were checked: the Pass log entries
-  "Unit List holdover" and "Unit Tracker Where boxes" in Current state.
+  "Unit List holdover", "Unit Tracker Where boxes" and "Unit Tracker Build boxes" in
+  Current state.
 - **The whole 2026-09-26 audit is fixed, committed and pushed, but in no release:**
   VIS-7, VIS-8 and VIS-10 to VIS-14 as Passes A to C (`0b03c94`, `a077663`,
   `d39553d`) and VIS-9 as Pass D (`9cfea2a`), all 2026-10-04. No migration, no
@@ -298,9 +303,10 @@ Migrations       39   (latest: 20260826211755_AddPerTeamQuantityOwnership;
                  in Pass 30/31 without it being updated. Count Migrations/,
                  don't trust this number. All 39 are now applied to the REAL
                  db as well, not just the code -- see Pass 33. The CODE is at
-                 41 as of 5e3267f (20261016153407_AddTrackedUnitWhereabouts,
-                 2026-10-16; 40 is AddTrackedUnits, bfd55ea); no db the host or
-                 local production uses has either yet -- see OPEN.)
+                 42 as of 2ea7df1 (20261016184506_AddTrackedUnitBuildStatus,
+                 built 2026-10-16; 41 is AddTrackedUnitWhereabouts, 5e3267f; 40
+                 is AddTrackedUnits, bfd55ea); no db the host or local
+                 production uses has any of them yet -- see OPEN.)
 Items           505   (host, per the 2026-09-23 copy -- 11 registered on the
                  host since the Sept 2 merge; CCO-0001 was registered as
                  "Contro" and deleted again on 9/10, the typo Pass 39's Type
@@ -3598,5 +3604,60 @@ models (like the first unit I added) beside the short `RACG180D` form. They and 
 `inventory.dev.db` only.
 
 **Changes the OPEN state at the top of this file:** the holdover is pushed and in no
-release, with migrations 40 and 41 included, so the next release moves a db from 39
-to 41.
+release, with migrations 40 and 41 included at the time (42, the Build boxes, is the
+entry below), so the next release moves a db off 39.
+
+**Unit Tracker Build boxes (built 2026-10-16, committed 2026-10-18, `2ea7df1`) —
+Built / Not Built, the same way as the Where boxes.** One new column,
+`TrackedUnit.BuildStatus`, and migration `20261016184506_AddTrackedUnitBuildStatus`
+(the 42nd), which adds only that column (NOT NULL, default `''`). I asked for it as
+the next feature straight after the Where boxes: optional, so whoever knows for sure
+can say. The one call that wasn't obvious was the name, and it was mine:
+`BuildStatus` with `Built` / `Not Built`. The full tracker spec already has a field
+of that name with `Not Built` / `Ready` (Conner's wording), so reusing it means
+nothing typed here has to move when that tracker extends the table; the cost is that
+spec's `Ready` becomes `Built` when it's built.
+
+- **What it is.** A second column of boxes right after Where: Built and Not Built,
+  none ticked by default (not recorded), one at a time, saved in place through
+  `POST /UnitTracker/SetBuildStatus` (JSON, no reload), exactly as Where is. It's
+  independent of Where, so a unit can be In Storage and Built. A Build filter beside
+  Where (Any / Built / Not Built / Not set) combines with every other filter and
+  feeds the same count line. The Edit modal doesn't show it and can't change it.
+- **Who and the log.** Standard and up can set it, enforced by `[RequireLevel]`;
+  Viewers see the saved state on disabled boxes, and a direct POST from one gets a
+  403. The service takes only `Built` / `Not Built` (any case in, canonical out) or
+  blank, so the old word "Ready" and Where's values are refused; it reports a deleted
+  id and writes nothing for the value the unit already has. A real change sets
+  `UpdatedAt` / `UpdatedBy` and writes one `Tracked Unit Build Status Changed` row,
+  blank `ItemId`, quantity 0: `Unit #12 (RACG180D): Build status '' → 'Built'.`
+- **The shared box code.** The page's box handler became one field-aware path (a
+  small map of url / parameter / row attribute) for both groups, instead of
+  Where-only code. With six filter controls the filter row goes to one line from
+  1400px (it was 1200) and wraps below that.
+
+**Verified live on a copy of the real dev db taken at migration 41**, so the column
+add and the upgrade path were both exercised, and then applied cleanly to the real
+dev db when I ran it in Visual Studio (it now stands at 42). As me: ticking Built,
+moving to Not Built and clearing all saved without a reload and left the same unit's
+Where tick alone, and the reverse; an invalid value, "Ready", a Where value, an
+unknown id and a missing token were refused, a value it already had gave "Nothing
+changed." with no log row, and a Build POST that also carried a `whereabouts` field
+couldn't move Where. The filter returned the right rows for each choice, for Not set
+and in combination with Where, Package/Split and the rest. As Hunter Little (Viewer)
+every box was disabled and both a raw AJAX POST (403) and a raw form POST (bounced to
+Command Center with the banner) were refused; as Colton Reather (Standard) a real
+click saved. Editing the notes of a unit with both groups ticked left both alone.
+The log rows were all blank `ItemId`, quantity 0, in the format above. Contrast after
+a real `SetTheme`, both themes: the page's own text had zero failures (754 items,
+minimum 4.87:1 dark, 4.74:1 light); the Build box edge is 5.24:1 dark and 3.18:1
+light and the checked fill 4.53:1 dark and 6.44:1 light. At 375px there's no
+horizontal overflow, both box columns sit inside the first 243px of the table, each
+box row is a 30px tap target, and a click fired from inside the page saved. As with
+the Where boxes, the browser tool's own tap misses at phone width, so a real finger
+is the one thing not proven; that's mine to do. Build at the 14-warning baseline,
+none from the new files.
+
+**Changes the OPEN state at the top of this file:** the holdover now includes
+migrations 40, 41 and 42, is pushed and in no release, so the next release moves a db
+from 39 to 42.

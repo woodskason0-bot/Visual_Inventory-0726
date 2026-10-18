@@ -9,6 +9,43 @@ landed, when."
 
 ---
 
+## 2026-10-18
+
+### docs — log the Build boxes (`2ea7df1`)
+Docs only. OPEN: the Unit List holdover is pushed and in no release with migrations 40, 41
+and 42 included, so the next release moves a db from 39 to 42 (back up the host's first),
+and any other machine the code is pulled onto migrates whatever db it points at on first
+start. The Pass log entry "Unit Tracker Build boxes" (what it is, the naming call, who can
+set it, the log, the checks), the Deployed-state migration line (the code is at 42), and the
+Where entry's closing line brought up to date.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `2ea7df1` — Add: Built / Not Built boxes and filter on the Unit Tracker; migration 42
+Built 2026-10-16, committed 2026-10-18. Migration `20261016184506_AddTrackedUnitBuildStatus`,
+the 42nd: adds one column, `TrackedUnits.BuildStatus` (NOT NULL, default `''`), and nothing
+else, so every existing unit starts unset and the Where ticks already saved are untouched.
+A second column of optional boxes right after Where, Built and Not Built, none ticked by
+default, one at a time and independent of Where. A click saves in place through a new
+`POST /UnitTracker/SetBuildStatus` that answers JSON, the same way `SetWhereabouts` does.
+Standard and up can set it, enforced by `[RequireLevel]`; Viewers see the saved state on
+disabled boxes. The service accepts only `Built` / `Not Built` or blank (so the full-tracker
+spec's old word "Ready", or a Where value, is refused), reports a deleted id, and writes
+nothing for a value the unit already has; a real change writes one `Tracked Unit Build
+Status Changed` log row (blank `ItemId`). The Edit modal neither shows nor changes it. A
+Build filter beside Where (Any / Built / Not Built / Not set) combines with every other
+filter and feeds the same count line, and with six controls the filter row now goes to one
+line from 1400 px (it was 1200) and wraps below that. The box handler is now one
+field-aware code path for both groups. The column keeps the name the full Unit Tracker spec
+uses for build state, so nothing typed here has to move, with `Built` where that spec said
+`Ready`. Verified against a copy of the real dev db at migration 41 (both the column add and
+the upgrade path), at Viewer, Standard and Admin, in both themes after a real `SetTheme` and
+at 375 px, then applied cleanly to the real dev db in Visual Studio; 14-warning baseline
+unchanged. A tap on a real phone is still to do.
+*Files:* `Models/TrackedUnit.cs`, `Services/TrackedUnitService.cs`,
+`Controllers/UnitTrackerController.cs`, `Views/UnitTracker/Index.cshtml`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Migrations/20261016184506_AddTrackedUnitBuildStatus.cs`,
+`Migrations/20261016184506_AddTrackedUnitBuildStatus.Designer.cs`
+
 ## 2026-10-16
 
 ### docs — log the Where boxes (`5e3267f`)
