@@ -11,6 +11,17 @@ landed, when."
 
 ## 2026-10-19
 
+### docs — release VIS_Release_20261019 staged
+Docs only. A release built from `b5b98a9` (the code is `0e1424b`): self-contained win-x64, 544
+files, staged on `LESLISGIFT` at `Releases\VIS_Release_20261019\` with a `README_FIRST.txt`, every
+file SHA-256-matched after the copy, no database in it. It has migrations 40 to 42, so it
+moves the host's db from 39 to 42 on first start. Checked: the published exe in Production on a
+copy of the host pull (migrated, 19 pages, no errors), and the 9/25 build still runs on the migrated
+db (rollback). OPEN: the holdover is staged in a release, not installed; the 10/04 release is
+marked superseded (its folder is gone from the USB); the old 9/2 raw pull is copied to OneDrive
+`Superseded Releases`. A new Pass log entry, "Release VIS_Release_20261019 staged".
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — host pull and rehearsal; dev db re-seeded
 Docs only. The db table in OPEN is redone as of 10/19: the fresh host pull (`Inventory_Bus\inventory.db` on
 `LESLISGIFT`, 39 migrations, last written 10/15) and the dev db re-seeded from it with
