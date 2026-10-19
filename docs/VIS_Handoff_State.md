@@ -69,6 +69,22 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **Next, 2026-10-19 (Conner is on site this week): get the Unit Tracker onto the
+  host.** In order. First check which build the host runs now (`Check_Host_Apps.ps1`
+  on `LESLISGIFT`), since all I have is that the 10/04 build was planned for 10/05.
+  Pull a fresh copy of the host's `inventory.db` (a copy only; write down its md5).
+  Run the current build on that copy and check it goes 39 to 42 with the item, variant,
+  user and log counts unchanged: the 39 to 42 move has only ever run on the 9/23 data.
+  Re-seed the dev db from that copy, then reload the 44 units from the sheet, because
+  the re-seed wipes them (`Unit Inventory 12-8-25` in
+  `Unit_Inventory_Tracking_Samurai.xlsm`; the Pass log entry "Unit Tracker dev data from
+  the Samurai sheet" says how it was loaded). Build one dated release folder, no zip,
+  staged where I say. Back up the host's `inventory.db`, stop the running exe, install,
+  and let the first start migrate in place. Loading the 44 units onto the host is a
+  separate decision, and Conner can't update Build marks until the release is on the
+  host and they are loaded. Questions for Conner: a WO # field, in-between statuses,
+  units already given to the gas team or ATI as history, more Designation values; and
+  the `15T S1a` note on a 240 model (unit #20).
 - **The Unit List holdover is committed and pushed, but in no release
   (2026-10-15, `bfd55ea`; the Where boxes 2026-10-16, `5e3267f`; the Build boxes
   built 2026-10-16 and committed 2026-10-18, `2ea7df1`). Migrations 40, 41 and 42 are
@@ -82,9 +98,13 @@ rather than assuming one exists.
   `3e7f201`, before them) or the 9/25 one: the app runs `Migrate()` on start and will
   move whichever db it's pointed at from 39 to 42. Back up the host's `inventory.db`
   before installing it, and don't hand-copy a dev or scratch db over the host's to
-  "carry" the table. The same goes for any other machine I pull this onto (I'm testing
-  it on ASFLKWOODS): its first start migrates whatever db its `appsettings` point at,
-  so that has to be a copy, never the host's. `C:\VIS_Inventory\inventory.dev.db` on
+  "carry" the table. The same goes for any other machine I pull this onto (I tested
+  it on ASFLKWOODS on 2026-10-18 with a copy of the 39 backup: one start applied 40 to
+  42, but an earlier start there showed `no such table: TrackedUnits` on the Unit
+  Tracker page, so the migrations hadn't run against that db yet, and I never found
+  out why; `Program.cs` only prints a migration failure to the console): its first
+  start migrates whatever db its `appsettings` point at, so that has to be a copy,
+  never the host's. `C:\VIS_Inventory\inventory.dev.db` on
   this machine stands at 42 with 44 units loaded from the Samurai unit sheet on
   2026-10-18 (dev data only, none of it is on the host; the earlier 42 test units are
   gone, because I restarted the dev db from the 39 backup and all three migrations
@@ -126,7 +146,7 @@ rather than assuming one exists.
   serial. The record (what changed, the checks, the live runs) is the 2026-10-04
   entries in `docs/VIS_Debugging_Log.md`.
 - **VIS-15 (2026-10-14): deleted item IDs were being reissued — fixed in `1ca6651`
-  (committed, not pushed), in no release.** `GenerateItemId` now counts every number ever used for a prefix
+  (committed and pushed), in no release.** `GenerateItemId` now counts every number ever used for a prefix
   (live items plus the logs, unit rows, order lines and transfers a delete leaves
   behind), so a deleted item's ID and its history can't land on a new item. No
   migration. Verified live on copies of the dev db: before the fix a "Contro"

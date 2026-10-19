@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-10-18
 
+### docs — next steps for 2026-10-19; two stale lines
+Docs only. OPEN: a new first "Still to do" bullet with the order for getting the Unit
+Tracker onto the host (check which build the host runs, pull a fresh host copy, rehearse
+39 to 42 on it, re-seed dev and reload the 44 units, build one dated release folder, back
+up and install), plus the questions for Conner. The ASFLKWOODS test result is recorded
+(a copy of the 39 backup migrated to 42 there; an earlier start showed `no such table:
+TrackedUnits` and the reason wasn't found). The VIS-15 line no longer says "not pushed".
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — log the Samurai sheet load; `0e1424b` is pushed
 Docs only. The Pass log entry "Unit Tracker dev data from the Samurai sheet": the dev db was
 restarted from the 39 backup and loaded with the 44 units from the sheet (Package / Split and
