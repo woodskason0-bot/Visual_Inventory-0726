@@ -60,6 +60,7 @@ proven.
 | File | md5 | Notes |
 |---|---|---|
 | `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | **Newest copy of the host**, pulled 2026-10-19 with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. The old 9/2 raw pull (`Releases\VIS_Inventory`, its `inventory.db` md5 `3b500df5…`) is copied to OneDrive `Superseded Releases\VIS_Inventory_hostpull_20260902`, hash-checked; it is still on the USB until I delete it by hand. |
+| `D:\Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) | `1b74d796…` | **For the host, optional:** a byte copy of the re-seeded dev db below = the 10/19 host pull + migrations 40 to 42 + the 44 sheet units. Every other table is row-for-row identical to the pull; checked on the staged file itself. Safe to copy over the host's `inventory.db` only if that is still `ff07ddcc…` (nothing written since the pull) and after a backup. |
 | `C:\VIS_Inventory\inventory.dev.db` | `15d21a55…` (SHA-256) | Dev sandbox, re-seeded 2026-10-19 = that host pull + migrations 40 to 42 + 44 units from the Samurai sheet (see that Pass log entry). **Current — the right file to test against.** Its previous state (the 9/23 host copy + the same 44 units) is `inventory.dev.db.pre-reseed-backup-20261019-140216`. |
 | `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | The 9/23 copy of the host, **superseded by the 10/19 pull above.** 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
 | `E:\VIS_Release_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | For the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted, staged with the Sept 24 release. Same file as the earlier `E:\VIS_Return_20260924\` package, which it supersedes. |
@@ -81,9 +82,12 @@ rather than assuming one exists.
   is `0D360D1C…7845`), and I don't know whether the 10/04 build ever went on. Back up
   the host's `inventory.db`, stop the running exe, install, and let the first start
   migrate in place. This release carries the audit fixes (VIS-7 to VIS-15) as well as the
-  Unit Tracker if the host never got 10/04. Loading the 44 units onto the host is a
-  separate decision, and Conner can't update Build marks until the release is on the
-  host and they are loaded. Questions for Conner: a WO # field, in-between statuses,
+  Unit Tracker if the host never got 10/04. I chose to put the 44 units on the host by a
+  pre-seeded db swap: `Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` (md5
+  `1b74d796…`), valid only if the host's `inventory.db` md5 is still `FF07DDCC…` (the
+  README's CHECK FIRST step), and after the backup; otherwise the in-place migration
+  stands and the units are added another way. Conner can't update Build marks until the
+  release is on the host and the units are loaded. Questions for Conner: a WO # field, in-between statuses,
   units already given to the gas team or ATI as history, more Designation values; and
   the `15T S1a` note on a 240 model (unit #20).
 - **The Unit List holdover is committed and pushed, and staged in
@@ -3811,7 +3815,8 @@ The first release since the 9/25 one that has migrations.
   `VIS_application_10.19.26\` (544 files, 130.8 MB, self-contained win-x64, product
   version `1.0.0+b5b98a9…`) and a `README_FIRST.txt` (what's in it, the db move from 39
   to 42, back up first, deploy steps, rollback, how to tell which build is running).
-  dll SHA-256 `7CFBB84E…7F123`, exe `A1B74234…38D2E`. No database in it. I published
+  dll SHA-256 `7CFBB84E…7F123`, exe `A1B74234…38D2E`. No database in the app folder (an
+  optional pre-seeded one sits beside it; see the next entry). I published
   from a clean clone of master into `C:\VIS_Host\october19threlease` on this laptop, so
   nothing uncommitted can be in it, and all 544 files matched by SHA-256 after the copy
   to the USB.
@@ -3833,3 +3838,27 @@ The first release since the 9/25 one that has migrations.
 
 **Changes the OPEN state at the top of this file:** the holdover is staged in a release
 instead of in none, and the first Still to do bullet says what's left.
+
+**Pre-seeded db added to the release (2026-10-19) — how the 44 units can reach the host.**
+I asked whether the units would go out with the release. They wouldn't, since the app
+folder has no database, so I chose a pre-seeded db swap over a loader script.
+
+- **What it is.** `Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` on
+  `LESLISGIFT`, a byte copy of the re-seeded dev db (SHA-256 matched), md5
+  `1B74D79654193EA6B3820582E85DA251`: the 10/19 host pull, migrated to 42, plus the 44
+  sheet units and their 44 `Tracked Unit Added` log rows. Checked on the staged file
+  itself, read-only: `integrity_check ok`, journal mode `delete`, no sidecars; 23 of the
+  pull's 25 tables identical row for row, and the two that differ are `TransactionLogs`
+  (727 to 771) and the migration history (39 to 42); 44 units, 0 mismatches against the
+  sheet.
+- **The one condition.** It is only valid if the host's `inventory.db` still has the
+  md5 `FF07DDCC27AF07C748E8F4EE8B19FB53` (nothing written since I copied it on 10/19).
+  The README's `DEPLOY - DATABASE` section makes that the first step, then a backup,
+  then the copy, then a check of the new md5; if the md5 differs, skip the swap and let
+  the app migrate in place. I rewrote the README for this (hashes, steps, undo, and the
+  console difference: no "Applying migration" lines when the db is already at 42).
+- **What I didn't do.** Nothing was run against the host, and the host's db hasn't been
+  re-checked since the copy.
+
+**Changes the OPEN state at the top of this file:** the first Still to do bullet and the
+db table, both updated above.

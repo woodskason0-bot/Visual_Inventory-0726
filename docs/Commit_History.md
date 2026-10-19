@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-10-19
 
+### docs — pre-seeded db added to the release
+Docs only. The release folder on `LESLISGIFT` gets an optional `VIS_Inventory\inventory.db`: a byte
+copy of the re-seeded dev db (the 10/19 host pull, migrated to 42, plus the 44 sheet units), md5
+`1B74D796…`, checked table by table against the pull. It is valid only if the host's db md5 is still
+`FF07DDCC…`; the README is rewritten with that CHECK FIRST step, the backup, the copy, the
+confirm and the undo. OPEN: the first Still to do bullet and the db table say so. A new Pass log
+entry, "Pre-seeded db added to the release". No code, no migration.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — release VIS_Release_20261019 staged
 Docs only. A release built from `b5b98a9` (the code is `0e1424b`): self-contained win-x64, 544
 files, staged on `LESLISGIFT` at `Releases\VIS_Release_20261019\` with a `README_FIRST.txt`, every
