@@ -298,7 +298,10 @@ Two tracks, and the second one is above the first.
 - **Release folders are dated.** Pass 33 published self-contained `win-x64` to
   `C:\VIS_Host\august28threlease`; earlier releases went to `C:\VIS_Publish`. Roughly
   132 MB / 353 files per release. Stop the running `.exe` before overwriting — a live
-  process holds a file lock and the copy fails partway.
+  process holds a file lock and the copy fails partway. Since 2026-10-19 only the
+  current release stays in `C:\VIS_Host`; superseded builds and db backups are cut (not
+  copied) into OneDrive `03_Rheem_Projects\Superseded Releases\`, and there is no
+  rollback step in a release.
 - Served via `$env:ASPNETCORE_URLS = "http://0.0.0.0:5000"`.
 - `.sqbpro` files are DB Browser session sidecars — created only by that GUI, never by
   the app or EF Core. Safe to delete, zero signal.

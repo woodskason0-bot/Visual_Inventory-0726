@@ -61,7 +61,7 @@ proven.
 |---|---|---|
 | `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | **Newest copy of the host**, pulled 2026-10-19 with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. The old 9/2 raw pull (`Releases\VIS_Inventory`, its `inventory.db` md5 `3b500df5…`) is copied to OneDrive `Superseded Releases\VIS_Inventory_hostpull_20260902`, hash-checked; it is still on the USB until I delete it by hand. |
 | `D:\Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) | `1b74d796…` | **For the host, optional:** a byte copy of the re-seeded dev db below = the 10/19 host pull + migrations 40 to 42 + the 44 sheet units. Every other table is row-for-row identical to the pull; checked on the staged file itself. Safe to copy over the host's `inventory.db` only if that is still `ff07ddcc…` (nothing written since the pull) and after a backup. |
-| `C:\VIS_Inventory\inventory.dev.db` | `15d21a55…` (SHA-256) | Dev sandbox, re-seeded 2026-10-19 = that host pull + migrations 40 to 42 + 44 units from the Samurai sheet (see that Pass log entry). **Current — the right file to test against.** Its previous state (the 9/23 host copy + the same 44 units) is `inventory.dev.db.pre-reseed-backup-20261019-140216`. |
+| `C:\VIS_Inventory\inventory.dev.db` | `15d21a55…` (SHA-256) | Dev sandbox, re-seeded 2026-10-19 = that host pull + migrations 40 to 42 + 44 units from the Samurai sheet (see that Pass log entry). **Current — the right file to test against.** Its previous state (the 9/23 host copy + the same 44 units) is `inventory.dev.db.pre-reseed-backup-20261019-140216`, now in OneDrive (see the 2026-10-19 cleanup entry). |
 | `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | The 9/23 copy of the host, **superseded by the 10/19 pull above.** 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
 | `E:\VIS_Release_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | For the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted, staged with the Sept 24 release. Same file as the earlier `E:\VIS_Return_20260924\` package, which it supersedes. |
 | `C:\VIS_Inventory\inventory.db` | `5be3f996…` | Local production — **still the Sept 2 merge state, three weeks behind the host** (494 items / 519 variants / 651 logs). Do not treat as current. |
@@ -113,9 +113,9 @@ rather than assuming one exists.
   never the host's. `C:\VIS_Inventory\inventory.dev.db` on
   this machine stands at 42 with the 44 units from the Samurai unit sheet, re-seeded
   on 2026-10-19 from the fresh host pull (dev data only, none of it is on the host; the
-  table above says what it is). Backups in the same folder:
-  `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
-  `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
+  table above says what it is). Its older backups (the 39 with no table, the 40 with
+  one unit, and the earlier dev copies) are in OneDrive, moved there on 2026-10-19;
+  `C:\VIS_Inventory` now holds only `inventory.db` and `inventory.dev.db`. The phone
   check is mine to do. What they are and how they were checked: the Pass log entries
   "Unit List holdover", "Unit Tracker Where boxes", "Unit Tracker Build boxes", "Unit
   Tracker Package / Split optional" and "Unit Tracker dev data from the Samurai sheet" in
@@ -287,6 +287,10 @@ rather than assuming one exists.
   128 active variants carry a blank Team org-wide.
 
 ### Backups taken 2026-09-24
+
+(Moved to OneDrive on 2026-10-19, see the cleanup entry at the end of Current state:
+`Superseded Releases\VIS_Inventory_backups_superseded_20261019\`. Same for the Sept 2
+merge backups mentioned below.)
 
 In `C:\VIS_Inventory\`:
 - `inventory.dev.db.pre-reseed-backup-20260924-152116` — the stale pre-merge dev
@@ -3862,3 +3866,27 @@ folder has no database, so I chose a pre-seeded db swap over a loader script.
 
 **Changes the OPEN state at the top of this file:** the first Still to do bullet and the
 db table, both updated above.
+
+**Cleanup after the 2026-10-19 release work — superseded things moved to OneDrive.** No
+code change. I moved (cut, not copied; file counts matched before and after) everything
+this release made redundant into OneDrive
+`03_Rheem_Projects\Superseded Releases\`, and the current things stay where they were:
+
+- **Builds.** `VIS_Host_builds_superseded_20261019\` holds `august28threlease`,
+  `september2ndrelease`, `september10threlease`, `september24threlease` and
+  `september25threlease` (544 files each; the 9/25 one is what the host runs until the
+  new release goes on), plus `flat_publish_20260811\`, an old flat publish that had been
+  sitting loose in the root of `C:\VIS_Host` (349 files and a `wwwroot`). Only
+  `C:\VIS_Host\october19threlease` is left there.
+- **Old staging.** `VIS_Deploy_Staging_20260821\`, the whole of `C:\VIS_Deploy_Staging`.
+- **Db backups.** `VIS_Inventory_backups_superseded_20261019\`: `dev-db\` (the five
+  `inventory.dev.db.pre-…` backups), `local-db\` (the Sept 2 host pull, the merge and
+  normalize backups, the 8/19 and 8/6 ones, and the `.sqbpro`) and
+  `C_VIS_Inventory_Backup_20260811\` (the old `C:\VIS_Inventory_Backup`).
+- **Not touched.** `C:\VIS_Inventory\inventory.db` (still the Sept 2 state, md5
+  `5be3f996…`), `inventory.dev.db`, `C:\VIS_Image-Uploads`, and anything with "scope" in
+  its name. I also cleared my own scratch copies from the release work (clones, build
+  copies, test dbs, my copy of the Samurai workbook).
+- **Still mine to do by hand.** The USB is on the host, so `Releases\VIS_Inventory`
+  there is still waiting to be deleted (it is already in OneDrive as
+  `VIS_Inventory_hostpull_20260902`).

@@ -11,6 +11,16 @@ landed, when."
 
 ## 2026-10-19
 
+### docs — cleanup: superseded builds and db backups moved to OneDrive
+Docs only. The five superseded builds, the old flat publish, `C:\VIS_Deploy_Staging` and 11 db
+backups plus `C:\VIS_Inventory_Backup` were cut from `C:\` into OneDrive `Superseded Releases`
+(counts matched), leaving `C:\VIS_Host\october19threlease` and `C:\VIS_Inventory\inventory.db` +
+`inventory.dev.db`. A new cleanup entry in the Pass log, the db table and the first
+holdover bullet updated to say where the backups went, and one sentence added to the
+addendum's "Release folders are dated" bullet (only the current release stays; no rollback
+step). Nothing named "scope" was touched.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/vis-addendum-consolidated.md`, `docs/Commit_History.md`
+
 ### docs — pre-seeded db added to the release
 Docs only. The release folder on `LESLISGIFT` gets an optional `VIS_Inventory\inventory.db`: a byte
 copy of the re-seeded dev db (the 10/19 host pull, migrated to 42, plus the 44 sheet units), md5
