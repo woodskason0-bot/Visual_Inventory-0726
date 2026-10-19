@@ -9,6 +9,17 @@ landed, when."
 
 ---
 
+## 2026-10-19
+
+### docs — host pull and rehearsal; dev db re-seeded
+Docs only. The db table in OPEN is redone as of 10/19: the fresh host pull (`Inventory_Bus\inventory.db` on
+`LESLISGIFT`, 39 migrations, last written 10/15) and the dev db re-seeded from it with
+the 44 sheet units. The "Next, 2026-10-19" bullet says what is done (pull, 39 to 42
+rehearsal, re-seed) and what is left (check which build the host runs, build the
+release, back up and install). A new Pass log entry, "Host pull and rehearsal,
+2026-10-19", with the checks. No code, no migration.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ## 2026-10-18
 
 ### docs — run guide moved to OneDrive; where it lives, in the addendum

@@ -55,12 +55,13 @@ actions are logged as `DeCory.Thomas`, a spelling the pre-fix code could never
 produce (it flattened every name to `Decory.Thomas`). Treat it as deployed, not
 proven.
 
-### Which database file is which, as of 2026-09-24
+### Which database file is which, as of 2026-10-19
 
 | File | md5 | Notes |
 |---|---|---|
-| `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | **Newest copy of the host**, pulled 9/23. 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
-| `C:\VIS_Inventory\inventory.dev.db` | `4b989780…` | Dev sandbox = that 9/23 host copy, minus the stale `Decory1.Thomas` user, plus a few dev-only test logs from Pass 39 (a net-zero Adjustment round trip on CEV-0027). **Current — the right file to test against.** |
+| `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | **Newest copy of the host**, pulled 2026-10-19 with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. |
+| `C:\VIS_Inventory\inventory.dev.db` | `15d21a55…` (SHA-256) | Dev sandbox, re-seeded 2026-10-19 = that host pull + migrations 40 to 42 + 44 units from the Samurai sheet (see that Pass log entry). **Current — the right file to test against.** Its previous state (the 9/23 host copy + the same 44 units) is `inventory.dev.db.pre-reseed-backup-20261019-140216`. |
+| `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | The 9/23 copy of the host, **superseded by the 10/19 pull above.** 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
 | `E:\VIS_Release_20260924\VIS_Inventory\inventory.db` (SD `MASTER128`) | `929843e8…` | For the host: the 9/23 copy with ONLY `Decory1.Thomas` deleted, staged with the Sept 24 release. Same file as the earlier `E:\VIS_Return_20260924\` package, which it supersedes. |
 | `C:\VIS_Inventory\inventory.db` | `5be3f996…` | Local production — **still the Sept 2 merge state, three weeks behind the host** (494 items / 519 variants / 651 logs). Do not treat as current. |
 
@@ -70,17 +71,16 @@ rather than assuming one exists.
 ### Still to do
 
 - **Next, 2026-10-19 (Conner is on site this week): get the Unit Tracker onto the
-  host.** In order. First check which build the host runs now (`Check_Host_Apps.ps1`
-  on `LESLISGIFT`), since all I have is that the 10/04 build was planned for 10/05.
-  Pull a fresh copy of the host's `inventory.db` (a copy only; write down its md5).
-  Run the current build on that copy and check it goes 39 to 42 with the item, variant,
-  user and log counts unchanged: the 39 to 42 move has only ever run on the 9/23 data.
-  Re-seed the dev db from that copy, then reload the 44 units from the sheet, because
-  the re-seed wipes them (`Unit Inventory 12-8-25` in
-  `Unit_Inventory_Tracking_Samurai.xlsm`; the Pass log entry "Unit Tracker dev data from
-  the Samurai sheet" says how it was loaded). Build one dated release folder, no zip,
-  staged where I say. Back up the host's `inventory.db`, stop the running exe, install,
-  and let the first start migrate in place. Loading the 44 units onto the host is a
+  host.** Done today: I pulled a fresh copy of the host's `inventory.db` (see the table
+  above), ran the current build on a copy and it went 39 to 42 with every other table
+  identical, and re-seeded the dev db from it and reloaded the 44 units from the sheet
+  (the Pass log entry "Host pull and rehearsal, 2026-10-19"). Still to do: I believe the
+  host runs the 9/25 build, but that's from memory, not checked by dll hash (9/25 is
+  `A136496A…B858`, 10/04 is `0D360D1C…7845`), and I don't know whether the 10/04 build
+  ever went on. Build one dated release folder, no zip, staged where I say. Back up the
+  host's `inventory.db`, stop the running exe, install, and let the first start migrate
+  in place. A release built now carries the audit fixes (VIS-7 to VIS-15) as well as the
+  Unit Tracker, if the host never got 10/04. Loading the 44 units onto the host is a
   separate decision, and Conner can't update Build marks until the release is on the
   host and they are loaded. Questions for Conner: a WO # field, in-between statuses,
   units already given to the gas team or ATI as history, more Designation values; and
@@ -105,10 +105,9 @@ rather than assuming one exists.
   out why; `Program.cs` only prints a migration failure to the console): its first
   start migrates whatever db its `appsettings` point at, so that has to be a copy,
   never the host's. `C:\VIS_Inventory\inventory.dev.db` on
-  this machine stands at 42 with 44 units loaded from the Samurai unit sheet on
-  2026-10-18 (dev data only, none of it is on the host; the earlier 42 test units are
-  gone, because I restarted the dev db from the 39 backup and all three migrations
-  applied again on that start). Backups in the same folder:
+  this machine stands at 42 with the 44 units from the Samurai unit sheet, re-seeded
+  on 2026-10-19 from the fresh host pull (dev data only, none of it is on the host; the
+  table above says what it is). Backups in the same folder:
   `inventory.dev.db.pre-trackedunits-backup-20261015-001518` (39, no table) and
   `inventory.dev.db.pre-unitseed-backup-20261016-102103` (40, one unit). The phone
   check is mine to do. What they are and how they were checked: the Pass log entries
@@ -3766,3 +3765,35 @@ two families the sheet lists beside it (RGEGYB, RACGYB); it may be a typo.
 **Doesn't change the OPEN state**, except the dev db's contents (the Still to do bullet
 says so). The dev db is a sandbox that gets re-seeded from a host copy, so this load is
 overwritten then; getting the list onto the host would be a separate load.
+
+**Host pull and rehearsal, 2026-10-19 — the 39 to 42 move works on the host's current
+data, and the dev db is re-seeded from it.** No code, no commit and no migration beyond
+the three that applied on the copies below.
+
+- **The pull.** I stopped the host app and copied `C:\VIS_Inventory\inventory.db` to
+  USB `LESLISGIFT`, `Inventory_Bus\inventory.db`. It's a newer state than the 9/23
+  copy: 512 items / 539 variants / 54 users / 727 logs, last written 10/15 3:36 PM, 39
+  migrations, `integrity_check ok`, no sidecar files. I read it read-only and copied it
+  into scratch twice, hash-checked each time. The folder also holds older files of mine
+  (see the table above). The host app is stopped until I restart it, and which build it
+  runs isn't checked yet (see the first Still to do bullet).
+- **The rehearsal.** I ran the current build, signed in as me, against a copy of the
+  pull. Migrations 40, 41 and 42 applied in one pass with no error
+  (`>>> Database connection established successfully.`). Compared row by row with the
+  untouched pull, 24 of its 25 tables are identical; only `__EFMigrationsHistory`
+  changed (39 to 42), and `TrackedUnits` is new and empty. `integrity_check ok`. 19
+  pages loaded 200 in that run (Command Center, Search Center and its stock views and
+  Ledger, Unit Tracker, Logs, My Activity, Intake, Log Delivery, Deliveries, Settings,
+  Pickup Queue, All Items) with no server errors.
+- **The re-seed.** The previous dev db is kept as
+  `inventory.dev.db.pre-reseed-backup-20261019-140216`. A pristine copy of the pull
+  replaced `inventory.dev.db`; the app run on it applied 40 to 42 again and I added the
+  44 units from the sheet the same way as on 10/18. Verified read-only: 44 units, ids 1
+  to 44, 0 mismatches against the sheet, 42 migrations, `integrity_check ok`; against
+  the pull only `TransactionLogs` (727 to 771, exactly the 44 `Tracked Unit Added` rows,
+  blank `ItemId`) and the migration history differ. A copy is on the USB as
+  `Inventory_Bus\inventory.dev.db.reseeded-20261019`, beside the files that were already
+  there, none of which changed.
+
+**Doesn't change the OPEN state**, except the db table and the first Still to do bullet,
+both updated above.
