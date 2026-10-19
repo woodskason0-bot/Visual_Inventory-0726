@@ -11,6 +11,16 @@ landed, when."
 
 ## 2026-10-18
 
+### docs — run guide moved to OneDrive; where it lives, in the addendum
+Docs only. The throwaway Unit Tracker run guide (`Unit_List_Dev_Run_Check.md`) was never
+committed and sat untracked in `docs/`, showing up in Visual Studio's Git Changes. It now
+lives in OneDrive, `Documents\VIS and Sourcing Debug Sessions\Sessions\2026-10-18_Unit_Tracker_Dev_Run_Guide\`,
+with `units_to_load.json` (the 44 units from the Samurai sheet, for reloading after a dev
+re-seed) and `readsheet.py`, all hash-checked after the copy. A bullet under "Environment
+and build" in the addendum says where per-session files go. The repo has nothing untracked
+left.
+*Files:* `docs/vis-addendum-consolidated.md`, `docs/Commit_History.md`
+
 ### docs — next steps for 2026-10-19; two stale lines
 Docs only. OPEN: a new first "Still to do" bullet with the order for getting the Unit
 Tracker onto the host (check which build the host runs, pull a fresh host copy, rehearse

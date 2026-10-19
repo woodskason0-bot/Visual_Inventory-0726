@@ -109,6 +109,16 @@ None of this is visible in code; all of it has cost debugging time.
 - **Firewall blocks port 5000.**
   `New-NetFirewallRule -DisplayName "Inventory Dev Two" -Direction Inbound -LocalPort 5000 -Protocol TCP -Action Allow`
   Needs admin. Office network permissive, home not.
+- **Run guides and one-off load files live in OneDrive, not the repo.** Per-session
+  files go in `C:\Users\woods\OneDrive\Documents\VIS and Sourcing Debug Sessions\Sessions\`,
+  one dated folder each, so nothing untracked sits in the repo and shows up in Visual
+  Studio's Git Changes. The 2026-10-18 one, `2026-10-18_Unit_Tracker_Dev_Run_Guide\`,
+  holds `Unit_List_Dev_Run_Check.md` (a ten-minute click-through of the Unit Tracker on
+  the dev db, a throwaway that never went into git), `units_to_load.json` (the 44 units
+  from the Samurai sheet, parsed from it, to reload after a dev re-seed) and
+  `readsheet.py` (reads one sheet of an `.xlsx` / `.xlsm`, read-only, no extra packages).
+  The handoff's Pass log entry "Unit Tracker dev data from the Samurai sheet" says how
+  the list was loaded.
 - **Two machines means stale artifacts.** Standing rule: byte-compare and tail-check
   every delivered artifact. Verify against live schema, never the zip.
 - **Two `appsettings.json` copies** (project vs publish) cost one session. Check
