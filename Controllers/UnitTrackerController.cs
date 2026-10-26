@@ -203,16 +203,13 @@ namespace Visual_Inventory_System.Controllers
             return SmartRedirect();
         }
 
-        // _Layout writes the toast text into a JS string literal. Razor HTML-encodes
-        // it, so "<" and quotes are safe, but a backslash or a line break in a
-        // typed model/serial would end that literal early or malform an escape and
-        // the toast would silently never show. Only the toast text is touched; the
-        // stored value and the log row keep exactly what was typed. Capped so a
-        // hostile raw POST can't push the TempData cookie past its size limit.
+        // Capped so a hostile raw POST can't push the TempData cookie past its size
+        // limit. Only the toast text is capped; the stored value and the log row keep
+        // exactly what was typed. Backslashes and line breaks go through unchanged:
+        // _Layout serializes the toast text as JSON and shows it as plain text (BC-10).
         private static string ToastText(string message)
         {
-            var flat = message.Replace('\\', '/').Replace('\r', ' ').Replace('\n', ' ');
-            return flat.Length > 400 ? flat.Substring(0, 400) + "…" : flat;
+            return message.Length > 400 ? message.Substring(0, 400) + "…" : message;
         }
 
         // What the Package/Split filter shows as selected: "none" for the

@@ -708,8 +708,9 @@
         const whBoxes = document.querySelectorAll('.ut-wh-box');
         const csrfEl = document.querySelector('#editUnitForm input[name="__RequestVerificationToken"]');
         if (whBoxes.length && csrfEl) {
-            // Server text goes through escapeHtml (site.js): showToast writes innerHTML.
-            function whToast(message, kind) { showToast(escapeHtml(message), kind); }
+            // showToast sets the message as text (BC-10), so server text goes in as-is;
+            // escaping it here as well would show "&amp;" and the like on screen.
+            function whToast(message, kind) { showToast(message, kind); }
             function whGroup(id, field) {
                 return document.querySelectorAll('.ut-wh-box[data-id="' + id + '"][data-field="' + field + '"]');
             }

@@ -259,22 +259,34 @@
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     <script>
+        // The message is set as text, never parsed as markup: toast text carries
+        // user-typed names and server messages (BC-10). Only the icon is markup, and
+        // it is one of the two fixed choices below, never anything from the caller.
         function showToast(message, type) {
-        var toastId = 't' + Math.floor(Math.random() * 1000000);
-        var bgClass = (type === 'success') ? 'bg-success text-white' : 'bg-danger text-white';
-        var icon = (type === 'success') ? '<i class="bi bi-check-circle-fill me-2"></i>' : '<i class="bi bi-exclamation-triangle-fill me-2"></i>';
+            var container = document.getElementById('toastContainer');
+            if (!container) return;
+            var isSuccess = (type === 'success');
 
-        var html = `
-        <div id="${toastId}" class="toast ${bgClass} border-0 shadow-lg" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="4000">
-        <div class="toast-body fw-bold" style="font-size: 1.05rem;">
-        ${icon} ${message}
-        </div>
-        </div>`;
-        $('#toastContainer').append(html);
-        var el = document.getElementById(toastId);
-        var bs = new bootstrap.Toast(el);
-        bs.show();
-        el.addEventListener('hidden.bs.toast', function () { el.remove(); });
+            var el = document.createElement('div');
+            el.className = 'toast ' + (isSuccess ? 'bg-success' : 'bg-danger') + ' text-white border-0 shadow-lg';
+            el.setAttribute('role', 'alert');
+            el.setAttribute('aria-live', 'assertive');
+            el.setAttribute('aria-atomic', 'true');
+            el.setAttribute('data-bs-delay', '4000');
+
+            var body = document.createElement('div');
+            body.className = 'toast-body fw-bold';
+            body.style.fontSize = '1.05rem';
+            var icon = document.createElement('i');
+            icon.className = 'bi ' + (isSuccess ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill') + ' me-2';
+            body.appendChild(icon);
+            body.appendChild(document.createTextNode(' ' + (message == null ? '' : String(message))));
+            el.appendChild(body);
+
+            container.appendChild(el);
+            var bs = new bootstrap.Toast(el);
+            bs.show();
+            el.addEventListener('hidden.bs.toast', function () { el.remove(); });
         }
     </script>
 
@@ -578,13 +590,17 @@
         })();
     </script>
 
+    @* Serialized as a JSON string, not HTML-encoded into quotes: HTML encoding leaves
+       backslash escapes like \x3C alone for JavaScript to decode (BC-10). JsonSerializer
+       escapes quotes, backslashes, line breaks and "<", so the text can't end the string
+       or the script tag. *@
     @if (TempData["Success"] != null)
     {
-        <script>showToast("@TempData["Success"]", "success");</script>
+        <script>showToast(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(TempData["Success"]?.ToString())), "success");</script>
     }
     @if (TempData["Error"] != null)
     {
-        <script>showToast("@TempData["Error"]", "error");</script>
+        <script>showToast(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(TempData["Error"]?.ToString())), "error");</script>
     }
     @await RenderSectionAsync("Scripts", required: false)
 </body>
