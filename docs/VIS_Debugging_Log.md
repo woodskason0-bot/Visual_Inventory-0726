@@ -8,6 +8,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-10-14:** VIS-15 is new, found while checking the Unit Tracker spec: a deleted item's ItemId was handed to the next registration with the same prefix, history and all. Fixed and verified the same day in `1ca6651` (committed, not pushed, in no release); see the 2026-10-14 entry below. CCR-0255 already carries one reissue in the data.
 
+**Update 2026-10-26:** the 2026-10-20 audit's 13 findings (BC-01 to BC-13) are recorded in `docs/Bug_Checks.md`, not repeated here. BC-10, the toast rendering its message as HTML, is fixed and verified in `282ad8e` (committed, not pushed, in no release); see the 2026-10-26 entry below. The other 12 are still open.
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
@@ -31,6 +33,7 @@ The rows below preserve the latest recorded per-issue status. Historical finding
 | VIS-13 | P2 | AccessLevel/Line/Branch cached in the session: demoting or hiding a user doesn't reach an open session | Fixed in d39553d (Pass C); not in a release |
 | VIS-14 | P2 | Intake mints the ItemId prefix from the submitter's Line, Registry from the item's; whole-Branch users always get C | Fixed in a077663 (Pass B): the item's Line decides, as Registry does; not in a release |
 | VIS-15 | P2 | GenerateItemId counts live items only: deleting the top-numbered item of a prefix reissues its ItemId, and the new item inherits the old one's logs, unit rows and order lines | Fixed in 1ca6651; not in a release. CCR-0255 was already reissued (8/27) and still shows the deleted test item's two log rows: a data decision |
+| BC-10 | P1 | Toast text is HTML-encoded into a JS string (backslash escapes survive) and then inserted as HTML, so a stored item name can become markup in the success or duplicate-PN toast. From `docs/Bug_Checks.md` | Fixed in 282ad8e; not in a release |
 
 ## 2026-09-24 — Initial VIS business logic audit
 
@@ -357,6 +360,30 @@ Verification and observed results:
 Remaining issues: the two CCR-0255 log rows from the deleted test item (684, 690) still sit under the real item's ID. The code no longer creates new cases; whether to re-key or annotate those two rows on the host is a data decision.
 Deployment status: committed as `1ca6651` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
 Links to saved artifacts: [2026-10-14_VIS-15_ItemIdReuse](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-14_VIS-15_ItemIdReuse>): `results.md`, `verify_in_page.js` (what was run in the browser console), and the two copies after the runs (`before.db`, `after.db`).
+
+
+## 2026-10-26 — BC-10, toast text rendered as HTML
+
+Date: 2026-10-26
+Purpose: Fix BC-10 from the 2026-10-20 audit (`docs/Bug_Checks.md`), the first item in its suggested repair order.
+Source revision: VIS `e1b1a2e` (docs only on top of the audited `94546b4`; no code changed between them). Committed as `282ad8e`. No schema change, no migration.
+Issues investigated: BC-10.
+The defect: `_Layout` wrote `TempData["Success"]` / `["Error"]` into a quoted JavaScript string as `"@TempData[...]"`. Razor's HTML encoding leaves backslash escapes like `\x3C` alone, JavaScript decodes them, and `showToast` pasted the message into an HTML template passed to `.append()`. A registrant's stored item name reaches it through the registration success toast and through another user's duplicate-PN error. The two boundaries depend on each other: today an apostrophe displays only because Razor writes `&#39;` and the HTML sink decodes it, so fixing only the sink would show `&#39;` in dozens of messages.
+Changes made:
+- `_Layout.cshtml`: the two TempData lines serialize the message with `JsonSerializer.Serialize` (as Identify, Intake and PickupQueue already embed JSON), which escapes quotes, backslashes, line breaks and `<`. `showToast` builds the toast from nodes and adds the message as a text node; the icon is one of two fixed `<i>` elements chosen by `type`. Same classes, 4-second delay and removal on hide.
+- `UnitTracker/Index.cshtml`: `whToast` no longer runs `escapeHtml` first, which would now show `&amp;` on screen.
+- `UnitTrackerController.ToastText`: no longer turns backslashes into `/` and line breaks into spaces, a workaround for the old JS-string boundary. The 400-character cap stays (TempData cookie size).
+- Checked and left alone: Search Center's "Added to cart!" and Alert Rules' threshold message pass fixed text; the inline TempData alerts on Deliveries, Intake, LogDelivery, MyActivity and PickupQueue and the AuthError alert are Razor-encoded in an HTML context, which is correct; none of the 157 TempData assignments carries intended markup. The only other server value quoted into JS, `openItemCard('@it.ItemId', ...)` on the compressor/motor registries, is a minted ID whose prefix comes from Compressor or Motor there.
+Verification and observed results:
+- The real app (`dotnet run --no-build`, Development profile) on localhost:5097 against a scratch copy of `inventory.dev.db` (SHA-256 `15d21a55…`), the connection string overridden on the command line. Signed in as Kason.Woods through the sign-in page; registrations posted through the Registry form itself.
+- Before the fix (old build): registering the audit's marker name `\x3Cb data-audit-toast=confirmed\x3ETOAST-MARKER\x3C/b\x3E` (CGL-0002) put a real `<b data-audit-toast="confirmed">` element in the success toast; a second registration with the same PN put it in the duplicate-PN error toast.
+- After the fix: the duplicate-PN toast shows the escapes as literal text, no marker element, apostrophes as `'`. A registration named `Tom's "Dock" — C:\temp <img src=x onerror="document.body.dataset.x=1"> \x3Cb data-audit-toast=1\x3E` (CGL-0003): the toast text matched the typed name exactly, `document.body.dataset.x` stayed unset, no `<img>` or marker element, the toast body held only the icon and one text node. A toast hid and was removed after 4 seconds.
+- Unit Tracker: Add with model `A&B\C <b>x</b>` toasted `Unit #45 added (A&B\C <b>x</b>).` as text, backslash kept; a real click on unit #45's In Lab box toasted `Unit #45: In Lab.` with no `&amp;`.
+- Zero console errors on Command Center, Search Center and Unit Tracker; zero server error lines. Build: 0 errors, 14 warnings, the same as a build taken just before the change. The dev db's SHA-256 was unchanged afterward.
+- Not checked: how the toast looks. The in-app browser doesn't paint toasts (the Pass 26 limit), so the checks above read the DOM. Search Center's AJAX "Added to cart!" toast was not triggered; it calls the same function with fixed text.
+Remaining issues: BC-01 to BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
+Deployment status: committed as `282ad8e` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
+Links to saved artifacts: none kept; the scratch copy of the dev db was session-only.
 
 
 ## Continuing a debugging session

@@ -9,6 +9,33 @@ landed, when."
 
 ---
 
+## 2026-10-26
+
+### docs — log BC-10
+Docs only. `VIS_Debugging_Log.md`: the 10-26 update line, a BC-10 register row and the
+dated entry. Handoff: an OPEN entry for BC-10 (committed, not pushed, in no release).
+`Bug_Checks.md`: BC-10 marked fixed in its status line, the findings table and its own
+section; the other 12 findings stay open.
+*Files:* `docs/VIS_Debugging_Log.md`, `docs/VIS_Handoff_State.md`, `docs/Bug_Checks.md`,
+`docs/Commit_History.md`
+
+### `282ad8e` — Fix: BC-10, toast text is shown as text, never parsed as HTML
+No migration, no schema change. `_Layout` put TempData into a quoted JS string with
+Razor's HTML encoding, which leaves `\x3C`-style escapes for JavaScript to decode, and
+`showToast` pasted the message into HTML for `.append()`, so a stored item name could
+become markup in the registration success toast or another user's duplicate-PN error.
+Both boundaries changed together: the TempData lines serialize the message with
+`JsonSerializer`, and `showToast` builds the toast from nodes with the message as a text
+node (the icon is one of two fixed choices). The Unit Tracker's `whToast` no longer
+pre-escapes, and `ToastText` no longer flattens backslashes and line breaks (its
+400-character cap stays). Reproduced on a copy of the dev db with the old build (the
+audit's marker became a real `<b data-audit-toast>` in both toasts). Verified with the
+fixed build: the marker and an `<img onerror>` name show as literal text, apostrophes,
+quotes, an em dash and a backslash show as typed, Unit Tracker Add and Where-box toasts
+read correctly, toasts still hide after 4 seconds. Build at the 14-warning baseline.
+*Files:* `Views/Shared/_Layout.cshtml`, `Views/UnitTracker/Index.cshtml`,
+`Controllers/UnitTrackerController.cs`
+
 ## 2026-10-19
 
 ### docs — cleanup: superseded builds and db backups moved to OneDrive

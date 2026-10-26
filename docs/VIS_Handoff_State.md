@@ -166,6 +166,15 @@ rather than assuming one exists.
   Deleted rows (TransactionLogs Ids 684, 690) as its own. Same in dev and local
   production; check the host. Leaving them is harmless (their ItemName snapshot reads
   "just a test model"); re-keying them is a hand SQL edit on the host after a backup.
+- **BC-10 (2026-10-26): the toast rendered its message as HTML — fixed in `282ad8e`
+  (committed, not pushed), in no release.** `_Layout` now serializes TempData into the
+  toast as a JSON string and `showToast` sets the message as text, so a stored item
+  name can't become markup in the registration success toast or someone else's
+  duplicate-PN error. No migration. Verified live on a copy of the dev db: the audit's
+  marker name reproduced as a real element on the old build and shows as literal text
+  on the fixed one. One visible change: Unit Tracker toasts now show a typed backslash
+  as `\` instead of `/`. The other 12 findings in `docs/Bug_Checks.md` (BC-01 to BC-13)
+  are still open. Record: `docs/VIS_Debugging_Log.md`, 2026-10-26.
 - **Repair the drift already in the data by hand — the code only stops new drift.**
   In the 9/24 dev copy: CCR-0213 V2 (quantity 0) carries 9 unnamed On Hand rows,
   ids 196 to 204, left from the 8/25 Add of 9 whose pickup (Order #8) was

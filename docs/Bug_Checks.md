@@ -10,6 +10,8 @@ Visual Inventory System — repository audit
 
 **Status:** Findings remain open. The audit did not implement application fixes. This report is being added to the repository as documentation only.
 
+**Update 2026-10-26:** BC-10 is fixed in `282ad8e` (committed, not pushed, in no release), reproduced before and verified after in the running app; see `docs/VIS_Debugging_Log.md`, 2026-10-26. The other 12 findings remain open.
+
 ## Result
 
 There are **13 actionable findings: 5 P1 and 8 P2**. Twelve were reproduced with isolated service/database checks; one HTML-injection path was established by source tracing and an executed JavaScript sink check. None is represented as a completed browser test.
@@ -29,7 +31,7 @@ P1 means prioritize in the next repair cycle because the issue can corrupt inven
 | BC-07 | P2 | Separate orders can reserve the same TC motor | Service reproduction | Separate from BC-02 allocation |
 | BC-08 | P2 | Short-pull correction accepts another team's stack | Service reproduction | Known minor, reconfirmed |
 | BC-09 | P1 | Empty database cannot complete the migration chain | Migration reproduction | Separate from accepted startup error handling |
-| BC-10 | P1 | Toast message can become active HTML through JavaScript escapes | Source + JavaScript sink reproduction | Different sink from fixed VIS-7 |
+| BC-10 | P1 | Toast message can become active HTML through JavaScript escapes — **fixed in `282ad8e` (2026-10-26)** | Source + JavaScript sink reproduction | Different sink from fixed VIS-7 |
 | BC-11 | P1 | Overlapping registrations can persist duplicate ItemIds | Two-context reproduction | Different race from fixed VIS-15 |
 | BC-12 | P1 | Overlapping stock changes lose an update | Controlled stale-context reproduction | Known concurrency minor, reconfirmed |
 | BC-13 | P2 | CSV export shifts columns when location contains a comma | Export reproduction | Known minor, reconfirmed |
@@ -200,6 +202,8 @@ The correction loop accepts any active stack belonging to the item. It does not 
 ### BC-10 — Toast text is interpreted as HTML after JavaScript escape decoding
 
 **P1 · Source and executable sink proof · Browser exploit not executed**
+
+**Status 2026-10-26: fixed in `282ad8e`, not in a release.** The TempData lines serialize the message with `JsonSerializer`, and `showToast` sets it as a text node with the icon kept as fixed markup. The marker below reproduced as a real element in the running app on the old build (success and duplicate-PN toasts) and showed as literal text on the fixed one. Record: `docs/VIS_Debugging_Log.md`, 2026-10-26.
 
 **Location:** `Views/Shared/_Layout.cshtml:262–278,581–587`; stored-name entry/echo at `Controllers/HomeController.cs:627–629,703`.
 
