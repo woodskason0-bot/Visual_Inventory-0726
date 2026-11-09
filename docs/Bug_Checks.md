@@ -10,7 +10,9 @@ Visual Inventory System — repository audit
 
 **Status:** Findings remain open. The audit did not implement application fixes. This report is being added to the repository as documentation only.
 
-**Update 2026-10-26:** BC-10 is fixed in `282ad8e` (committed, not pushed, in no release), reproduced before and verified after in the running app; see `docs/VIS_Debugging_Log.md`, 2026-10-26. The other 12 findings remain open.
+**Update 2026-10-26:** BC-10 is fixed in `282ad8e` (committed, not pushed, in no release), reproduced before and verified after in the running app; see `docs/VIS_Debugging_Log.md`, 2026-10-26.
+
+**Update 2026-11-09:** BC-01 and BC-07 are fixed in the Reservations work, `3c08bd6` (committed, not pushed, in no release): one availability engine, `Services/StockClaims.cs`, now gates Submit, the displays and transfers, counting unscoped lines against team-scoped ones and TC as its own dimension. Both reproductions were run against the fixed build in the running app; see `docs/VIS_Debugging_Log.md`, 2026-11-09. The other 10 findings remain open.
 
 ## Result
 
@@ -22,13 +24,13 @@ P1 means prioritize in the next repair cycle because the issue can corrupt inven
 
 | ID | Priority | Finding | Evidence | Relationship to previous audit |
 | --- | --- | --- | --- | --- |
-| BC-01 | P1 | Team-scoped orders ignore existing unscoped reservations | Service reproduction | Distinct from fixed VIS-1 |
+| BC-01 | P1 | Team-scoped orders ignore existing unscoped reservations — **fixed 2026-11-09 (`3c08bd6`)** | Service reproduction | Distinct from fixed VIS-1 |
 | BC-02 | P2 | TC request completes with a non-TC motor despite TC stock elsewhere | Service reproduction | Distinct from fixed VIS-2 |
 | BC-03 | P2 | Deleted or retired target stack silently falls back to primary | Service reproduction | New in this report |
 | BC-04 | P2 | Stale Unit Tracker edit overwrites newer notes | Service reproduction | New in this report |
 | BC-05 | P2 | Roster logging creates more on-hand records than physical stock | Service reproduction | Different entrance from fixed VIS-9 |
 | BC-06 | P2 | Duplicate serials within one save cause a database exception | Service reproduction | New in this report |
-| BC-07 | P2 | Separate orders can reserve the same TC motor | Service reproduction | Separate from BC-02 allocation |
+| BC-07 | P2 | Separate orders can reserve the same TC motor — **fixed 2026-11-09 (`3c08bd6`)** | Service reproduction | Separate from BC-02 allocation |
 | BC-08 | P2 | Short-pull correction accepts another team's stack | Service reproduction | Known minor, reconfirmed |
 | BC-09 | P1 | Empty database cannot complete the migration chain | Migration reproduction | Separate from accepted startup error handling |
 | BC-10 | P1 | Toast message can become active HTML through JavaScript escapes — **fixed in `282ad8e` (2026-10-26)** | Source + JavaScript sink reproduction | Different sink from fixed VIS-7 |

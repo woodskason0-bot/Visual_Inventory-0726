@@ -10,6 +10,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-10-26:** the 2026-10-20 audit's 13 findings (BC-01 to BC-13) are recorded in `docs/Bug_Checks.md`, not repeated here. BC-10, the toast rendering its message as HTML, is fixed and verified in `282ad8e` (committed, not pushed, in no release); see the 2026-10-26 entry below. The other 12 are still open.
 
+**Update 2026-11-09:** BC-01 and BC-07 are fixed and verified in the Reservations work, `3c08bd6` (migration 43, committed, not pushed, in no release); see the 2026-11-09 entry below. Ten BC findings are still open.
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
@@ -384,6 +386,27 @@ Verification and observed results:
 Remaining issues: BC-01 to BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
 Deployment status: committed as `282ad8e` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
 Links to saved artifacts: none kept; the scratch copy of the dev db was session-only.
+
+
+## 2026-11-09 — BC-01 and BC-07, fixed inside the Reservations work
+
+Date: 2026-11-09
+Purpose: Kason's rule 10 for Reservations (`docs/Unit_Reservations_Spec.md`): fix BC-01 and BC-07 in the same pass, because holds subtract from the same availability math.
+Source revision: VIS `1765ffe` plus the Reservations work (migration 43), committed as `3c08bd6`.
+Issues investigated: BC-01, BC-07.
+The defects: BC-01 — `GetAvailableQuantity(item, team)` subtracted only Pending lines of the same team, so an unscoped line that had already claimed the stock was invisible to a team-scoped order. BC-07 — nothing counted thermocoupled units across orders; Submit only clamped TC to the line quantity.
+Changes made:
+- `Services/StockClaims.cs` (new): supply per stack, grouped by Team; claims are live holds (per stack) and Pending lines on Pending orders (per team, or unscoped). A claim set fits when each stack's holds fit it, each team group's holds plus scoped lines fit the group, and unscoped lines fit what the groups have left over, for quantity and for TC alike. "Available" is the most that can be added without making the fit worse, so data that is already over-claimed never blocks an unrelated request.
+- `InventoryService.GetAvailableQuantity` / `GetAvailableForOrder` / new `GetAvailableTc` and `GetAvailableIgnoringPriority` go through it. `OrderService.Submit` checks the whole cart through it (replacing the in-cart pool list) and names TC in its refusal. `RequestTransfer` and `ApproveTransfer` check TC too, measured for the requester.
+Verification and observed results (real app on a scratch copy of `inventory.dev.db`, migration 42 to 43 on start; orders placed through AddToCart/SubmitLedger as the named users):
+- BC-01: CCL-0027 split into Ninja 14 and Samurai 5 (Add at a new location for Samurai). Dustin (no teams, so unscoped) ordered 19: accepted. Conner (Samurai) then saw Available 0 and was refused at 5 and at 1 ("only has 0 available"). Before the fix the Samurai count would have read 5 and accepted.
+- Positive control: with Dustin's 19 cancelled, Dustin 10 unscoped accepted; Conner saw 5 and 5 was accepted; James (Ninja) saw 4, was refused at 5 and accepted at 4. 10 + 5 + 4 = 19, every unit spoken for once.
+- BC-07: CMR-0078 (10 on the stack, 5 TC, Ninja). James ordered 5 with 5 TC: accepted. DeCory then asked for 1 with 1 TC: refused, "only has 0 thermocoupled available -- 1 asked for". The same 1 with 0 TC: accepted.
+- Build 0 errors, 14 warnings, same as before. The dev db's SHA-256 was unchanged afterward.
+- Not checked: BC-02 (a pickup can still fill a TC request with a non-TC motor when the order didn't ask for a stack); out of scope here.
+Remaining issues: BC-02 to BC-06, BC-08, BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
+Deployment status: committed as `3c08bd6` on master, not pushed, not in any release. Ships with migration 43.
+Links to saved artifacts: none kept; the scratch db was session-only.
 
 
 ## Continuing a debugging session

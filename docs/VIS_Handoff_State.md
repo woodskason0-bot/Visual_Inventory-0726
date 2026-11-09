@@ -71,6 +71,16 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
+  (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
+  it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every
+  migration release. BC-01 and BC-07 are fixed in the same commit. Spec:
+  `docs/Unit_Reservations_Spec.md`; what was checked: the "Reservations" entry at the
+  end of Current state.
+- **DONE (2026-11-08, from me): `VIS_Release_20261019` is installed on the host**, on
+  10/19 or the Monday after, and nobody has used the new features since. The host is at
+  migration 42. I didn't say whether the 44 units went on by the pre-seeded db swap.
+  The rest of this bullet is the history of getting there.
 - **Next, 2026-10-19 (Conner is on site this week): get the Unit Tracker onto the
   host.** Done today: I pulled a fresh copy of the host's `inventory.db` (see the table
   above), ran the current build on a copy and it went 39 to 42 with every other table
@@ -167,7 +177,7 @@ rather than assuming one exists.
   production; check the host. Leaving them is harmless (their ItemName snapshot reads
   "just a test model"); re-keying them is a hand SQL edit on the host after a backup.
 - **BC-10 (2026-10-26): the toast rendered its message as HTML — fixed in `282ad8e`
-  (committed, not pushed), in no release.** `_Layout` now serializes TempData into the
+  (committed, not pushed; still not pushed as of 2026-11-09), in no release.** `_Layout` now serializes TempData into the
   toast as a JSON string and `showToast` sets the message as text, so a stored item
   name can't become markup in the registration success toast or someone else's
   duplicate-PN error. No migration. Verified live on a copy of the dev db: the audit's
@@ -3899,3 +3909,54 @@ this release made redundant into OneDrive
 - **Still mine to do by hand.** The USB is on the host, so `Releases\VIS_Inventory`
   there is still waiting to be deleted (it is already in OneDrive as
   `VIS_Inventory_hostpull_20260902`).
+
+**Reservations (2026-11-09, `3c08bd6`, not pushed, in no release) — a hard hold on stock,
+the Reserved Items page, and the BC-01 / BC-07 fixes.** Scoped with me on 2026-11-08
+from a mockup (https://claude.ai/artifact/2ZzFZwHTYNwpFEajeYqXJb); my rulings and the
+calls made where my words left room (I confirmed all five on 2026-11-09) are in
+`docs/Unit_Reservations_Spec.md`. One
+migration, 43 (`AddReservations`): two new tables, `Reservations` and
+`ReservationLines`, and a nullable `ReservationId` on `CompressorUnits` and
+`MotorUnits`. Nothing existing changes shape.
+
+- **What it does.** Anyone Standard and up can reserve stock on their own Line (Admin
+  anywhere): a free-text reason, From, and Until notice or a date, held per stack by
+  count, with compressors and TC motors also able to name units (a recorded unit, a
+  serial typed off a nameplate, or a motor lab # typed in). A hold lowers Available,
+  never On hand. Nobody but the reserver can order, pick up, transfer or scrap held
+  stock; if the reserver orders it, whoever picks the order up uses the hold up. The
+  reserver, Engineer and up on the item's Line, and Admin can edit or release. A dated
+  hold ends on its own after its last day; the reserver is notified on the last day,
+  when it ends, when someone else edits or releases it, and when a short-pull recount
+  shrinks it.
+- **Where it shows.** Item Card: a Reserved tile, a Reserved section in my sentence
+  ("Reserved for … by … from 11-09-2026 to 12-18-2026 / until notice"), Reserved columns
+  on Stacks and the unit list, and a Reserve button between Handle Stock and Add to
+  Cart. A new sidebar page, Reserved Items, under Search Center: my holds grouped by
+  reason, then my Line, the rest of my Branch, then the other branches greyed. Search
+  Center rows show "N reserved"; Pickup Queue leaves other people's held serials out.
+- **One availability engine.** `Services/StockClaims.cs` answers every "how much can
+  this person take" question (Item Card, Search Center, Submit, Pickup Queue,
+  transfers, Reserve). That closed BC-01 (an unscoped order was invisible to a
+  team-scoped one) and BC-07 (TC was never counted across orders). Record:
+  `docs/VIS_Debugging_Log.md`, 2026-11-09.
+- **Verified live on a scratch copy of the dev db** (migration 42 to 43 applied on
+  start, no errors), driven through the real app as Kason, Conner, Dustin, James,
+  DeCory, Preston, Travis and a Viewer: reserving through the dialog (a named unit, a
+  typed serial, a date), the card and page reading back right; Conner's hold refusing
+  a second hold on the same stack; Dustin refused at 15 and accepted at 13 of 17 with
+  4 held; my order of my 3 held picked up by Dustin, the hold ending as Picked Up with
+  my two named units gone and Conner's untouched; Scrap and Adjustment refused below a
+  hold, and a named held unit refused as the one leaving; a short-pull recount
+  shrinking my hold from 4 to 2 with a notification; the startup sweep expiring a
+  back-dated hold and sending the last-day notice; a transfer refused against held
+  stock; a Viewer and another Line's Engineer getting no Reserve button. Build 0
+  errors, 14 warnings, same as before. The dev db itself was never opened for writing
+  (SHA-256 still `15d21a55…`).
+- **Not verified:** a real phone, the Location Transfer merge path that carries a hold
+  into the stack it merges with (code-read only), and Delete Stack / Delete Item
+  refusing while held (code-read only). Search Center filtered to all 259 compressors
+  took about 0.7 s on the debug build; each row now asks the engine once.
+
+**Changes the OPEN state at the top of this file:** the first Still to do bullet (the
+10/19 release is on the host) and a new bullet for this work.

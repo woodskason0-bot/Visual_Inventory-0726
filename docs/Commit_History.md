@@ -9,6 +9,40 @@ landed, when."
 
 ---
 
+## 2026-11-09
+
+### docs — log Reservations (3c08bd6)
+Docs only. New `Unit_Reservations_Spec.md` (Kason's rulings of 2026-11-08 and the five
+calls he confirmed on 2026-11-09). Handoff: an OPEN entry for Reservations, the 10/19
+release marked installed on the host, and a Current state entry with what was checked.
+`VIS_Debugging_Log.md`: the 11-09 update line and a dated BC-01 / BC-07 entry.
+`Bug_Checks.md`: BC-01 and BC-07 marked fixed; ten findings stay open.
+*Files:* `docs/Unit_Reservations_Spec.md`, `docs/VIS_Handoff_State.md`,
+`docs/VIS_Debugging_Log.md`, `docs/Bug_Checks.md`, `docs/Commit_History.md`
+
+### `3c08bd6` — Add: Reservations, hard holds on stock and the Reserved Items page; fixes BC-01 and BC-07; migration 43
+Migration 43 (`AddReservations`): new `Reservations` and `ReservationLines` tables and a
+nullable `ReservationId` on `CompressorUnits` and `MotorUnits`. A hold is per stack, by
+count, for a free-text reason, until notice or a date, optionally naming compressor or
+TC motor units; it lowers Available, never On hand. Hard hold: only the reserver can
+order, pick up, transfer, scrap or adjust held stock, and whoever picks up the
+reserver's order uses the hold up. Dated holds end on their own (a background sweep)
+and the reserver is notified. Item Card: Reserved tile, section, columns and a Reserve
+button; Reserve dialog on Search Center; new Reserved Items page in the sidebar; "N
+reserved" on Search Center rows; Pickup Queue hides other people's held serials. One
+availability engine (`StockClaims`) now answers every "how much can this person take",
+which fixes BC-01 and BC-07. Verified in the real app on a scratch copy of the dev db as
+eight users. Build at the 14-warning baseline.
+*Files:* `Services/StockClaims.cs`, `Services/ReservationService.cs`,
+`Services/ReservationSweepService.cs`, `Controllers/ReservationsController.cs`,
+`Models/Reservation.cs`, `Views/Reservations/Index.cshtml`,
+`Views/Reservations/_ReserveForm.cshtml`, `Migrations/20261109055547_AddReservations*`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Data/AppDbContext.cs`,
+`Models/CompressorUnit.cs`, `Models/MotorUnit.cs`, `Models/ViewModels/ItemCardViewModel.cs`,
+`Services/InventoryService.cs`, `Services/OrderService.cs`, `Controllers/HomeController.cs`,
+`Views/Home/_ItemCardPartial.cshtml`, `Views/Home/SearchCenter.cshtml`,
+`Views/Shared/_Layout.cshtml`, `wwwroot/css/site.css`, `Program.cs`
+
 ## 2026-10-26
 
 ### docs — log BC-10
