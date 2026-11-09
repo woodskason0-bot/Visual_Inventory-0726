@@ -19,8 +19,9 @@ namespace Visual_Inventory_System.Controllers
         private readonly AppDbContext _db;
         private readonly CurrentUserService _currentUser;
         private readonly NotificationService _notifications;
+        private readonly ReservationService _reservations;
 
-        public HomeController(OrderService orderService, InventoryService inventoryService, EmailService emailService, AppDbContext db, CurrentUserService currentUser, NotificationService notifications)
+        public HomeController(OrderService orderService, InventoryService inventoryService, EmailService emailService, AppDbContext db, CurrentUserService currentUser, NotificationService notifications, ReservationService reservations)
         {
             _orderService = orderService;
             _inventoryService = inventoryService;
@@ -28,6 +29,7 @@ namespace Visual_Inventory_System.Controllers
             _db = db;
             _currentUser = currentUser;
             _notifications = notifications;
+            _reservations = reservations;
         }
 
         // Pass 28 (2d) -- the swap. "/" now renders Command Center directly
@@ -216,6 +218,9 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.FilterLocSub = filterLocSub ?? "";
             ViewBag.FilterBranch = filterBranch ?? "";
 
+            // Reservations (2026-11-08): "N reserved" on result rows.
+            ViewBag.HeldPerItem = _reservations.HeldPerItem();
+
             return View();
         }
 
@@ -266,6 +271,12 @@ namespace Visual_Inventory_System.Controllers
             if (vm.IsMotor)
                 vm.MotorUnits = _db.MotorUnits.AsNoTracking()
                     .Where(u => u.ItemId == item.ItemId).OrderByDescending(u => u.RecordedAt).ToList();
+
+            // Reservations (2026-11-08): the Reserved section, tile and columns.
+            vm.Reservations = _reservations.LiveForItem(item.ItemId);
+            vm.CanReserve = _reservations.CanReserve(item) && item.ActiveVariants.Any();
+            vm.ManageableReservationIds = vm.Reservations.Where(r => _reservations.CanManage(r, item)).Select(r => r.Id).ToHashSet();
+            vm.MyReservationIds = vm.Reservations.Where(r => _reservations.IsMine(r)).Select(r => r.Id).ToHashSet();
 
             return PartialView("_ItemCardPartial", vm);
         }
@@ -1368,11 +1379,17 @@ namespace Visual_Inventory_System.Controllers
                 // unit. Those are exactly what the "No serial" option is for:
                 // AssignOneCompressorUnit's null-serial branch already takes the
                 // oldest anonymous unit at that location, FIFO.
+                // Units named in a live reservation are left out too (2026-11-08):
+                // a transfer requester is never the one holding them, so the
+                // approval would refuse them anyway.
+                var heldIds = isComp ? ReservationService.PinOwners(_db, b.ItemId) : new Dictionary<int, string>();
                 var onHandUnits = isComp
                     ? _db.CompressorUnits.AsNoTracking()
                         .Where(cu => cu.ItemId == b.ItemId && cu.Status == UnitStatus.OnHand
                                   && cu.SerialNumber != null && cu.SerialNumber != "")
                         .OrderBy(cu => cu.RecordedAt)
+                        .ToList()
+                        .Where(cu => !(cu.ReservationId.HasValue && heldIds.ContainsKey(cu.ReservationId.Value)))
                         .ToList()
                     : new List<CompressorUnit>();
 
@@ -1389,7 +1406,7 @@ namespace Visual_Inventory_System.Controllers
                 var unitSlots = new List<TransferUnitSlotViewModel>();
                 if (isComp && bInv != null && b.Status == TransferStatus.Requested)
                 {
-                    foreach (var (variantId, take) in _orderService.PlanTransferPull(bInv, b.RequestedVariantId, b.Quantity))
+                    foreach (var (variantId, take) in _orderService.PlanTransferPull(bInv, b.RequestedVariantId, b.Quantity, b.RequesterUserName))
                     {
                         var pv = bActiveVars.FirstOrDefault(v => v.Id == variantId);
                         var here = onHandUnits.Where(x => x.ItemVariantId == variantId)
@@ -1574,8 +1591,10 @@ namespace Visual_Inventory_System.Controllers
                 // units that had already left and judged the order against them.
                 foreach (var it in order.Items.Where(i => i.Status == "Pending"))
                 {
-                    var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt, it.Team);
-                    var totalAvailable = _inventoryService.GetAvailableQuantity(it.ItemId, it.Team);
+                    // Measured for whoever placed the order (their holds count as
+                    // theirs), against earlier claims only -- see GetAvailableForOrder.
+                    var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt, it.Team, order.RequestedBy, it.Id);
+                    var totalAvailable = _inventoryService.GetAvailableIgnoringPriority(it.ItemId, it.Team, order.RequestedBy, it.Id);
                     var itemEntity = _db.InventoryItems.AsNoTracking().Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
 
                     // Friendly per-location labels for the pickup person. Decode the
@@ -1618,11 +1637,23 @@ namespace Visual_Inventory_System.Controllers
                     // the real anonymous unit and mints a bogus PickedUp row beside
                     // it: the CCR-0213 orphan mechanism again. Anonymous stock is
                     // what the "No serial" option is for.
+                    // Reservations (2026-11-08): a serial named in someone else's
+                    // live hold isn't offered at all (the pickup would refuse it),
+                    // and the orderer's own held units come first, so the default
+                    // picks are the ones their hold is for.
+                    var pinOwners = ReservationService.PinOwners(_db, it.ItemId);
+                    bool HeldByOther(int? rid) => rid.HasValue && pinOwners.TryGetValue(rid.Value, out var who)
+                        && !string.Equals(who, order.RequestedBy ?? "", StringComparison.OrdinalIgnoreCase);
+                    bool HeldByMe(int? rid) => rid.HasValue && pinOwners.TryGetValue(rid.Value, out var who)
+                        && string.Equals(who, order.RequestedBy ?? "", StringComparison.OrdinalIgnoreCase);
                     var onHandByVariant = InventoryService.IsCompressorType(itemEntity?.Type)
                         ? _db.CompressorUnits.AsNoTracking()
                               .Where(c => c.ItemId == it.ItemId && c.Status == Visual_Inventory_System.Models.UnitStatus.OnHand && c.ItemVariantId != null
                                        && c.SerialNumber != null && c.SerialNumber != "")
                               .OrderBy(c => c.RecordedAt)
+                              .ToList()
+                              .Where(c => !HeldByOther(c.ReservationId))
+                              .OrderBy(c => HeldByMe(c.ReservationId) ? 0 : 1)
                               .GroupBy(c => c.ItemVariantId!.Value)
                               .ToDictionary(g => g.Key, g => g.Select(c => new OnHandUnitViewModel { SerialNumber = c.SerialNumber, LabNumber = c.LabNumber }).ToList())
                         : new Dictionary<int, List<OnHandUnitViewModel>>();
@@ -2205,7 +2236,9 @@ namespace Visual_Inventory_System.Controllers
                 }
                 else
                 {
-                    TempData["Success"] = "Stock corrected. Nothing was actually on the shelf, so no pickup was issued.";
+                    // Since 2026-11-08 "nothing to issue" can also mean what's left is
+                    // reserved for someone else, so say both.
+                    TempData["Success"] = "Stock corrected. Nothing on the shelf was free for this order (none left, or what's left is reserved), so no pickup was issued.";
                 }
             }
             catch (Exception ex)

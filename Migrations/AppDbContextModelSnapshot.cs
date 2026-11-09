@@ -109,6 +109,9 @@ namespace Visual_Inventory_System.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ReservationId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SerialNumber")
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
@@ -124,6 +127,8 @@ namespace Visual_Inventory_System.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ItemId");
+
+                    b.HasIndex("ReservationId");
 
                     b.HasIndex("ItemId", "SerialNumber")
                         .IsUnique()
@@ -579,6 +584,9 @@ namespace Visual_Inventory_System.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ReservationId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -590,6 +598,8 @@ namespace Visual_Inventory_System.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ItemId");
+
+                    b.HasIndex("ReservationId");
 
                     b.ToTable("MotorUnits");
                 });
@@ -752,6 +762,93 @@ namespace Visual_Inventory_System.Migrations
                         .IsUnique();
 
                     b.ToTable("OrgLines");
+                });
+
+            modelBuilder.Entity("Visual_Inventory_System.Models.Reservation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EndDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EndNote")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EndedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("EndingNoticeSent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ItemId")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReservedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ItemId");
+
+                    b.HasIndex("ReservedBy");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("Reservations");
+                });
+
+            modelBuilder.Entity("Visual_Inventory_System.Models.ReservationLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ItemVariantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ReservationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TcQuantity")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ItemVariantId");
+
+                    b.HasIndex("ReservationId");
+
+                    b.ToTable("ReservationLines");
                 });
 
             modelBuilder.Entity("Visual_Inventory_System.Models.Team", b =>
@@ -1116,6 +1213,17 @@ namespace Visual_Inventory_System.Migrations
                     b.Navigation("Branch");
                 });
 
+            modelBuilder.Entity("Visual_Inventory_System.Models.ReservationLine", b =>
+                {
+                    b.HasOne("Visual_Inventory_System.Models.Reservation", "Reservation")
+                        .WithMany("Lines")
+                        .HasForeignKey("ReservationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Reservation");
+                });
+
             modelBuilder.Entity("Visual_Inventory_System.Models.UserTeam", b =>
                 {
                     b.HasOne("Visual_Inventory_System.Models.User", null)
@@ -1138,6 +1246,11 @@ namespace Visual_Inventory_System.Migrations
             modelBuilder.Entity("Visual_Inventory_System.Models.Order", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("Visual_Inventory_System.Models.Reservation", b =>
+                {
+                    b.Navigation("Lines");
                 });
 #pragma warning restore 612, 618
         }

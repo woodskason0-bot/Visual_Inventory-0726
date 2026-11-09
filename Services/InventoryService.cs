@@ -649,70 +649,62 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Every reservation query below requires the LINE to be Pending as well
-        /// as its order. A deliberate partial pickup marks its line "Split" (the
-        /// units already left the shelf) and parks the remainder on a new order,
-        /// but the original order stays Pending while any other line on it is --
-        /// so an order-status-only test kept holding the picked units back a
-        /// second time: 9 on the shelf, 2 genuinely requested, 6 shown available.
+        /// What the signed-in person could order of this item now, across every
+        /// team's stock. Every count here goes through StockClaims (2026-11-08): live
+        /// holds and Pending lines on Pending orders are claims, and a person's own
+        /// holds are available to them. The LINE has to be Pending as well as its
+        /// order -- a deliberate partial pickup marks its line "Split" (the units
+        /// already left the shelf) while the order stays Pending for another line.
         /// </summary>
-        public int GetAvailableQuantity(string itemId)
+        public int GetAvailableQuantity(string itemId) => GetAvailableQuantity(itemId, null);
+
+        /// <summary>
+        /// Team-scoped (per-team quantity ownership, 2026-08-26): what the signed-in
+        /// person could order on a line resolved to `team` ("" = unscoped). BC-01
+        /// (2026-11-08): this used to subtract only lines of the same team, so an
+        /// unscoped order that had already claimed the stock was invisible here and
+        /// the same units were promised twice.
+        /// </summary>
+        public int GetAvailableQuantity(string itemId, string? team) =>
+            GetAvailableQuantity(itemId, team, _currentUser.Name);
+
+        /// <summary>Same, for a named person -- a transfer is measured for its requester, not the approver.</summary>
+        public int GetAvailableQuantity(string itemId, string? team, string? forUser)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
-            var total = _db.ItemVariants.AsNoTracking()
-                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId)
-                .Sum(v => (int?)v.Quantity) ?? 0;
-            var pendingAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending").Sum(oi => (int?)oi.Quantity) ?? 0;
-            return System.Math.Max(0, total - pendingAlloc);
+            return StockClaims.Load(_db, itemId).AvailableQty(forUser ?? "", (team ?? "").Trim());
+        }
+
+        /// <summary>The thermocoupled part of the same question (BC-07: TC is counted across orders now).</summary>
+        public int GetAvailableTc(string itemId, string? team, string? forUser = null)
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) return 0;
+            return StockClaims.Load(_db, itemId).AvailableTc(forUser ?? _currentUser.Name, (team ?? "").Trim());
         }
 
         /// <summary>
-        /// Team-scoped sibling of GetAvailableQuantity (per-team quantity
-        /// ownership, scoped 2026-08-26) -- used at the two points that actually
-        /// gate how much a TEAM can order: AddToCart's cap and Submit()'s stock
-        /// check. Every other caller (CSV export, DeleteItem's zero-stock check,
-        /// threshold summaries) stays on the item-total overload above, which
-        /// this delegates to when team is blank -- same fails-open convention
-        /// Line already uses, and the only case for an item that's never been
-        /// split.
+        /// Pickup Queue's "can this line be filled": the same count, but only the holds
+        /// made and orders placed BEFORE this order compete with it -- a later order
+        /// never blocks an earlier one.
         /// </summary>
-        public int GetAvailableQuantity(string itemId, string? team)
+        public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt, string? team, string? requestedBy, int excludeOrderItemId)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
-            if (string.IsNullOrWhiteSpace(team)) return GetAvailableQuantity(itemId);
-
-            var total = _db.ItemVariants.AsNoTracking()
-                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
-                .Sum(v => (int?)v.Quantity) ?? 0;
-            var pendingAlloc = _db.OrderItems.AsNoTracking()
-                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Team == team)
-                .Sum(oi => (int?)oi.Quantity) ?? 0;
-            return System.Math.Max(0, total - pendingAlloc);
+            var all = StockClaims.Load(_db, itemId);
+            var earlier = new StockClaims(itemId, all.Stacks,
+                all.Holds.Where(h => h.CreatedAt < orderCreatedAt).ToList(),
+                all.Lines.Where(l => l.CreatedAt < orderCreatedAt && l.OrderItemId != excludeOrderItemId).ToList());
+            return earlier.AvailableQty(requestedBy ?? "", (team ?? "").Trim());
         }
 
-        public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt)
+        /// <summary>The same line measured against every other claim, earlier or not.</summary>
+        public int GetAvailableIgnoringPriority(string itemId, string? team, string? requestedBy, int excludeOrderItemId)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
-            var total = _db.ItemVariants.AsNoTracking()
-                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId)
-                .Sum(v => (int?)v.Quantity) ?? 0;
-            var earlierAlloc = _db.OrderItems.AsNoTracking().Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt).Sum(oi => (int?)oi.Quantity) ?? 0;
-            return System.Math.Max(0, total - earlierAlloc);
-        }
-
-        /// <summary>Team-scoped sibling, same reasoning as GetAvailableQuantity's overload above -- Pickup Queue's "can this line actually fulfill" display needs to agree with what FulfillOrderItem's team-scoped pull loop will really do, or a picker sees "available" for a line that's about to short-pull.</summary>
-        public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt, string? team)
-        {
-            if (string.IsNullOrWhiteSpace(itemId)) return 0;
-            if (string.IsNullOrWhiteSpace(team)) return GetAvailableForOrder(itemId, orderCreatedAt);
-
-            var total = _db.ItemVariants.AsNoTracking()
-                .Where(v => !v.IsRetired && v.InventoryItem.ItemId == itemId && v.Team == team)
-                .Sum(v => (int?)v.Quantity) ?? 0;
-            var earlierAlloc = _db.OrderItems.AsNoTracking()
-                .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending" && oi.Order.CreatedAt < orderCreatedAt && oi.Team == team)
-                .Sum(oi => (int?)oi.Quantity) ?? 0;
-            return System.Math.Max(0, total - earlierAlloc);
+            var all = StockClaims.Load(_db, itemId);
+            var others = new StockClaims(itemId, all.Stacks, all.Holds,
+                all.Lines.Where(l => l.OrderItemId != excludeOrderItemId).ToList());
+            return others.AvailableQty(requestedBy ?? "", (team ?? "").Trim());
         }
 
         public int GetTotalQuantity(string itemId)
@@ -767,6 +759,11 @@ namespace Visual_Inventory_System.Services
             bool onOpenTransfer = _db.TransferRequests.Any(t => t.ItemId == itemId && t.Status == TransferStatus.Requested);
             if (onOpenTransfer)
                 return (false, $"Can't delete -- {itemId} has an open transfer request. Approve or deny it first.");
+
+            // A live hold is outstanding the same way (2026-11-08).
+            bool reserved = ReservationService.Live(_db.Reservations.AsNoTracking(), System.DateTime.Today).Any(r => r.ItemId == itemId);
+            if (reserved)
+                return (false, $"Can't delete -- {itemId} has a live reservation. Release it first (Reserved Items).");
 
             string itemName = item.ItemName;
 
@@ -826,6 +823,15 @@ namespace Visual_Inventory_System.Services
             bool onPendingOrder = _db.OrderItems.Any(oi => oi.RequestedVariantId == variant.Id && oi.Order.Status == "Pending" && oi.Status == "Pending");
             if (onPendingOrder)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} is requested on a pending order.");
+
+            // A live hold names this stack (2026-11-08) -- with quantity 0 it holds
+            // nothing, but deleting the stack would leave the hold pointing nowhere.
+            bool held = (from l in _db.ReservationLines.AsNoTracking()
+                         join r in ReservationService.Live(_db.Reservations.AsNoTracking(), System.DateTime.Today) on l.ReservationId equals r.Id
+                         where l.ItemVariantId == variant.Id && l.Quantity > 0
+                         select l.Id).Any();
+            if (held)
+                return (false, $"Can't delete -- Variant {variant.VariantNumber} has a live reservation on it. Release it first (Reserved Items).");
 
             // Sharper than the DeleteItem case above: ResolveTransferTeam reads the
             // requested variant to decide WHOSE slice a transfer is aimed at, and a
@@ -1749,10 +1755,23 @@ namespace Visual_Inventory_System.Services
         /// its own count. Returns a note for the log line ("" when nothing left).
         /// </summary>
         public static string RetireSurplusUnits(AppDbContext db, InventoryItem item, ItemVariant v,
-            IReadOnlyCollection<int>? leavingCompressorIds, IReadOnlyCollection<int>? leavingMotorIds)
+            IReadOnlyCollection<int>? leavingCompressorIds, IReadOnlyCollection<int>? leavingMotorIds,
+            bool heldMayLeave = false)
         {
             var names = new List<string>();
             int count = 0;
+
+            // Reservations (2026-11-08): a unit named in a live hold can't be ticked
+            // as leaving by a Scrap or Adjustment -- release or edit the hold first.
+            // A short-pull correction passes heldMayLeave (it's a recount; the
+            // holds shrink to fit afterwards).
+            var held = heldMayLeave ? new Dictionary<int, string>() : ReservationService.PinOwners(db, item.ItemId);
+            void RefuseHeld(int? reservationId, string name)
+            {
+                if (reservationId.HasValue && held.TryGetValue(reservationId.Value, out var who))
+                    throw new InvalidOperationException(
+                        $"{name} is reserved for {ReservationService.Person(who)} -- release or edit that hold before it can leave. Nothing was changed.");
+            }
 
             if (IsCompressorType(item.Type))
             {
@@ -1771,7 +1790,10 @@ namespace Visual_Inventory_System.Services
                         ? rows
                         : TickedUnitsLeaving(rows, c => c.Id, leavingCompressorIds, surplus, "unit");
                     foreach (var c in leaving)
+                        RefuseHeld(c.ReservationId, string.IsNullOrWhiteSpace(c.SerialNumber) ? "A recorded unit" : $"SN {c.SerialNumber}");
+                    foreach (var c in leaving)
                     {
+                        c.ReservationId = null;
                         c.Status = UnitStatus.Scrapped;
                         c.ItemVariantId = null;
                         names.Add(string.IsNullOrWhiteSpace(c.SerialNumber) ? (string.IsNullOrWhiteSpace(c.LabNumber) ? "no serial" : c.LabNumber!) : c.SerialNumber!);
@@ -1794,7 +1816,10 @@ namespace Visual_Inventory_System.Services
                         ? rows
                         : TickedUnitsLeaving(rows, m => m.Id, leavingMotorIds, surplus, "TC unit");
                     foreach (var m in leaving)
+                        RefuseHeld(m.ReservationId, string.IsNullOrWhiteSpace(m.LabNumber) ? "A recorded TC motor" : $"Lab {m.LabNumber}");
+                    foreach (var m in leaving)
                     {
+                        m.ReservationId = null;
                         m.Status = UnitStatus.Scrapped;
                         m.ItemVariantId = null;
                         names.Add(string.IsNullOrWhiteSpace(m.LabNumber) ? "no lab #" : m.LabNumber!);
@@ -2190,6 +2215,40 @@ namespace Visual_Inventory_System.Services
                 // branch, changed nothing, and still logged and reported success.
                 throw new System.InvalidOperationException(
                     $"'{actionType}' isn't a recognized stock action -- nothing was changed.");
+            }
+
+            // Reservations (2026-11-08, hard hold): a Scrap, Adjustment or partial
+            // move can't take a stack below what's held on it -- by anyone, the
+            // reserver included; they edit or release the hold first. Named held
+            // units stay with their stack on a partial move. A whole-stack merge
+            // carries its holds into the stack it merged into.
+            if (pv != null && (actionType == "Scrap" || actionType == "Adjustment" || actionType == "Location Transfer"))
+            {
+                var holdView = StockClaims.FromVariants(_db, itemId, item.Variants);
+                var (heldQ, heldT) = holdView.HeldOn(pv.Id);
+                if (actionType == "Location Transfer" && pv.IsRetired && unitDest != null)
+                {
+                    ReservationService.MoveLines(_db, itemId, pv.Id, unitDest.Id);
+                }
+                else if ((heldQ > 0 || heldT > 0) && (pv.Quantity < heldQ || pv.ThermocoupledQty < heldT))
+                {
+                    string who = ReservationService.DescribeHoldsOn(_db, itemId, pv.Id);
+                    pv.Quantity = pvQtyBefore;
+                    pv.ThermocoupledQty = pvTcBefore;
+                    throw new System.InvalidOperationException(
+                        $"Variant {pv.VariantNumber} has {heldQ}{(heldT > 0 ? $" ({heldT} TC)" : "")} reserved ({who}), so it can't go below that. "
+                        + "Release or edit the hold first. Nothing was changed.");
+                }
+                if (actionType == "Location Transfer" && !pv.IsRetired && unitDest != null)
+                {
+                    var pinned = ReservationService.PinOwners(_db, itemId);
+                    var heldMover = movingCompressors.Select(c => (c.ReservationId, Name: "SN " + (c.SerialNumber ?? c.LabNumber ?? "(no serial)")))
+                        .Concat(movingMotors.Select(m => (m.ReservationId, Name: "Lab " + (m.LabNumber ?? "(none)"))))
+                        .FirstOrDefault(x => x.ReservationId.HasValue && pinned.ContainsKey(x.ReservationId.Value));
+                    if (heldMover.ReservationId.HasValue)
+                        throw new System.InvalidOperationException(
+                            $"{heldMover.Name} is reserved for {ReservationService.Person(pinned[heldMover.ReservationId.Value])} and stays with Variant {pv.VariantNumber} -- untick it, or move the whole stack. Nothing was moved.");
+                }
             }
 
             // Scrap and a downward Adjustment can leave more recorded units on the

@@ -34,6 +34,8 @@ namespace Visual_Inventory_System.Data
         public DbSet<Delivery> Deliveries { get; set; } = null!;
         public DbSet<TransferRequest> TransferRequests { get; set; } = null!;
         public DbSet<TrackedUnit> TrackedUnits { get; set; } = null!;
+        public DbSet<Reservation> Reservations { get; set; } = null!;
+        public DbSet<ReservationLine> ReservationLines { get; set; } = null!;
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -183,6 +185,9 @@ namespace Visual_Inventory_System.Data
                 b.HasIndex(c => new { c.ItemId, c.SerialNumber })
                  .IsUnique()
                  .HasFilter("\"SerialNumber\" IS NOT NULL AND \"SerialNumber\" <> ''");
+
+                // Reservations (2026-11-08): "which units does this hold name".
+                b.HasIndex(c => c.ReservationId);
             });
 
             modelBuilder.Entity<MotorUnit>(b =>
@@ -194,6 +199,7 @@ namespace Visual_Inventory_System.Data
                 // LabNumber is the only identifying field and won't always be
                 // present, so it can't carry a uniqueness constraint.
                 b.HasIndex(c => c.ItemId);
+                b.HasIndex(c => c.ReservationId);
             });
 
             modelBuilder.Entity<UserTeam>(b =>
@@ -234,6 +240,26 @@ namespace Visual_Inventory_System.Data
                 // the model lacks raises PendingModelChangesWarning, which aborts
                 // Migrate() before any SQL runs (handoff Pass 5 trap).
                 b.HasIndex(u => u.Line);
+            });
+
+            // Reservations (2026-11-08, docs/Unit_Reservations_Spec.md). Every read
+            // is "live holds on this ItemId" (the claims engine, the Item Card) or
+            // "everything live" (Reserved Items); lines hang off their reservation
+            // and go with it. Declared before `migrations add`, same reason as above.
+            modelBuilder.Entity<Reservation>(b =>
+            {
+                b.HasIndex(r => r.ItemId);
+                b.HasIndex(r => r.Status);
+                b.HasIndex(r => r.ReservedBy);
+            });
+
+            modelBuilder.Entity<ReservationLine>(b =>
+            {
+                b.HasOne(l => l.Reservation)
+                 .WithMany(r => r.Lines)
+                 .HasForeignKey(l => l.ReservationId)
+                 .OnDelete(DeleteBehavior.Cascade);
+                b.HasIndex(l => l.ItemVariantId);
             });
         }
     }

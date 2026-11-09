@@ -73,6 +73,15 @@ namespace Visual_Inventory_System.Models
         /// never both. Loose reference, same convention as OrderId.
         /// </summary>
         public int? TransferRequestId { get; set; }
+
+        /// <summary>
+        /// The Reservation this On Hand unit is named in, or null (2026-11-08). The
+        /// unit counts inside that reservation's quantity on its stack. Only means
+        /// anything while the reservation is live -- check it through
+        /// ReservationService, never on its own. Cleared when the unit leaves or
+        /// the hold ends.
+        /// </summary>
+        public int? ReservationId { get; set; }
     }
 
     /// <summary>Allowed CompressorUnit.Status values. Plain strings, matching the loose-string style used for ActionType and Line.</summary>

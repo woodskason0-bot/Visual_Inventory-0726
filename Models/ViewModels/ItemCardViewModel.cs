@@ -40,5 +40,17 @@ namespace Visual_Inventory_System.Models.ViewModels
 
         /// <summary>Last few log rows for the item, through ApplyLogVisibility.</summary>
         public List<TransactionLog> RecentLogs { get; set; } = new();
+
+        /// <summary>Live holds on this item, oldest first, lines included (2026-11-08).</summary>
+        public List<Reservation> Reservations { get; set; } = new();
+
+        /// <summary>The Reserve button: Standard and up, own Line, at least one stack.</summary>
+        public bool CanReserve { get; set; }
+
+        /// <summary>Holds this viewer may edit or release (theirs, or Engineer+ on the Line, or Admin).</summary>
+        public HashSet<int> ManageableReservationIds { get; set; } = new();
+
+        /// <summary>Holds this viewer made -- the "You" tag.</summary>
+        public HashSet<int> MyReservationIds { get; set; } = new();
     }
 }

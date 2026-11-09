@@ -60,5 +60,9 @@ namespace Visual_Inventory_System.Models
         /// never both. Loose reference, same convention as OrderId.
         /// </summary>
         public int? TransferRequestId { get; set; }
+
+        /// <summary>The Reservation this On Hand TC unit is named in, or null -- same
+        /// meaning and rules as CompressorUnit.ReservationId.</summary>
+        public int? ReservationId { get; set; }
     }
 }

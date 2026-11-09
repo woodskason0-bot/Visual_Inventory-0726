@@ -1,0 +1,149 @@
+@model Visual_Inventory_System.Services.ReserveFormModel
+@*
+    Reservations (2026-11-08) -- the Reserve dialog. Fetched from
+    /Reservations/Form into Search Center's #reserveModal .modal-content, so it
+    carries no script of its own (innerHTML never runs one): every handler is a
+    delegated listener in SearchCenter.cshtml keyed on #rv-form.
+*@
+@{
+    var it = Model.Item;
+    bool editing = Model.Existing != null;
+    string untilMode = editing && Model.End == null ? "notice" : "date";
+    string endValue = (Model.End ?? Model.Start.AddDays(14)).ToString("yyyy-MM-dd");
+}
+<form method="post" action="/Reservations/Save" id="rv-form" data-by="@Model.ReservedByDisplay" novalidate>
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="id" value="@(Model.Existing?.Id ?? 0)" />
+    <input type="hidden" name="itemId" value="@it.ItemId" />
+
+    <div class="modal-header">
+        <div class="me-3" style="min-width:0;">
+            <div class="text-white fw-bold fs-5">@(editing ? "Edit reservation" : "Reserve")</div>
+            <div class="text-light-gray small text-break">@it.ItemId &middot; @it.ItemName &middot; @it.Type</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+    </div>
+
+    <div class="modal-body text-white d-grid gap-3">
+        @if (!editing && Model.MyOpenReasons.Any())
+        {
+            <div>
+                <div class="small text-light-gray mb-1">Add it to one of your open reservations:</div>
+                <div class="rv-reasons">
+                    @foreach (var r in Model.MyOpenReasons)
+                    {
+                        <button type="button" class="btn btn-sm btn-outline-reserve" data-reason="@r">Reserved for @r</button>
+                    }
+                </div>
+            </div>
+        }
+
+        <div>
+            <label for="rv-reason" class="form-label fw-bold mb-1">Reserved for</label>
+            <textarea id="rv-reason" name="reason" class="form-control" rows="2" maxlength="200" required
+                      placeholder="What it's for: a build, a test, a shipment">@Model.Reason</textarea>
+            <div class="d-flex justify-content-between small text-light-gray mt-1">
+                <span>Reserved by <strong class="text-white">@Model.ReservedByDisplay</strong>@(editing ? "" : " (you)")</span>
+                <span id="rv-count">@Model.Reason.Length / 200</span>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-sm-5">
+                <label for="rv-start" class="form-label fw-bold mb-1">From</label>
+                <input id="rv-start" name="start" type="date" class="form-control" value="@Model.Start.ToString("yyyy-MM-dd")" />
+                <div class="small text-light-gray mt-1">The hold starts as soon as you save.</div>
+            </div>
+            <div class="col-sm-7">
+                <span class="form-label fw-bold mb-1 d-block" id="rv-until-lbl">Until</span>
+                <div class="d-flex flex-wrap gap-2 align-items-center" role="radiogroup" aria-labelledby="rv-until-lbl">
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="untilMode" id="rv-u-notice" value="notice" @(untilMode == "notice" ? "checked" : "") />
+                        <label class="btn btn-sm btn-outline-reserve" for="rv-u-notice">Until notice</label>
+                        <input type="radio" class="btn-check" name="untilMode" id="rv-u-date" value="date" @(untilMode == "date" ? "checked" : "") />
+                        <label class="btn btn-sm btn-outline-reserve" for="rv-u-date">A date</label>
+                    </div>
+                    <input id="rv-end" name="end" type="date" class="form-control" style="width:auto;" value="@endValue" aria-label="End date" @(untilMode == "notice" ? "disabled" : "") />
+                </div>
+                <div class="small text-light-gray mt-1">A dated hold ends on its own after that day, and you're notified.</div>
+            </div>
+        </div>
+
+        <div>
+            <div class="fw-bold mb-1">How many, from where</div>
+            @foreach (var s in Model.Stacks)
+            {
+                bool none = s.MaxQty <= 0 && s.Qty <= 0;
+                <div class="rv-stack" data-vid="@s.VariantId" data-max="@s.MaxQty">
+                    <div class="rv-stack-head">
+                        <span class="fw-bold">V@(s.Number) &middot; @s.Label@(string.IsNullOrWhiteSpace(s.Team) ? "" : $" · {s.Team}")</span>
+                        <span class="small text-light-gray">@s.OnShelf on the shelf@(Model.IsMotor ? $" ({s.TcOnShelf} TC)" : "") &middot; @(none ? "nothing free to hold" : $"up to {s.MaxQty} free to hold")</span>
+                    </div>
+                    <div class="rv-qty">
+                        <label class="small d-flex align-items-center gap-2 mb-0">Hold
+                            <input type="number" class="form-control form-control-sm rv-qty-input" name="qty_@s.VariantId" min="0" max="@s.MaxQty" value="@s.Qty" @(none ? "disabled" : "") />
+                        </label>
+                        @if (Model.IsMotor)
+                        {
+                            <label class="small d-flex align-items-center gap-2 mb-0">of which TC
+                                <input type="number" class="form-control form-control-sm rv-tc-input" name="tc_@s.VariantId" min="0" max="@s.MaxTc" value="@s.Tc" @(s.MaxTc <= 0 && s.Tc <= 0 ? "disabled" : "") />
+                            </label>
+                        }
+                    </div>
+
+                    @if (s.Units.Any())
+                    {
+                        <div class="mt-2">
+                            <div class="small text-light-gray">Name specific units (optional):</div>
+                            @foreach (var u in s.Units)
+                            {
+                                <label class="rv-unit @(u.TakenBy != null ? "taken" : "")">
+                                    <input type="checkbox" class="form-check-input mt-0 rv-pin" name="pin_@s.VariantId" value="@u.Id"
+                                           @(u.Checked ? "checked" : "") @(u.TakenBy != null ? "disabled" : "") />
+                                    @u.Label
+                                    @if (u.TakenBy != null)
+                                    {
+                                        <span class="held-tag"><i class="bi bi-lock-fill"></i>held for @u.TakenBy</span>
+                                    }
+                                </label>
+                            }
+                        </div>
+                    }
+
+                    @{
+                        int roomForRows = Model.IsCompressor ? s.OnShelf - s.RecordedRows : Model.IsMotor ? s.TcOnShelf - s.RecordedRows : 0;
+                    }
+                    @if (roomForRows > 0 && !none)
+                    {
+                        <div class="mt-2">
+                            <div class="small text-light-gray mb-1">
+                                @(Model.IsCompressor
+                                    ? $"{roomForRows} here aren't recorded yet. To name one, type the serial off its nameplate:"
+                                    : $"{roomForRows} TC motor(s) here have no lab # on record. If one has a lab #, type it (optional):")
+                            </div>
+                            <div class="d-flex gap-2">
+                                <input type="text" class="form-control form-control-sm rv-new-input" maxlength="50"
+                                       placeholder="@(Model.IsCompressor ? "Serial from the nameplate" : "Lab #")" aria-label="@(Model.IsCompressor ? "Serial" : "Lab #") to record and hold on V@(s.Number)" />
+                                <button type="button" class="btn btn-sm btn-outline-secondary fw-bold rv-new-add" data-room="@roomForRows">Add</button>
+                            </div>
+                            <div class="rv-new-list d-flex flex-wrap gap-2 mt-2"></div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="rv-preview">
+            <div class="small text-light-gray">Will show on the Item Card as</div>
+            <div id="rv-preview"></div>
+        </div>
+        <div class="small text-danger" id="rv-error" role="alert"></div>
+    </div>
+
+    <div class="modal-footer">
+        <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-reserve fw-bold" id="rv-submit">
+            <i class="bi bi-bookmark-fill me-1"></i><span id="rv-submit-lbl">@(editing ? "Save changes" : "Reserve")</span>
+        </button>
+    </div>
+</form>

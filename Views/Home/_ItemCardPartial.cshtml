@@ -46,6 +46,23 @@
         var v = vars.FirstOrDefault(x => x.Id == variantId);
         return v == null ? "—" : $"V{v.VariantNumber} · {LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString)}";
     }
+
+    // Reservations (2026-11-08): live holds, per stack and per named unit.
+    var res = Model.Reservations;
+    var resById = res.ToDictionary(r => r.Id);
+    var heldByVariant = res.SelectMany(r => r.Lines).GroupBy(l => l.ItemVariantId)
+        .ToDictionary(g => g.Key, g => (Q: g.Sum(x => x.Quantity), T: g.Sum(x => x.TcQuantity)));
+    int heldTotal = heldByVariant.Values.Sum(x => x.Q);
+    var today = DateTime.Today;
+    bool Held(int? rid) => rid.HasValue && resById.ContainsKey(rid.Value);
+    string HeldLabel(int? rid)
+    {
+        if (!rid.HasValue || !resById.TryGetValue(rid.Value, out var r)) return "";
+        string who = Model.MyReservationIds.Contains(r.Id) ? "You" : r.ReservedBy.Replace('.', ' ');
+        return who + " · " + (r.EndDate.HasValue ? "to " + r.EndDate.Value.ToString("MM-dd-yyyy") : "until notice");
+    }
+    var compPinned = Model.CompressorUnits.Where(u => u.Status == UnitStatus.OnHand && Held(u.ReservationId)).ToList();
+    var motorPinned = Model.MotorUnits.Where(u => u.Status == UnitStatus.OnHand && Held(u.ReservationId)).ToList();
 }
 
 <div class="modal-header">
@@ -74,6 +91,10 @@
         {
             <div class="ic-stat"><div class="ic-stat-val text-success">@Model.AvailableToViewer</div><div class="ic-stat-lbl">Available to you</div></div>
         }
+        @if (heldTotal > 0)
+        {
+            <div class="ic-stat ic-held"><div class="ic-stat-val">@heldTotal</div><div class="ic-stat-lbl">Reserved</div></div>
+        }
         <div class="ic-stat"><div class="ic-stat-val">@Model.CommittedToPending</div><div class="ic-stat-lbl">In pending orders</div></div>
         @if (showLoan)
         {
@@ -100,6 +121,60 @@
         </div>
     }
 
+    @* ---- Reserved (2026-11-08): Kason's sentence, one block per live hold ---- *@
+    @if (res.Any())
+    {
+        <div class="ic-section-title">Reserved <span class="ic-held-n">(@res.Count)</span></div>
+        <div class="ic-res-list mb-3">
+            @foreach (var r in res)
+            {
+                bool mine = Model.MyReservationIds.Contains(r.Id);
+                bool canManage = Model.ManageableReservationIds.Contains(r.Id);
+                int daysLeft = r.EndDate.HasValue ? (r.EndDate.Value.Date - today).Days : -1;
+                var pinsHere = compPinned.Where(u => u.ReservationId == r.Id).Select(u => !string.IsNullOrWhiteSpace(u.SerialNumber) ? "SN " + u.SerialNumber : "Lab " + u.LabNumber)
+                    .Concat(motorPinned.Where(u => u.ReservationId == r.Id).Select(u => "Lab " + u.LabNumber)).ToList();
+                <div class="ic-res">
+                    <div class="text-break">Reserved for <strong>@r.Reason</strong></div>
+                    <div class="ic-res-meta">
+                        <span>by <strong>@r.ReservedBy.Replace('.', ' ')</strong></span>
+                        @if (mine) { <span class="res-you">You</span> }
+                        <span>· from <strong>@r.StartDate.ToString("MM-dd-yyyy")</strong></span>
+                        @if (r.EndDate.HasValue)
+                        {
+                            <span>to <strong>@r.EndDate.Value.ToString("MM-dd-yyyy")</strong></span>
+                            <span class="res-time @(daysLeft <= 7 ? "soon" : "")">@(daysLeft <= 0 ? "Ends today" : daysLeft == 1 ? "1 day left" : $"{daysLeft} days left")</span>
+                        }
+                        else
+                        {
+                            <span class="res-time open">until notice</span>
+                        }
+                    </div>
+                    <div class="ic-res-units">
+                        @foreach (var l in r.Lines.Where(l => l.Quantity > 0))
+                        {
+                            <span class="res-chip">@l.Quantity@(l.TcQuantity > 0 ? $" ({l.TcQuantity} TC)" : "") <span class="k">on @VarLabel(l.ItemVariantId)</span></span>
+                        }
+                        @foreach (var p in pinsHere)
+                        {
+                            <span class="res-chip"><i class="bi bi-lock-fill k"></i>@p</span>
+                        }
+                    </div>
+                    @if (canManage)
+                    {
+                        <div class="ic-res-act">
+                            <button type="button" class="btn btn-sm btn-outline-secondary fw-bold" data-card-action="reserve" data-item-id="@it.ItemId" data-reservation-id="@r.Id">Edit</button>
+                            <form method="post" action="/Reservations/Release" onsubmit="return confirm('Release this hold? The stock becomes available to everyone.');">
+                                @Html.AntiForgeryToken()
+                                <input type="hidden" name="id" value="@r.Id" />
+                                <button type="submit" class="btn btn-sm btn-outline-reserve fw-bold">Release</button>
+                            </form>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+
     @* ---- What VIS stores about it ---- *@
     <div class="ic-section-title">Details</div>
     <dl class="ic-details mb-3">
@@ -122,16 +197,21 @@
     {
         <div class="table-responsive mb-3">
             <table class="table table-sm align-middle mb-0" style="min-width:420px;">
-                <thead><tr><th>#</th><th>Location</th>@if (split || teams.Count == 1) {<th>Team</th>}<th class="text-end">Qty</th>@if (Model.IsMotor) {<th class="text-end">TC</th>}</tr></thead>
+                <thead><tr><th>#</th><th>Location</th>@if (split || teams.Count == 1) {<th>Team</th>}<th class="text-end">Qty</th>@if (Model.IsMotor) {<th class="text-end">TC</th>}@if (heldTotal > 0) {<th class="text-end">Reserved</th>}</tr></thead>
                 <tbody>
                     @foreach (var v in vars)
                     {
+                        var h = heldByVariant.TryGetValue(v.Id, out var hv) ? hv : (Q: 0, T: 0);
                         <tr>
                             <td class="text-light-gray">V@(v.VariantNumber)</td>
                             <td>@LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString)</td>
                             @if (split || teams.Count == 1) {<td>@Dash(v.Team)</td>}
                             <td class="text-end fw-bold">@v.Quantity</td>
                             @if (Model.IsMotor) {<td class="text-end">@v.ThermocoupledQty</td>}
+                            @if (heldTotal > 0)
+                            {
+                                <td class="text-end">@if (h.Q > 0) {<span class="held-tag"><i class="bi bi-lock-fill"></i>@h.Q@(h.T > 0 ? $" ({h.T} TC)" : "")</span>} else {<span class="text-light-gray">0</span>}</td>
+                            }
                         </tr>
                     }
                 </tbody>
@@ -152,14 +232,19 @@
         {
             <div class="table-responsive mb-2">
                 <table class="table table-sm align-middle mb-0" style="min-width:420px;">
-                    <thead><tr><th>Serial #</th><th>Lab #</th><th>Stack</th></tr></thead>
+                    <thead><tr><th>Serial #</th><th>Lab #</th><th>Stack</th>@if (compPinned.Any()) {<th>Reserved</th>}</tr></thead>
                     <tbody>
                         @foreach (var u in compOnHand)
                         {
-                            <tr>
+                            bool pinned = Held(u.ReservationId);
+                            <tr class="@(pinned ? "res-held-row" : "")">
                                 <td class="@(string.IsNullOrWhiteSpace(u.SerialNumber) ? "text-warning" : "")">@(string.IsNullOrWhiteSpace(u.SerialNumber) ? "(missing)" : u.SerialNumber)</td>
                                 <td>@Dash(u.LabNumber)</td>
                                 <td class="text-light-gray small">@VarLabel(u.ItemVariantId)</td>
+                                @if (compPinned.Any())
+                                {
+                                    <td>@if (pinned) {<span class="held-tag"><i class="bi bi-lock-fill"></i>@HeldLabel(u.ReservationId)</span>}</td>
+                                }
                             </tr>
                         }
                     </tbody>
@@ -199,7 +284,8 @@
                 <tbody>
                     @foreach (var u in motorOnHand)
                     {
-                        <tr><td>@Dash(u.LabNumber)</td><td><span class="badge bg-secondary">On Hand</span></td><td class="text-light-gray small">@VarLabel(u.ItemVariantId)</td></tr>
+                        bool pinned = Held(u.ReservationId);
+                        <tr class="@(pinned ? "res-held-row" : "")"><td>@Dash(u.LabNumber)</td><td>@if (pinned) {<span class="held-tag"><i class="bi bi-lock-fill"></i>@HeldLabel(u.ReservationId)</span>} else {<span class="badge bg-secondary">On Hand</span>}</td><td class="text-light-gray small">@VarLabel(u.ItemVariantId)</td></tr>
                     }
                     @foreach (var u in motorOut)
                     {
@@ -263,6 +349,12 @@
             <button type="button" class="btn btn-outline-info fw-bold" data-card-action="stock" data-item-id="@it.ItemId">
                 <i class="bi bi-box-seam me-1"></i> Handle Stock
             </button>
+            @if (Model.CanReserve)
+            {
+                <button type="button" class="btn btn-outline-reserve fw-bold" data-card-action="reserve" data-item-id="@it.ItemId">
+                    <i class="bi bi-bookmark me-1"></i> Reserve
+                </button>
+            }
             <button type="button" class="btn btn-primary fw-bold" data-card-action="cart" data-item-id="@it.ItemId"
                     @(vars.Any() && Model.AvailableToViewer > 0 ? "" : "disabled")
                     title="@(vars.Any() && Model.AvailableToViewer > 0 ? "" : "Nothing available to order")">

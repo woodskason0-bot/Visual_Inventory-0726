@@ -509,7 +509,13 @@
                                        team's real ceiling. Falls back to the item total
                                        whenever no single team applies, which is exactly
                                        what Submit would allow too. *@
-                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableForViewer(item) : item.Quantity)</span>
+                                    <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableForViewer(item) : item.Quantity)
+                                        @* Reservations (2026-11-08): only when something is held. *@
+                                        @if (ViewBag.HeldPerItem is Dictionary<string, int> heldMap && heldMap.TryGetValue(item.ItemId, out var heldN))
+                                        {
+                                            <span class="res-pill ms-2"><i class="bi bi-lock-fill"></i>@heldN reserved</span>
+                                        }
+                                    </span>
                                     @if (actVars.Count > 1)
                                     {
                                         foreach (var v in actVars)
@@ -583,6 +589,14 @@
 <div class="modal fade" id="itemCardModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
         <div class="modal-content" id="itemCardContent"></div>
+    </div>
+</div>
+
+<!-- RESERVE (2026-11-08) -- body fetched from /Reservations/Form on open, same
+     always-fresh pattern as the Item Card; its handlers are delegated below. -->
+<div class="modal fade" id="reserveModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+        <div class="modal-content" id="reserveContent"></div>
     </div>
 </div>
 
@@ -1290,13 +1304,159 @@
         const btn = e.target.closest('#itemCardModal [data-card-action]');
         if (!btn || btn.disabled) return;
         const id = btn.dataset.itemId, name = btn.dataset.itemName;
+        const resId = btn.dataset.reservationId;
         const next = {
             cart: function () { openAddToCart(id); },
             stock: function () { handleStock(id); },
             transfer: function () { openTransfer(id); },
+            reserve: function () { openReserve(id, resId); },
             'delete': function () { openDeleteItem(id, name); }
         }[btn.dataset.cardAction];
         if (next) afterModalHides('itemCardModal', next);
+    });
+
+    // ---------- Reservations (2026-11-08) ----------
+    // The dialog body comes from /Reservations/Form, fresh each time (holdable
+    // counts move with every order and hold). A refusal comes back as text.
+    function openReserve(itemId, reservationId) {
+        const content = document.getElementById('reserveContent');
+        content.innerHTML = '<div class="modal-body text-center py-5 text-light-gray">'
+            + '<span class="spinner-border spinner-border-sm me-2"></span>Loading…</div>';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('reserveModal')).show();
+        let url = '/Reservations/Form?itemId=' + encodeURIComponent(itemId);
+        if (reservationId) url += '&id=' + encodeURIComponent(reservationId);
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.text().then(function (t) { return { ok: r.ok, text: t }; }); })
+            .then(function (res) {
+                if (res.ok) { content.innerHTML = res.text; rvUpdate(); return; }
+                content.innerHTML = '<div class="modal-body py-4 text-white"></div>'
+                    + '<div class="modal-footer"><button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Close</button></div>';
+                content.querySelector('.modal-body').textContent = res.text || 'Could not open Reserve.';
+            })
+            .catch(function () {
+                content.innerHTML = '<div class="modal-body py-4 text-danger">Could not open Reserve.</div>'
+                    + '<div class="modal-footer"><button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">Close</button></div>';
+            });
+    }
+
+    function rvFmt(iso) {
+        const p = (iso || '').split('-');
+        return p.length === 3 ? p[1] + '-' + p[2] + '-' + p[0] : '__-__-____';
+    }
+
+    // Keeps the live preview, the counter, the date toggle and the button label
+    // in step with what's typed and ticked.
+    function rvUpdate() {
+        const form = document.getElementById('rv-form');
+        if (!form) return;
+        const reason = form.querySelector('#rv-reason');
+        const notice = form.querySelector('#rv-u-notice');
+        const end = form.querySelector('#rv-end');
+        const start = form.querySelector('#rv-start');
+        form.querySelector('#rv-count').textContent = reason.value.length + ' / 200';
+        end.disabled = notice.checked;
+
+        let total = 0;
+        form.querySelectorAll('.rv-qty-input').forEach(function (q) { total += parseInt(q.value, 10) || 0; });
+
+        const preview = form.querySelector('#rv-preview');
+        preview.textContent = '';
+        function strong(t) { const s = document.createElement('strong'); s.textContent = t; return s; }
+        preview.append('Reserved for ', strong(reason.value.trim() || '(reason)'), ' by ', strong(form.dataset.by || ''),
+            ' from ', strong(rvFmt(start.value)));
+        if (notice.checked) preview.append(' until notice');
+        else preview.append(' to ', strong(rvFmt(end.value)));
+        preview.append(' · ' + total + ' held');
+
+        form.querySelector('#rv-submit').disabled = !reason.value.trim() || total <= 0;
+    }
+
+    document.addEventListener('input', function (e) { if (e.target.closest('#rv-form')) rvUpdate(); });
+    document.addEventListener('change', function (e) {
+        const form = e.target.closest('#rv-form');
+        if (!form) return;
+        // Naming a unit holds it: the stack's count can't sit below what's named.
+        if (e.target.classList.contains('rv-pin') && e.target.checked) rvBumpQty(e.target.closest('.rv-stack'));
+        rvUpdate();
+    });
+
+    function rvNamedCount(stack) {
+        return stack.querySelectorAll('.rv-pin:checked').length + stack.querySelectorAll('.rv-new-list input[type=hidden]').length;
+    }
+
+    function rvBumpQty(stack) {
+        if (!stack) return;
+        const named = rvNamedCount(stack);
+        const qty = stack.querySelector('.rv-qty-input');
+        if (qty && (parseInt(qty.value, 10) || 0) < named) qty.value = named;
+        // Motors: a named unit is a TC unit.
+        const tc = stack.querySelector('.rv-tc-input');
+        if (tc && (parseInt(tc.value, 10) || 0) < named) tc.value = named;
+    }
+
+    document.addEventListener('click', function (e) {
+        const reasonBtn = e.target.closest('#rv-form [data-reason]');
+        if (reasonBtn) {
+            const box = document.getElementById('rv-reason');
+            box.value = reasonBtn.dataset.reason;
+            rvUpdate();
+            box.focus();
+            return;
+        }
+        const add = e.target.closest('#rv-form .rv-new-add');
+        if (add) {
+            const stack = add.closest('.rv-stack');
+            const input = stack.querySelector('.rv-new-input');
+            const list = stack.querySelector('.rv-new-list');
+            const err = document.getElementById('rv-error');
+            const val = (input.value || '').trim();
+            err.textContent = '';
+            if (!val) { input.focus(); return; }
+            const existing = Array.prototype.map.call(list.querySelectorAll('input[type=hidden]'), function (h) { return h.value.toLowerCase(); });
+            if (existing.indexOf(val.toLowerCase()) >= 0) { err.textContent = val + ' is already in the list.'; return; }
+            if (existing.length >= (parseInt(add.dataset.room, 10) || 0)) {
+                err.textContent = 'Only ' + add.dataset.room + ' unrecorded on this stack.';
+                return;
+            }
+            const chip = document.createElement('span');
+            chip.className = 'res-chip';
+            chip.append(val + ' ');
+            const hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'new_' + stack.dataset.vid;
+            hidden.value = val;
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'btn btn-sm p-0 border-0 text-light-gray rv-new-remove';
+            x.setAttribute('aria-label', 'Remove ' + val);
+            x.textContent = '×';
+            chip.append(hidden, x);
+            list.appendChild(chip);
+            input.value = '';
+            rvBumpQty(stack);
+            rvUpdate();
+            return;
+        }
+        const rm = e.target.closest('#rv-form .rv-new-remove');
+        if (rm) { rm.closest('.res-chip').remove(); rvUpdate(); }
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('rv-new-input')) {
+            e.preventDefault();
+            const add = e.target.closest('.rv-stack').querySelector('.rv-new-add');
+            if (add) add.click();
+        }
+    });
+
+    // Reserved Items links here with ?openCard=ITEM (row click) or
+    // ?openCard=ITEM&reserve=ID (Edit); Save/Release come back with ?openCard=.
+    document.addEventListener('DOMContentLoaded', function () {
+        const qs = new URLSearchParams(window.location.search);
+        const card = qs.get('openCard');
+        const reserve = qs.get('reserve');
+        if (card && reserve) openReserve(card, reserve);
+        else if (card) openItemCard(card);
     });
 
     function openDeleteItem(itemId, itemName) {

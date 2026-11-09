@@ -26,6 +26,9 @@ builder.Services.AddScoped<CurrentUserService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<SuperuserGateService>();
 builder.Services.AddScoped<TrackedUnitService>();
+// Reservations (2026-11-08): holds on stock, and the sweep that ends dated ones.
+builder.Services.AddScoped<ReservationService>();
+builder.Services.AddHostedService<ReservationSweepService>();
 
 // Configure Session (The "Locker")
 builder.Services.AddDistributedMemoryCache();

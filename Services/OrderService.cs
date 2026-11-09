@@ -228,11 +228,14 @@ namespace Visual_Inventory_System.Services
                 // and the lines this loop adds aren't saved until after it -- so
                 // without this, two rows of the same item (the cart keeps them
                 // apart by location/team on purpose) each passed against the
-                // full shelf: 4 + 4 accepted against 5 units. Pools follow
-                // GetAvailableQuantity's own: an unscoped ("") line draws on
-                // every team's stock, so it counts against any line of the item,
-                // and any line counts against an unscoped one.
-                var claimedThisCart = new List<(string ItemId, string Team, int Qty)>();
+                // full shelf: 4 + 4 accepted against 5 units. Each cart line
+                // goes into the same StockClaims check as every saved claim
+                // (2026-11-08), which is what closes BC-01 (an unscoped order
+                // was invisible to a team-scoped one) and BC-07 (TC was never
+                // counted across orders): the whole cart has to fit, holds,
+                // other orders, teams and TC together.
+                var claimsByItem = new Dictionary<string, StockClaims>();
+                var cartLinesByItem = new Dictionary<string, List<StockClaims.Line>>();
 
                 // 2. Attach the Items
                 foreach (var entry in draft.Entries)
@@ -248,24 +251,35 @@ namespace Visual_Inventory_System.Services
                     // as the stock check right below it.
                     string team = ResolveOrderingTeam(invItem, entry.RequestedTeam);
 
-                    int inCart = claimedThisCart
-                        .Where(c => c.ItemId == entry.ItemId && (team.Length == 0 || c.Team.Length == 0 || c.Team == team))
-                        .Sum(c => c.Qty);
-
-                    // Verify Stock (Clean error message without quotes to protect Toast JS)
-                    var avail = System.Math.Max(0, invService.GetAvailableQuantity(entry.ItemId, team) - inCart);
-                    if (avail < entry.Quantity)
-                    {
-                        throw new InvalidOperationException(inCart > 0
-                            ? $"Failed: ID {entry.ItemId} only has {avail} available in stock after the other cart lines for it."
-                            : $"Failed: ID {entry.ItemId} only has {avail} available in stock.");
-                    }
-                    claimedThisCart.Add((entry.ItemId, team, entry.Quantity));
-
                     // TC request only sticks for motors, and never exceeds the line qty.
                     int tcCount = InventoryService.IsMotorType(invItem.Type)
                         ? System.Math.Min(entry.ThermocoupledCount, entry.Quantity)
                         : 0;
+
+                    // Verify Stock (Clean error message without quotes to protect Toast JS)
+                    if (!claimsByItem.TryGetValue(entry.ItemId, out var claims))
+                    {
+                        claims = StockClaims.Load(_db, entry.ItemId);
+                        claimsByItem[entry.ItemId] = claims;
+                        cartLinesByItem[entry.ItemId] = new List<StockClaims.Line>();
+                    }
+                    var earlierInCart = cartLinesByItem[entry.ItemId];
+                    var thisLine = StockClaims.NewLine(requester, team, entry.Quantity, tcCount, earlierInCart.Count);
+                    if (!claims.Fits(earlierInCart.Append(thisLine)))
+                    {
+                        // Say how many really are free for this line, after the cart's own earlier lines.
+                        var withCart = new StockClaims(entry.ItemId, claims.Stacks, claims.Holds, claims.Lines.Concat(earlierInCart).ToList());
+                        int avail = withCart.AvailableQty(requester, team);
+                        int availTc = withCart.AvailableTc(requester, team);
+                        string after = earlierInCart.Count > 0 ? " after the other cart lines for it" : "";
+                        if (avail >= entry.Quantity && tcCount > availTc)
+                            throw new InvalidOperationException(
+                                $"Failed: ID {entry.ItemId} only has {availTc} thermocoupled available{after} -- {tcCount} asked for.");
+                        throw new InvalidOperationException(
+                            $"Failed: ID {entry.ItemId} only has {avail} available in stock{after}"
+                            + (claims.Holds.Count > 0 ? " (reserved units don't count)." : "."));
+                    }
+                    earlierInCart.Add(thisLine);
 
                     _db.OrderItems.Add(new OrderItem
                     {
@@ -454,14 +468,21 @@ namespace Visual_Inventory_System.Services
 
                 var now = System.DateTime.UtcNow;
 
+                // Reservations (2026-11-08): what other people hold on this stack
+                // stays, whoever is picking up -- same rule as FulfillOrderItem.
+                string requester = order.RequestedBy ?? "";
+                var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
+                var heldByOthers = holdView.HeldByOthers(variant.Id, requester);
+                int freeHere = System.Math.Max(0, variant.Quantity - heldByOthers.Qty);
+                if (pickupQty > freeHere)
+                    throw new InvalidOperationException(HeldRefusal(it.ItemId, new List<ItemVariant> { variant }, requester, holdView, freeHere, pickupQty));
+
                 // Same per-take TC math FulfillOrderItem's spill loop uses for a
                 // single variant -- this call only ever pulls from the one
                 // location the picker is standing at, so it's exactly one
                 // iteration of that loop, computed before the take is applied.
-                int nonTc = variant.Quantity - variant.ThermocoupledQty;
-                int forcedTc = System.Math.Max(0, pickupQty - nonTc);
-                int maxTc = System.Math.Min(pickupQty, variant.ThermocoupledQty);
-                int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, it.ThermocoupledCount));
+                var (_, tcTake) = PlanTake(variant, pickupQty, it.ThermocoupledCount, heldByOthers);
+                var pins = ReservationService.PinOwners(_db, it.ItemId);
 
                 variant.Quantity -= pickupQty;
                 variant.ThermocoupledQty -= tcTake;
@@ -490,8 +511,10 @@ namespace Visual_Inventory_System.Services
                     // the shelf with this one included are what's left plus the slots left.
                     AssignOneCompressorUnit(it.ItemId, onHandHere, pair.Lab, pair.Serial, orderId, it.Id, null, now,
                         claimedThisCall, variant.Quantity + (pickupQty - u), unitChoices != null && unitChoices.ContainsKey(u),
-                        ref missingLab, ref missingSerial, ref matchedUnits);
+                        ref missingLab, ref missingSerial, ref matchedUnits, pins, requester);
                 }
+                ReservationService.ConsumeForPickup(_db, it.ItemId, requester,
+                    new List<(int, int, int)> { (variant.Id, pickupQty, tcTake) }, _currentUser.Name, $"Order #{orderId}");
 
                 var flagParts = new List<string>();
                 if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
@@ -603,6 +626,47 @@ namespace Visual_Inventory_System.Services
         /// nothing partial ever gets pulled here. Shared by PickUpOrder and by
         /// ReportShortPull's immediate re-pickup of the corrected quantity.
         /// </summary>
+        private static bool SameName(string? a, string? b) =>
+            string.Equals((a ?? "").Trim(), (b ?? "").Trim(), System.StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Who placed the order this line is on -- the person whose holds a pickup may use.</summary>
+        private string RequesterOf(OrderItem it) =>
+            it.Order?.RequestedBy
+            ?? _db.Orders.Where(o => o.Id == it.OrderId).Select(o => o.RequestedBy).FirstOrDefault()
+            ?? "";
+
+        /// <summary>
+        /// How much of one stack a pull may take, and how much of that is TC, once
+        /// what other people hold there stays behind (2026-11-08). With nothing held
+        /// it's exactly the old per-stack math: floor = TC forced out when the stack
+        /// lacks enough non-TC; ceiling = the TC there; between them, what the line
+        /// still owes.
+        /// </summary>
+        private static (int Take, int TcTake) PlanTake(ItemVariant v, int remaining, int remainingTc, (int Qty, int Tc) heldByOthers)
+        {
+            int capQ = System.Math.Max(0, v.Quantity - heldByOthers.Qty);
+            int capT = System.Math.Max(0, v.ThermocoupledQty - heldByOthers.Tc);
+            int nonTcFree = System.Math.Max(0, (v.Quantity - v.ThermocoupledQty) - System.Math.Max(0, heldByOthers.Qty - heldByOthers.Tc));
+            int take = System.Math.Min(remaining, System.Math.Min(capQ, nonTcFree + capT));
+            if (take <= 0) return (0, 0);
+            int forcedTc = System.Math.Max(0, take - nonTcFree);
+            int maxTc = System.Math.Min(take, capT);
+            int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
+            return (take, tcTake);
+        }
+
+        /// <summary>The refusal when other people's holds are what make a pull come up short.</summary>
+        private string HeldRefusal(string itemId, List<ItemVariant> stacks, string requester, StockClaims view, int free, int wanted)
+        {
+            var names = stacks
+                .Select(v => ReservationService.DescribeHoldsOn(_db, itemId, v.Id))
+                .Where(s => s.Length > 0)
+                .ToList();
+            return $"{itemId}: only {free} of what's on the shelf can go to {ReservationService.Person(requester)} -- the rest is reserved"
+                + (names.Count > 0 ? $" ({string.Join("; ", names)})" : "")
+                + $". {wanted} needed. Ask them to release it, or change the order. Nothing was picked up.";
+        }
+
         private ShortPullLine? FulfillOrderItem(OrderItem it, int orderId,
             Dictionary<int, int>? variantChoices,
             Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits)
@@ -640,6 +704,17 @@ namespace Visual_Inventory_System.Services
                 return BuildShortPullLine(it, inv, activeVariants);
             }
 
+            // Reservations (2026-11-08): stock held for anyone but the person
+            // who placed this order stays on the shelf, whoever is doing the
+            // pickup (Kason's rule 1 -- the orderer's holds are what get used).
+            // Held stock isn't a miscount, so running short because of it is a
+            // refusal with names, never the short-pull path.
+            string requester = RequesterOf(it);
+            var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
+            int freeForRequester = activeVariants.Sum(v => System.Math.Max(0, v.Quantity - holdView.HeldByOthers(v.Id, requester).Qty));
+            if (it.Quantity > freeForRequester)
+                throw new InvalidOperationException(HeldRefusal(it.ItemId, activeVariants, requester, holdView, freeForRequester, it.Quantity));
+
             // Which location to pull from first: the engineer's request
             // on the order line wins; else the pickup person's choice
             // (posted from the queue page); else no preference.
@@ -650,12 +725,13 @@ namespace Visual_Inventory_System.Services
                 preferId = chosen;
             }
 
-            // Preferred variant first (if still active), then the rest
-            // lowest-number-first as spill. The pre-check above guarantees
-            // enough total stock exists, so this always fully satisfies the
-            // line -- it can still span two locations, just never comes up short.
+            // Preferred variant first (if still active), then the stacks the
+            // requester holds, then the rest lowest-number-first as spill. The
+            // pre-checks above guarantee enough free stock exists, so this always
+            // fully satisfies the line -- it can still span two locations.
+            var myHeld = holdView.Holds.Where(h => SameName(h.By, requester)).Select(h => h.VariantId).ToHashSet();
             var pullOrder = activeVariants
-                .OrderBy(v => preferId.HasValue && v.Id == preferId.Value ? 0 : 1)
+                .OrderBy(v => preferId.HasValue && v.Id == preferId.Value ? 0 : myHeld.Contains(v.Id) ? 1 : 2)
                 .ThenBy(v => v.VariantNumber)
                 .ToList();
 
@@ -671,19 +747,9 @@ namespace Visual_Inventory_System.Services
             foreach (var v in pullOrder)
             {
                 if (remaining <= 0) break;
-                int take = System.Math.Min(v.Quantity, remaining);
+                var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester));
                 if (take > 0)
                 {
-                    // How many of the pulled units are TC. Floor: if this
-                    // stack lacks enough non-TC to cover `take`, the rest
-                    // must be TC (keeps TC <= qty on what's left). Ceiling:
-                    // the TC actually on the stack. Between those, honor
-                    // what the order still asks for.
-                    int nonTc = v.Quantity - v.ThermocoupledQty;
-                    int forcedTc = System.Math.Max(0, take - nonTc);
-                    int maxTc = System.Math.Min(take, v.ThermocoupledQty);
-                    int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
-
                     v.Quantity -= take;
                     v.ThermocoupledQty -= tcTake;
                     remaining -= take;
@@ -693,6 +759,7 @@ namespace Visual_Inventory_System.Services
                     variantPulls.Add((v.Id, take, tcTake));
                 }
             }
+            var pins = ReservationService.PinOwners(_db, it.ItemId);
 
             // LOAN STARTS HERE. Loanable units that ACTUALLY left the
             // shelf are now out and expected back (Controls: everything
@@ -777,7 +844,7 @@ namespace Visual_Inventory_System.Services
                     AssignOneCompressorUnit(it.ItemId, OnHandAt(vid), lab, serial, orderId, it.Id, null, now,
                         claimedThisCall, inv.Variants.First(x => x.Id == vid).Quantity + slotsLeft[vid],
                         pairs != null && u < pairs.Count,
-                        ref missingLab, ref missingSerial, ref matchedUnits);
+                        ref missingLab, ref missingSerial, ref matchedUnits, pins, requester);
                     slotsLeft[vid]--;
                 }
             }
@@ -786,7 +853,10 @@ namespace Visual_Inventory_System.Services
             // serial match step (motors have none to match on). Only the TC
             // subset of the pull gets a row; a non-TC motor never does.
             if (InventoryService.IsMotorType(inv.Type) && pulledTc > 0)
-                TakeMotorUnits(it.ItemId, variantPulls, orderId, it.Id, null, System.DateTime.UtcNow);
+                TakeMotorUnits(it.ItemId, variantPulls, orderId, it.Id, null, System.DateTime.UtcNow, pins, requester);
+
+            // The orderer's own holds go down by what just left (and end at 0).
+            ReservationService.ConsumeForPickup(_db, it.ItemId, requester, variantPulls, _currentUser.Name, $"Order #{orderId}");
 
             var flagParts = new List<string>();
             if (missingLab > 0) flagParts.Add($"{missingLab} missing lab #");
@@ -833,8 +903,17 @@ namespace Visual_Inventory_System.Services
             string itemId, List<CompressorUnit> onHandHere, string? lab, string? serial,
             int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now,
             HashSet<string> claimedThisCall, int shelfUnitsLeft, bool slotChosenByPicker,
-            ref int missingLab, ref int missingSerial, ref int matchedUnits)
+            ref int missingLab, ref int missingSerial, ref int matchedUnits,
+            Dictionary<int, string> pins, string requester)
         {
+            // Reservations (2026-11-08): a unit named in someone else's live hold
+            // never leaves for this order; the requester's own named units go first
+            // when nobody picked a specific one.
+            bool OthersPin(CompressorUnit c) => c.ReservationId.HasValue
+                && pins.TryGetValue(c.ReservationId.Value, out var who) && !SameName(who, requester);
+            bool MinePin(CompressorUnit c) => c.ReservationId.HasValue
+                && pins.TryGetValue(c.ReservationId.Value, out var who) && SameName(who, requester);
+
             lab = string.IsNullOrWhiteSpace(lab) ? null : lab.Trim();
             serial = string.IsNullOrWhiteSpace(serial) ? null : serial.Trim();
             if (lab == null) missingLab++;
@@ -859,6 +938,9 @@ namespace Visual_Inventory_System.Services
                 known = onHandHere.FirstOrDefault(c =>
                     !string.IsNullOrWhiteSpace(c.SerialNumber) &&
                     string.Equals(c.SerialNumber, serial, System.StringComparison.OrdinalIgnoreCase));
+                if (known != null && OthersPin(known))
+                    throw new System.InvalidOperationException(
+                        $"Serial \"{serial}\" is reserved for {ReservationService.Person(pins[known.ReservationId!.Value])} -- pick a different unit for this order. Nothing was picked up.");
             }
             else
             {
@@ -866,7 +948,10 @@ namespace Visual_Inventory_System.Services
                 // on-hand unit at THIS location instead of silently orphaning
                 // it. Mirrors the motor TC fallback, which never had this gap
                 // since motors never try to match by serial to begin with.
-                known = onHandHere.FirstOrDefault(c => string.IsNullOrWhiteSpace(c.SerialNumber));
+                // With no per-unit choice at all, the requester's own held unit
+                // goes first (their hold is what this order uses up).
+                known = (!slotChosenByPicker ? onHandHere.FirstOrDefault(MinePin) : null)
+                    ?? onHandHere.FirstOrDefault(c => string.IsNullOrWhiteSpace(c.SerialNumber) && !OthersPin(c));
 
                 // No unnamed unit on the roster for this shelf. If every unit still
                 // physically on it (this one included) is already recorded WITH a
@@ -884,15 +969,17 @@ namespace Visual_Inventory_System.Services
                         throw new System.InvalidOperationException(
                             "Every unit left on that shelf already has a recorded serial, so \"No serial\" can't be the one leaving -- "
                             + "pick its serial from the list (or \"Serial not in list\" if it truly isn't recorded). Nothing was picked up.");
-                    known = onHandHere.FirstOrDefault();
+                    known = onHandHere.Where(c => !OthersPin(c)).OrderBy(c => MinePin(c) ? 0 : 1).FirstOrDefault();
                 }
             }
 
             if (known != null)
             {
                 // A unit we already knew about is leaving the shelf. Flip it --
-                // its history (and lab number) carries forward.
+                // its history (and lab number) carries forward. A unit that
+                // leaves isn't held by anyone any more.
                 onHandHere.Remove(known);
+                known.ReservationId = null;
                 known.Status = UnitStatus.PickedUp;
                 known.OrderId = orderId;
                 known.OrderItemId = orderItemId;
@@ -952,8 +1039,16 @@ namespace Visual_Inventory_System.Services
         /// transferRequestId are mutually exclusive, as in the compressor helper.
         /// </summary>
         private void TakeMotorUnits(string itemId, List<(int VariantId, int Take, int TcTake)> variantPulls,
-            int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now)
+            int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now,
+            Dictionary<int, string> pins, string requester)
         {
+            // Same reservation rule as AssignOneCompressorUnit: someone else's
+            // named TC motor stays; the requester's own go first.
+            bool OthersPin(MotorUnit m) => m.ReservationId.HasValue
+                && pins.TryGetValue(m.ReservationId.Value, out var who) && !SameName(who, requester);
+            bool MinePin(MotorUnit m) => m.ReservationId.HasValue
+                && pins.TryGetValue(m.ReservationId.Value, out var who) && SameName(who, requester);
+
             foreach (var (variantId, _, tcTake) in variantPulls)
             {
                 if (tcTake <= 0) continue;
@@ -965,12 +1060,14 @@ namespace Visual_Inventory_System.Services
                     // Rechecked in memory, same reason as FulfillOrderItem's
                     // OnHandAt: an earlier line of this pickup may already have
                     // flipped a row that the database still reads as On Hand.
-                    .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId == variantId)
+                    .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId == variantId && !OthersPin(m))
+                    .OrderBy(m => MinePin(m) ? 0 : 1)
                     .Take(tcTake)
                     .ToList();
 
                 foreach (var known in onHandHere)
                 {
+                    known.ReservationId = null;
                     known.Status = UnitStatus.PickedUp;
                     known.OrderId = orderId;
                     known.OrderItemId = orderItemId;
@@ -1106,7 +1203,12 @@ namespace Visual_Inventory_System.Services
                         IReadOnlyCollection<int>? gone = null, goneMotors = null;
                         leavingCompressorUnits?.TryGetValue(v.Id, out gone);
                         leavingMotorUnits?.TryGetValue(v.Id, out goneMotors);
-                        unitNote = InventoryService.RetireSurplusUnits(_db, inv, v, gone, goneMotors);
+                        // A recount is the truth about the shelf, so a held unit the
+                        // picker says is gone may go (heldMayLeave), and the holds
+                        // shrink to fit right after (2026-11-08).
+                        unitNote = InventoryService.RetireSurplusUnits(_db, inv, v, gone, goneMotors, heldMayLeave: true);
+                        ReservationService.ShrinkToFit(_db, it.ItemId, v, _currentUser.Name,
+                            $"short-pull correction on Order #{orderId} found {after} on V{v.VariantNumber}");
                     }
 
                     _db.TransactionLogs.Add(new TransactionLog
@@ -1120,14 +1222,20 @@ namespace Visual_Inventory_System.Services
                         User = _currentUser.Name
                     });
                 }
+                // The re-pickup below reads holds from the database, so the shrink
+                // has to be there first (still inside this transaction).
+                _db.SaveChanges();
 
                 // Scoped to the line's own team, same as FulfillOrderItem's pull
                 // loop -- reissuing against the item-wide total would promise a
                 // quantity the re-pickup below then has to find outside this
-                // team's stock (or short-pull a second time).
+                // team's stock (or short-pull a second time). Stock other people
+                // hold doesn't count either, or the re-pickup would refuse.
+                string lineRequester = it.Order.RequestedBy ?? "";   // Order is Included above
+                var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
                 int available = inv.Variants
                     .Where(v => !v.IsRetired && (string.IsNullOrEmpty(it.Team) || v.Team == it.Team))
-                    .Sum(v => v.Quantity);
+                    .Sum(v => System.Math.Max(0, v.Quantity - holdView.HeldByOthers(v.Id, lineRequester).Qty));
                 int correctedQty = System.Math.Min(it.Quantity, available);
 
                 var result = new PickupResult { OrderId = orderId };
@@ -1527,9 +1635,17 @@ namespace Visual_Inventory_System.Services
                 throw new System.InvalidOperationException(
                     $"Only {available} of {itemId} available to transfer"
                     + (targetTeam.Length > 0 ? $" from {targetTeam}'s stock" : "")
-                    + " -- units already committed to a pending order don't count.");
+                    + " -- units already on a pending order or reserved don't count.");
 
             int tc = InventoryService.IsMotorType(item.Type) ? System.Math.Min(System.Math.Max(0, thermocoupledCount), qty) : 0;
+            // BC-07 (2026-11-08): TC is counted across claims too.
+            if (tc > 0)
+            {
+                int availTc = inv.GetAvailableTc(itemId, targetTeam);
+                if (tc > availTc)
+                    throw new System.InvalidOperationException(
+                        $"Only {availTc} thermocoupled {itemId} available to transfer -- {tc} asked for.");
+            }
 
             _db.TransferRequests.Add(new TransferRequest
             {
@@ -1577,14 +1693,16 @@ namespace Visual_Inventory_System.Services
         /// projection: reads nothing it doesn't also read at approval time, and
         /// writes nothing.
         /// </summary>
-        public List<(int VariantId, int Take)> PlanTransferPull(InventoryItem item, int? requestedVariantId, int quantity)
+        public List<(int VariantId, int Take)> PlanTransferPull(InventoryItem item, int? requestedVariantId, int quantity, string? requester = null)
         {
+            // Held stock stays put for a transfer exactly as it does for a pickup.
+            var holdView = StockClaims.FromVariants(_db, item.ItemId, item.Variants);
             var plan = new List<(int VariantId, int Take)>();
             int remaining = quantity;
             foreach (var v in TransferPullOrder(item, requestedVariantId, out _))
             {
                 if (remaining <= 0) break;
-                int take = System.Math.Min(v.Quantity, remaining);
+                var (take, _) = PlanTake(v, remaining, 0, holdView.HeldByOthers(v.Id, requester ?? ""));
                 if (take <= 0) continue;
                 plan.Add((v.Id, take));
                 remaining -= take;
@@ -1627,12 +1745,25 @@ namespace Visual_Inventory_System.Services
                 // allocation-aware math AddToCart and Submit() gate on, so a transfer
                 // and an order compete for the same units on the same terms rather
                 // than the transfer silently outbidding the order that got there first.
-                int totalAvailable = inv.GetAvailableQuantity(req.ItemId, targetTeam);
+                // Measured for the REQUESTER (2026-11-08), not the approver: an
+                // approving Engineer's own holds must not become transferable just
+                // because they're the one clicking.
+                string requester = req.RequesterUserName ?? "";
+                int totalAvailable = inv.GetAvailableQuantity(req.ItemId, targetTeam, requester);
                 if (req.Quantity > totalAvailable)
                     throw new System.InvalidOperationException(
                         $"Not enough available -- {req.Quantity} requested, {totalAvailable} free"
                         + (targetTeam.Length > 0 ? $" across {targetTeam}'s locations" : " across active locations")
-                        + " (units already committed to a pending order are excluded).");
+                        + " (units already committed to a pending order or reserved are excluded).");
+                if (req.ThermocoupledCount > 0)
+                {
+                    int availTc = inv.GetAvailableTc(req.ItemId, targetTeam, requester);
+                    if (req.ThermocoupledCount > availTc)
+                        throw new System.InvalidOperationException(
+                            $"Not enough thermocoupled available -- {req.ThermocoupledCount} requested, {availTc} free.");
+                }
+                var holdView = StockClaims.FromVariants(_db, req.ItemId, item.Variants);
+                var pins = ReservationService.PinOwners(_db, req.ItemId);
 
                 int remaining = req.Quantity;
                 int remainingTc = req.ThermocoupledCount;
@@ -1642,13 +1773,8 @@ namespace Visual_Inventory_System.Services
                 foreach (var v in pullOrder)
                 {
                     if (remaining <= 0) break;
-                    int take = System.Math.Min(v.Quantity, remaining);
+                    var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester));
                     if (take <= 0) continue;
-
-                    int nonTc = v.Quantity - v.ThermocoupledQty;
-                    int forcedTc = System.Math.Max(0, take - nonTc);
-                    int maxTc = System.Math.Min(take, v.ThermocoupledQty);
-                    int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
 
                     v.Quantity -= take;
                     v.ThermocoupledQty -= tcTake;
@@ -1693,13 +1819,13 @@ namespace Visual_Inventory_System.Services
                         AssignOneCompressorUnit(req.ItemId, OnHandAt(vid), lab, serial, null, null, req.Id, now,
                             claimedThisCall, item.Variants.First(x => x.Id == vid).Quantity + slotsLeft[vid],
                             compressorUnits != null && u < compressorUnits.Count,
-                            ref missingLab, ref missingSerial, ref matchedUnits);
+                            ref missingLab, ref missingSerial, ref matchedUnits, pins, requester);
                         slotsLeft[vid]--;
                     }
                 }
 
                 if (InventoryService.IsMotorType(item.Type) && pulledTc > 0)
-                    TakeMotorUnits(req.ItemId, variantPulls, null, null, req.Id, now);
+                    TakeMotorUnits(req.ItemId, variantPulls, null, null, req.Id, now, pins, requester);
 
                 item.LastUpdated = now;
                 item.UpdatedBy = _currentUser.Name;

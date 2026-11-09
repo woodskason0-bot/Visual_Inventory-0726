@@ -1,0 +1,157 @@
+@using Visual_Inventory_System.Controllers
+@{
+    ViewData["Title"] = "Reserved Items";
+    var tiers = (List<ReservedTierViewModel>)ViewBag.Tiers;
+    int total = ViewBag.TotalReservations;
+    int held = ViewBag.TotalHeld;
+    int week = ViewBag.EndingThisWeek;
+    int open = ViewBag.UntilNotice;
+}
+@*
+    Reserved Items (2026-11-08, docs/Unit_Reservations_Spec.md section 6). Kason's
+    order: yours (grouped by reason), your Line, the rest of your Branch, then the
+    other branches greyed. Rows open the Item Card on Search Center; Edit opens the
+    Reserve dialog there. Filters are client-side -- the whole list is one page.
+*@
+<div class="container-fluid py-4 px-3 px-md-4" style="max-width:1400px;">
+    <h2 class="res-page-title text-white">Reserved Items</h2>
+    <p class="mt-1 mb-3">
+        <strong>@total</strong> reservation@(total == 1 ? "" : "s") &middot;
+        <strong>@held</strong> held &middot;
+        <strong>@week</strong> end@(week == 1 ? "s" : "") this week &middot;
+        <strong>@open</strong> until notice
+    </p>
+
+    <form class="res-filters row g-3 align-items-end" id="res-filter" role="search" onsubmit="return false;">
+        <div class="col-md-6">
+            <label for="res-q" class="form-label mb-1">Search</label>
+            <input type="search" id="res-q" class="form-control" placeholder="Item, model, serial, lab #, reason, person" />
+        </div>
+        <div class="col-6 col-md-3">
+            <label for="res-type" class="form-label mb-1">Type</label>
+            <select id="res-type" class="form-select">
+                <option value="">Any</option>
+                <option value="compressor">Compressor</option>
+                <option value="motor">Motor</option>
+                <option value="other">Everything else</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-3">
+            <label for="res-when" class="form-label mb-1">Ending</label>
+            <select id="res-when" class="form-select">
+                <option value="">Any</option>
+                <option value="week">This week</option>
+                <option value="open">Until notice</option>
+            </select>
+        </div>
+    </form>
+
+    @foreach (var t in tiers)
+    {
+        <section class="res-tier @(t.Mine ? "res-mine" : "") @(t.Dim ? "res-dim" : "")" data-tier>
+            <div class="res-tier-head">
+                <h3>@t.Title</h3>
+                <span class="res-count">@t.Count</span>
+                @if (!string.IsNullOrWhiteSpace(t.Sub)) { <span class="res-sub">@t.Sub</span> }
+            </div>
+            @foreach (var g in t.Groups)
+            {
+                if (!string.IsNullOrEmpty(g.Title))
+                {
+                    <div class="res-group @(g.IsPurpose ? "res-purpose" : "")"><i class="bi @(g.IsPurpose ? "bi-folder2-open" : "bi-diagram-3") me-1"></i>@g.Title @(g.IsPurpose ? $"· {g.Rows.Count} item{(g.Rows.Count == 1 ? "" : "s")}" : "")</div>
+                }
+                <div class="table-responsive">
+                    <table class="res-table">
+                        <thead><tr><th>Item</th><th>Held</th><th>Reserved for</th><th>By</th><th>Dates</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var row in g.Rows)
+                            {
+                                var r = row.R;
+                                string when = !r.EndDate.HasValue ? "open" : (row.DaysLeft <= 7 ? "week" : "");
+                                <tr data-href="/Home/SearchCenter?openCard=@Uri.EscapeDataString(r.ItemId)" data-type="@row.TypeKey" data-when="@when" title="Open the Item Card">
+                                    <td>
+                                        <span class="res-id">@r.ItemId</span>
+                                        <span class="res-s">@(row.Item?.ItemName ?? "(item no longer exists)")@(string.IsNullOrWhiteSpace(row.Item?.Brand) ? "" : " · " + row.Item!.Brand)@(row.ItemLine.Length > 0 ? " · " + row.ItemLine : "")</span>
+                                    </td>
+                                    <td>
+                                        @foreach (var h in row.Held) { <span class="d-block">@h</span> }
+                                        @if (row.Named.Any()) { <span class="res-s"><i class="bi bi-lock-fill me-1"></i>@string.Join(", ", row.Named)</span> }
+                                    </td>
+                                    <td class="text-break">@r.Reason</td>
+                                    <td>@r.ReservedBy.Replace('.', ' ')</td>
+                                    <td class="res-until">
+                                        <span class="res-dt d-block">from @r.StartDate.ToString("MM-dd-yyyy")</span>
+                                        @if (r.EndDate.HasValue)
+                                        {
+                                            <span class="res-dt d-block">to @r.EndDate.Value.ToString("MM-dd-yyyy")</span>
+                                            <span class="res-time @(row.DaysLeft <= 7 ? "soon" : "")">@(row.DaysLeft <= 0 ? "ends today" : row.DaysLeft == 1 ? "1 day left" : $"{row.DaysLeft} days left")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="res-time open">until notice</span>
+                                        }
+                                    </td>
+                                    <td class="res-acts">
+                                        @if (row.CanManage && row.Item != null)
+                                        {
+                                            <div class="res-acts-box">
+                                                <a class="btn btn-sm btn-outline-secondary fw-bold" href="/Home/SearchCenter?openCard=@Uri.EscapeDataString(r.ItemId)&reserve=@r.Id">Edit</a>
+                                                <form method="post" action="/Reservations/Release" onsubmit="return confirm('Release this hold? The stock becomes available to everyone.');">
+                                                    @Html.AntiForgeryToken()
+                                                    <input type="hidden" name="id" value="@r.Id" />
+                                                    <button type="submit" class="btn btn-sm btn-outline-reserve fw-bold w-100">Release</button>
+                                                </form>
+                                            </div>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="res-nomatch">No matches here.</div>
+            @foreach (var e in t.EmptyGroups)
+            {
+                <div class="res-none">@e</div>
+            }
+        </section>
+    }
+</div>
+
+<script>
+(function () {
+    "use strict";
+    var q = document.getElementById('res-q');
+    var type = document.getElementById('res-type');
+    var when = document.getElementById('res-when');
+
+    function filter() {
+        var term = (q.value || '').trim().toLowerCase();
+        document.querySelectorAll('[data-tier]').forEach(function (tier) {
+            var rows = tier.querySelectorAll('tbody tr');
+            var shown = 0;
+            rows.forEach(function (tr) {
+                var ok = (!term || tr.textContent.toLowerCase().indexOf(term) >= 0)
+                    && (!type.value || tr.dataset.type === type.value)
+                    && (!when.value || tr.dataset.when === when.value);
+                tr.hidden = !ok;
+                if (ok) shown++;
+            });
+            var none = tier.querySelector('.res-nomatch');
+            if (none) none.style.display = (rows.length > 0 && shown === 0) ? 'block' : 'none';
+        });
+    }
+    q.addEventListener('input', filter);
+    type.addEventListener('change', filter);
+    when.addEventListener('change', filter);
+
+    // A row opens its Item Card; the Edit link and Release button do their own thing.
+    document.querySelectorAll('.res-table tbody tr[data-href]').forEach(function (tr) {
+        tr.addEventListener('click', function (e) {
+            if (e.target.closest('a, button, form')) return;
+            window.location.href = tr.dataset.href;
+        });
+    });
+})();
+</script>

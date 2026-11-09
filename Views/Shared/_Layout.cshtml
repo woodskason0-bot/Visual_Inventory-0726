@@ -85,6 +85,7 @@
     Func<string, bool> isActiveAction = action => currentController == "Home" && currentAction == action;
     bool isSettingsActive = ViewContext.RouteData.Values["controller"]?.ToString() == "Settings";
     bool isUnitTrackerActive = currentController == "UnitTracker";
+    bool isReservationsActive = currentController == "Reservations";
 
     // Sign-in has nothing to navigate to yet -- every other route just
     // bounces back here pre-authentication -- so the shell adds nothing but
@@ -331,6 +332,11 @@
                 <a class="sidebar-link @(isActiveAction("SearchCenter") ? "active" : "")" asp-controller="Home" asp-action="SearchCenter">
                     <i class="bi bi-search"></i><span class="sidebar-link-text">Search Center</span>
                 </a>
+                @* Reservations (2026-11-08): every live hold across the org, under
+                   Search Center because it's a view of the same inventory. *@
+                <a class="sidebar-link @(isReservationsActive ? "active" : "")" asp-controller="Reservations" asp-action="Index">
+                    <i class="bi bi-bookmark-fill"></i><span class="sidebar-link-text">Reserved Items</span>
+                </a>
                 @* Unit Tracker holdover: a plain list of whole AC units, visible to
                    every signed-in user (adding needs Standard, deleting Engineer). *@
                 <a class="sidebar-link @(isUnitTrackerActive ? "active" : "")" asp-controller="UnitTracker" asp-action="Index">
@@ -437,6 +443,7 @@
                                         {
                                             case "PickupRequested": nIcon = "bi-cart-plus-fill"; nColor = "text-info"; break;
                                             case "Fulfilled": nIcon = "bi-check-circle-fill"; nColor = "text-success"; break;
+                                            case "Reservation": nIcon = "bi-bookmark-fill"; nColor = "vis-held-text"; break;
                                             default: nIcon = "bi-bell-fill"; nColor = "text-light"; break;
                                         }
                                         <li class="notif-item d-flex align-items-stretch @(n.IsRead ? "" : "notif-unread")" data-id="@n.Id">
