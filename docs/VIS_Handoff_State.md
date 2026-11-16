@@ -86,7 +86,7 @@ rather than assuming one exists.
   the browser; `site.css` and `site.js` still ship theirs. `Code_Notes.md` is sorted by
   folder. No behavior change, so it can ride in any release. The pick-up notes
   (`docs/Handoff_2026-11-11.md`) and the scripts in `docs/comment_move/` were never
-  committed and can be deleted.
+  committed and went to the Recycle Bin on 2026-11-16.
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
   (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every

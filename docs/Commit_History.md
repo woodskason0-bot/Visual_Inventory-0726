@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-11-16
 
+### docs — BC-14 logged; the comment-move scaffolding gone
+Docs only. `Bug_Checks.md`: BC-14, Modify Stock's new-stack Team picker staying on screen
+after Add + "New location..." then Location Transfer, Internal - Transfer or Edit
+Details (P2, cosmetic: the server reads `variantTeam` only on an Add to a new
+location), found in the comment move and seen in the running app on 2026-11-12; an
+update line says 11 findings are open. Handoff: the pick-up doc and
+`docs/comment_move/`, never committed, went to the Recycle Bin.
+*Files:* `docs/Bug_Checks.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — log the comment move (`80faae7`)
 Docs only. Handoff: the server-readiness bullet in Still to do says the move is
 committed, not pushed and in no release. `Front_Load.md`: row B1, the note over the

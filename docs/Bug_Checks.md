@@ -14,6 +14,8 @@ Visual Inventory System — repository audit
 
 **Update 2026-11-09:** BC-01 and BC-07 are fixed in the Reservations work, `3c08bd6` (committed, not pushed, in no release): one availability engine, `Services/StockClaims.cs`, now gates Submit, the displays and transfers, counting unscoped lines against team-scoped ones and TC as its own dimension. Both reproductions were run against the fixed build in the running app; see `docs/VIS_Debugging_Log.md`, 2026-11-09. The other 10 findings remain open.
 
+**Update 2026-11-16:** BC-14 added, after the audit. It was found reading `_ModifyStockPartial.cshtml` during the comment move (2026-11-11) and seen in the running app on a scratch copy of the dev db (2026-11-12). It is cosmetic: nothing is saved wrong. 11 findings are open.
+
 ## Result
 
 There are **13 actionable findings: 5 P1 and 8 P2**. Twelve were reproduced with isolated service/database checks; one HTML-injection path was established by source tracing and an executed JavaScript sink check. None is represented as a completed browser test.
@@ -37,6 +39,7 @@ P1 means prioritize in the next repair cycle because the issue can corrupt inven
 | BC-11 | P1 | Overlapping registrations can persist duplicate ItemIds | Two-context reproduction | Different race from fixed VIS-15 |
 | BC-12 | P1 | Overlapping stock changes lose an update | Controlled stale-context reproduction | Known concurrency minor, reconfirmed |
 | BC-13 | P2 | CSV export shifts columns when location contains a comma | Export reproduction | Known minor, reconfirmed |
+| BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions | Source + seen in the running app | Added 2026-11-16, after the audit |
 
 ## Scope and verification
 
@@ -266,6 +269,22 @@ Export replaces commas in selected text fields and emits the remaining fields wi
 **Repair:** Use one CSV writer/escaping function for every field, preserving original text with proper quote escaping. Decide a spreadsheet-safe handling policy for formula-leading values as part of the same export change; formula execution was not tested here.
 
 **Acceptance check:** Commas, embedded quotes, CR/LF, empty fields, Unicode, and formula-leading text. Parse the export with an independent CSV reader and assert exactly 14 correctly valued columns per row.
+
+### BC-14 — The new-stack Team picker stays on screen after switching actions
+
+**P2 · Seen in the running app · Stray control, nothing saved wrong**
+
+**Location:** `Views/Home/_ModifyStockPartial.cshtml:86–95` (the picker), `toggleStockUI()` at `695–784` (only its Add / Scrap / Adjustment branch shows or hides it, `763–764`), the stack selector's change handler at `1084–1085`; server read at `Services/InventoryService.cs:1524`.
+
+The Team picker for a new stack (`stock-variant-team-div`) belongs only to Add with "+ New location...". `toggleStockUI()` sets its visibility in its last branch, which covers Add, Scrap and Adjustment. The Location Transfer, Internal - Transfer (`Ownership`) and Edit Details branches never touch it, so it keeps whatever state it had.
+
+**Reproduction:** Open Modify Stock on an item, pick Add, then "+ New location..." in the stack selector; the Team picker appears. Switch the action to Location Transfer, Internal - Transfer or Edit Details: the picker stays on screen. Switching to Scrap or Adjustment hides it. Seen on all three actions in the 2026-11-12 click-through, on a scratch copy of the dev db.
+
+**Impact:** Cosmetic. The select is never disabled, so `variantTeam` posts with every action, but the server reads it only on an Add to a new location, so nothing is saved wrong. The risk is someone reading "Which team's slice this new stack belongs to" on a Location Transfer and taking it to set the moved stack's team.
+
+**Repair:** Hide the picker, and disable its select so it doesn't post, in every branch of `toggleStockUI()` except Add with "New location...", the same way the Edit Details and Internal - Transfer inputs are disabled when their action isn't the active one.
+
+**Acceptance check:** Add with "New location..." shows the picker; each of the other five actions hides it and leaves `variantTeam` out of the post; picking Add and "New location..." again brings it back; an Add to a new location with a team picked still creates the stack on that team.
 
 ## Suggested repair sequence
 
