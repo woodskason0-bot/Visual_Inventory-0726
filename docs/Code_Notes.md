@@ -58,6 +58,9 @@ were written.
   folder, for the same reason the database does: a republish must never touch them.
   They're still served over a normal URL so the app can show them.
 - **Middleware order.** Session has to sit between Routing and Authorization.
+- **EditPresence is a singleton.** It's the one list, for the whole app, of who has
+  which Unit Tracker Edit form open. Registered per request, every check-in would
+  start from an empty list.
 
 ## Controllers/HomeController.cs
 
@@ -359,6 +362,11 @@ were written.
 - **Toast text is capped at 400 characters** so a hostile raw POST can't push the
   TempData cookie past its size limit. Only the toast is capped; the stored value
   and the log row keep exactly what was typed.
+- **The Edit form's check-in** (`EditCheckIn`) answers JSON, never a redirect, so the
+  open form updates without a reload. No level attribute, because Viewers use the
+  same form for Notes. It compares the same fields the save would: all of them, or
+  Notes only below Standard. `Opened()` reads the form's `orig_*` fields; a post
+  without them (a page loaded before 2026-11-16) gets null, which means no check.
 
 ## Data/AppDbContext.cs
 
@@ -614,6 +622,13 @@ were written.
   than one team and the item's variants span more than one. Blank when the item has
   no team split or the requester has no team, which fails open like Line does. It
   limits the pickup pull to that team's own variants.
+- **Waiting, Resubmitted, Declined.** A TC line that finds no TC at pickup is
+  `Waiting` until someone answers "Is a Non-TC Motor okay?". Yes makes it
+  `Resubmitted` (a new order carries it on), No makes it `Declined`. None of the three
+  counts against stock; only `Pending` does.
+- **Note** is the line's story in sentences, oldest first: who found the TC missing
+  and when, who answered and what. It's its own column (migration 44) so the order
+  page can show it without digging through the log.
 
 ## Models/OrgLine.cs
 
@@ -787,6 +802,17 @@ were written.
   cost, and it avoids ImageSharp v4's commercial license for a closed-source app.
 - **MaxDimension** keeps the photo folder from growing without bound. A label photo
   doesn't need phone-camera resolution to stay readable.
+
+## Services/EditPresence.cs
+
+- **A heads-up, not a lock.** Who has which unit's Edit form open lives in memory
+  only: no table, no migration, and a restart forgets it. The stale-save check in
+  `TrackedUnitService` is what actually protects the data; this only tells people
+  before a refused save does.
+- **The 100-second expiry** is a little over two 45-second check-ins, so one late
+  check-in doesn't drop someone, and a laptop closed with the form open drops off on
+  its own. Every check-in clears anyone gone quiet on every unit, so nothing lingers.
+- **Names compare without case**, like sign-in.
 
 ## Services/EmailService.cs
 
@@ -1011,6 +1037,24 @@ were written.
 - **Two saves on a move.** `ItemVariantId` on a unit row has no navigation, so EF
   can't fix up a split's new variant Id by itself and would store 0. Both saves run
   in one transaction, the caller's if there is one.
+- **A named stack that's gone is refused.** Modify Stock posts the stack's id. If it
+  isn't an active stack of the item any more (merged, deleted, retired since the page
+  loaded), Add, Scrap, Adjustment and Location Transfer refuse and say to reload. They
+  used to fall back to the primary stack, so the change landed on a shelf nobody
+  picked (BC-03). A blank id still means the primary: that's the single-stack case.
+- **The roster can't outgrow the stack.** A new unit row is refused once the stack's
+  On Hand rows reach its quantity, or its TC count for motors, whose rows are TC-only.
+  Serials typed on an Add are capped the same way. Edits to rows that already exist
+  are never blocked, so a stack that already carries extra rows can still be
+  corrected. It's the same rule VIS-9 put on Scrap and Adjustment, at the entrances
+  that add rows (BC-05).
+- **One serial once per save.** The duplicate check against the database can't see
+  rows added earlier in the same save, so a serial typed twice reached the unique
+  index and the whole save failed. It's tracked across the save now, case-sensitive
+  like the index (BC-06).
+- **CSV quoting.** Every text field is quoted when it holds a comma, a quote or a line
+  break. The older comma-to-semicolon swaps stay, so those columns read the way they
+  always have (BC-13).
 
 ## Services/LocationCodec.cs
 
@@ -1112,6 +1156,32 @@ were written.
 - **PlanTake.** With nothing held it's the old per-stack math: at least the TC that
   is forced out when the stack lacks enough non-TC units, at most the TC that's
   there, and between those, what the line still owes.
+- **A TC line gets TC when there is TC.** When the free TC across the pull's stacks
+  covers what the line asks for, each stack gives only the line's plain share, so the
+  TC comes off the stacks that have it. Before, a plain stack first in the pull order
+  filled the line and the TC stayed on the shelf (BC-02). The pull order is the same.
+  A TC unit can still stand in for a plain one, as it always could; it's only the
+  other way round that stopped. When there isn't enough TC, the line fills the way it
+  always did.
+- **Short-pull corrections stay inside the line's team.** The form only shows the
+  line's own team's stacks; a posted id for another team's stack is refused before
+  anything changes (BC-08).
+- **No TC on the shelves: ask, don't substitute.** A motor line asking for more TC
+  than its team's shelves have free (other people's holds left out) doesn't fill with
+  plain motors any more. The whole line waits, nothing leaves, and the orderer is asked
+  "Is a Non-TC Motor okay for this order?" A TC test needs a TC motor, so handing over
+  a plain one quietly was the wrong default. The rest of the order still picks up.
+- **Who answers.** The orderer, an Engineer and up on the item's Line, or Admin, so a
+  line doesn't sit stuck while the orderer is out. Same shape as who can change a
+  reservation.
+- **Yes is a resubmission, not an edit.** It makes a new order at the back of the
+  line and checks it against every pending order and hold, the same check a new cart
+  gets, because a waiting line stops counting against stock and someone else may have
+  ordered those units since. It keeps whatever TC is free by then. If it doesn't fit,
+  the Yes is refused and the line keeps waiting. No cancels the line.
+- **"Picked up" only when something left.** The orderer's "your order was picked up"
+  message used to go out even when every line came up short. It goes out only when a
+  line actually completed, and a held line sends the question instead.
 - **Pull order.** The engineer's requested location on the line wins, then the
   picker's choice posted from the queue, then no preference. After the preferred
   stack come the stacks the requester holds, then the rest lowest number first as
@@ -1288,6 +1358,9 @@ were written.
   item's Line, or Admin.
 - **Dated holds end on their own (rule 7).** The reserver hears about it twice: once
   on the last day ("ends today") and once when it ends.
+- **A new serial is named on one stack.** The same serial typed on two stacks used to
+  reach the unique index and fail the save with a database error. It's refused by
+  name before anything is written (BC-15).
 
 ## Services/ReservationSweepService.cs
 
@@ -1366,6 +1439,17 @@ were written.
   question for Conner. With no serial to go on, the same model and Sample # on
   another row that also has no serial is probably the same physical unit entered
   twice.
+- **Stale forms are refused, not merged.** The Edit form posts what it showed when it
+  opened (`UnitSnapshot`). If any of it differs from what's stored now, Update and
+  UpdateNotes refuse with nothing written, so the person sees the newer values before
+  saving anything. I picked refusing over merging only the changed fields
+  (2026-11-16). It compares values, not `UpdatedAt`: the Where and Build boxes stamp
+  `UpdatedAt` too and aren't on the form, so comparing the time would refuse a save
+  over a click that changed nothing the form shows. A Viewer's Notes save compares
+  Notes only, the one thing it can change.
+- **"Open the unit again", not "reload".** A refused save has already redirected back
+  to the list, which shows the newer values. The check-in's version of the sentence
+  says "Reload before you save", because there the page hasn't moved.
 
 ## Views/Home/_AlertRulesPartial.cshtml
 
@@ -1421,7 +1505,9 @@ were written.
 - **Team for a new stack.** It only means something on Add's "New location..." branch.
   An existing stack keeps the team it already has, the same way it keeps its location.
   Blank falls back to the item's own Team. Setting it is how a second team gets its own
-  claim on an item.
+  claim on an item. One function shows it, and it's disabled whenever it's hidden, so
+  it never posts with another action. It used to stay on screen after switching from
+  Add to Location Transfer, Internal - Transfer or Edit Details (BC-14).
 - **Deleting an empty stack (Admin).** A zero-quantity stack on a multi-variant item
   has no other way to go away. Delete Item needs the item's total at 0, and this one
   stack drained to 0 while its siblings still hold stock. The button shows only when
@@ -1652,7 +1738,8 @@ were written.
 ## Views/Home/MyActivity.cshtml
 
 - **Loans come first on the page** because that's where the action is: things you owe
-  back.
+  back. Above them, only when there is one, "Needs Your Answer" lists any TC line held
+  at pickup, with a link to answer it on the order.
 - **Compressor lines are gated behind Done Using.** Return and Scrap stay hidden
   until the person says they're finished with the unit. Nobody one-clicks a scrap by
   accident, and a line nobody has finished with stays quiet. It's UI only: no state
@@ -1677,6 +1764,10 @@ were written.
   the moment its tooltip became true: a corrected order showed a Cancelled header
   over an unannotated line with nothing pointing at the reissue. The two states get
   their own wording because one still needs a picker to act.
+- **The Non-TC Motor question lives here.** Each line's note shows under it, and a
+  waiting line shows "Is a Non-TC Motor okay for this order?" with Yes and No for
+  whoever may answer; everyone else sees who it's waiting on. A resubmitted order says
+  it came from a resubmission, not a split, since the two read very differently.
 
 ## Views/Home/PickupQueue.cshtml
 
@@ -1705,6 +1796,12 @@ were written.
   still fits. The submit button stays disabled until every tick count is met, so the
   common mistake (a count typed, the units forgotten) can't be submitted. The server
   enforces the same count and puts the form back if it refuses.
+- **TC is warned about before Pick Up.** A motor line asking for more TC than its
+  shelves have says so on the line, and that Pick Up will hold it and ask the orderer,
+  so it's no surprise at the shelf.
+- **Waiting on an Answer.** Held lines get their own table, never in Ready to Pick,
+  with Yes and No for whoever may answer. An order whose only lines are waiting has
+  nothing to pick, so it isn't in Ready either.
 
 ## Views/Home/SearchCenter.cshtml
 
@@ -1859,6 +1956,12 @@ were written.
   `<`, so the text can't end the string or the script tag.
 - **The brand text is 0.8rem.** At 0.95 the name was 181px in a slot about 165px
   wide, ran through the padding and was clipped at the sidebar edge.
+- **The Pickup Queue link** (2026-11-16) is shown to everyone signed in, because the
+  page has no level gate; Pick Up itself is Standard and up on the server. Before it,
+  the only ways in were the Command Center "Pending" card and the pickup
+  notification, which is likely why I once couldn't find my own order to pick it up.
+  The label is "Pickup Queue" (my word for it); the page's own heading still says
+  "Tasks Available".
 
 ## Views/UnitTracker/Index.cshtml
 
@@ -1887,6 +1990,18 @@ were written.
   apart from Save.
 - **Toast text isn't escaped twice.** `showToast` sets the message as text, so
   escaping the server's text in the page as well would show "&amp;" on screen.
+- **The `orig_*` fields** hold what the Edit form showed when it opened, filled from
+  the same row data as the visible fields. They're hidden inputs and never disabled,
+  so they post at every level, including for a Standard user whose Line and Team
+  selects are disabled.
+- **The check-in.** While the Edit form is open the page posts to `EditCheckIn` when
+  it opens and every 45 seconds after, with `fetch`, so nothing reloads. The yellow
+  box at the top of the form shows who else has the unit open and whether it has
+  changed since. Closing the form or leaving the page sends `leaving` with
+  `keepalive`, so it still goes out as the page goes away. The check-ins stop after
+  30 minutes, so a form left open doesn't keep the session alive forever. A failed
+  check-in is ignored; it only delays the heads-up. The text is set with
+  `textContent`, so a name or message can't become markup.
 
 ## wwwroot/css/site.css
 

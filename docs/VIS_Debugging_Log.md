@@ -12,6 +12,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-11-09:** BC-01 and BC-07 are fixed and verified in the Reservations work, `3c08bd6` (migration 43, committed, not pushed, in no release); see the 2026-11-09 entry below. Ten BC findings are still open.
 
+**Update 2026-11-16:** BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed for the case where the TC is on the shelves, and BC-15 is new and fixed. All verified before and after in the running app, none committed yet; see the 2026-11-16 entry below. Open: BC-04, BC-09, BC-11, BC-12, BC-02 when the TC isn't there, and BC-13's formula-leading values. Each of those needs a decision, not just code. Later the same day Kason ruled on BC-02's shortage case and it was built: see "the Non-TC Motor question" below. Then BC-04 was ruled and built: see "BC-04, two people editing one unit" below. All of it is committed as `0f949b3` (not pushed, in no release).
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
@@ -36,6 +38,15 @@ The rows below preserve the latest recorded per-issue status. Historical finding
 | VIS-14 | P2 | Intake mints the ItemId prefix from the submitter's Line, Registry from the item's; whole-Branch users always get C | Fixed in a077663 (Pass B): the item's Line decides, as Registry does; not in a release |
 | VIS-15 | P2 | GenerateItemId counts live items only: deleting the top-numbered item of a prefix reissues its ItemId, and the new item inherits the old one's logs, unit rows and order lines | Fixed in 1ca6651; not in a release. CCR-0255 was already reissued (8/27) and still shows the deleted test item's two log rows: a data decision |
 | BC-10 | P1 | Toast text is HTML-encoded into a JS string (backslash escapes survive) and then inserted as HTML, so a stored item name can become markup in the success or duplicate-PN toast. From `docs/Bug_Checks.md` | Fixed in 282ad8e; not in a release |
+| BC-02 | P2 | A TC line is filled with a plain motor while TC stock sits on another stack | Fixed 2026-11-16 in 0f949b3; not in a release: TC taken where it is; with none, the line waits for the Non-TC Motor answer (migration 44) |
+| BC-03 | P2 | A stale stack id on Modify Stock changes the primary stack instead | Fixed 2026-11-16 in 0f949b3; not in a release |
+| BC-04 | P2 | A Unit Tracker Edit form left open saves over someone else's newer change (their notes put back to the old text) | Fixed 2026-11-16 in 0f949b3; not in a release: a stale save is refused, and the open form shows who else has the unit open |
+| BC-05 | P2 | Roster logging (and serials on Add) records more units than the stack holds | Fixed 2026-11-16 in 0f949b3; not in a release |
+| BC-06 | P2 | The same serial twice in one roster save throws and saves nothing | Fixed 2026-11-16 in 0f949b3; not in a release |
+| BC-08 | P2 | A short-pull correction changes another team's stack | Fixed 2026-11-16 in 0f949b3; not in a release |
+| BC-13 | P2 | CSV export shifts columns on a comma in Location, Type or Project Code | Fixed 2026-11-16 in 0f949b3; not in a release; formula-leading values are a decision |
+| BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions | Fixed 2026-11-16 in 0f949b3; not in a release |
+| BC-15 | P2 | Reserve dialog: one new serial typed on two stacks hits the unique index, shows a raw SQLite error and loses the form | New and fixed 2026-11-16 in 0f949b3; not in a release |
 
 ## 2026-09-24 — Initial VIS business logic audit
 
@@ -407,6 +418,101 @@ Verification and observed results (real app on a scratch copy of `inventory.dev.
 Remaining issues: BC-02 to BC-06, BC-08, BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
 Deployment status: committed as `3c08bd6` on master, not pushed, not in any release. Ships with migration 43.
 Links to saved artifacts: none kept; the scratch db was session-only.
+
+
+## 2026-11-16 — BC-02, BC-03, BC-05, BC-06, BC-08, BC-13, BC-14, and BC-15 (new)
+
+Date: 2026-11-16
+Purpose: Kason asked for the serious open bugs to be fixed without changing how the app works, and for anything that needs a design call, a database write or a change in handling to come back to him instead.
+Source revision: VIS `666c9fa` (docs only on top of `80faae7`, the comment move). Not committed: Kason is following the changes in Visual Studio. No schema change, no migration.
+Issues investigated: every open finding in `docs/Bug_Checks.md`, re-checked against today's code, since the Reservations work rewrote availability after the audit. A read of the newest code (`StockClaims`, `ReservationService`, `ReservationsController`). Sweeps for POST actions without an anti-forgery token, and for `Html.Raw` of anything not built by `JsonSerializer`: none of either. Every POST without a level attribute is open on purpose or gated at class level (Settings).
+Changes made:
+- BC-03 (`InventoryService.ModifyStock`): a stack id that was posted and isn't an active stack of the item is refused, with nothing changed, for Add, Scrap, Adjustment and Location Transfer. A blank id still means the primary stack, so single-stack items and Internal - Transfer behave as before.
+- BC-05 (`LogCompressorUnits`, `LogMotorUnits`, `LogIntakeSerials`): a new roster row is refused once the stack's On Hand rows reach its quantity (its TC count, for motors). Edits to existing rows are never blocked, so a stack that already carries extra rows (CCR-0005 V1) can still be corrected. Serials typed on an Add (Modify Stock, Registry, Intake) are capped the same way; extras are skipped and listed in Intake's skipped list.
+- BC-06 (`LogCompressorUnits`): the same serial twice in one save is refused on the second row, case-sensitive like the unique index. The first row and every other good row still save, instead of the whole save failing on the index.
+- BC-08 (`OrderService.ReportShortPull`): every posted correction is checked against the line's team before anything changes, the same team rule the pull uses. Missing or retired ids are still skipped.
+- BC-02 (`PlanTake`, `FulfillOrderItem`, `ApproveTransfer`): when the free TC across the pull's stacks covers what the line asks for, a stack gives only as many plain units as the line's plain share, so the TC comes off the stacks that have it. The pull order is unchanged. When the TC isn't there, nothing changed: the line still fills with plain units, as before.
+- BC-13 (`ExportToCsv`): every text field goes through one quoting rule (quoted when it holds a comma, a quote or a line break). The existing comma-to-semicolon swaps stay, so those columns read as before.
+- BC-14 (`_ModifyStockPartial.cshtml`): the new-stack Team picker is shown and enabled only for Add + "New location...", by one function both places call. Hidden, its select is disabled, so `variantTeam` no longer posts with every action.
+- BC-15, new (`ReservationService.Save`): a new serial typed on two stacks in one save is refused by name before anything is written. It used to reach the unique index: "Reserve failed: SQLite Error 19", with the form lost.
+Verification and observed results:
+- Two builds side by side: the committed one (`bin/Debug`, built at 13:50 from the same code as HEAD) on :5009, the fixed one on :5008, each against its own copy of `inventory.dev.db` with the same fixtures, written to the copy only. The same script drove both through the real HTTP endpoints, signed in as Kason.Woods, and read each copy afterwards.
+  - BC-03: Add 1 with stack id 999999 on CEV-0027. Before: "applied", the primary stack went 15 to 16. After: refused, 15.
+  - BC-06: DUPA twice on CCR-0066 V2. Before: "An error occurred while saving the entity changes", nothing saved. After: the first saved, "Serial 'DUPA' is entered twice in this save."
+  - BC-05: five new rows on that stack (quantity 6). Before: 8 rows recorded on 6. After: stopped at 6, each extra named. Motors, CMR-0078 (TC 5, 5 rows): before 7 rows, after 5. Add 1 with three serials on CCR-0014 V1 (full at 3): before 6 rows on 4, after 4 on 4.
+  - BC-02: CMR-0021 set to V1 2 plain and V2 2 TC, an order for 1 with 1 TC. Before: the unit came off V1, loan 0, no TC row. After: off V2 (TC 2 to 1), loan 1, its TC row Picked Up.
+  - BC-08: CCR-0025, a Samurai line flagged short, a correction posting Ninja's stack at 0. Before: Ninja's 6 went to 0. After: refused by name, 6 kept, the line still flagged short. The line's own correction afterwards went through and reissued as usual.
+  - BC-13: EEV export with a primary rack of "RACK, 1" and a name with an inch mark. Before: rows of 14 and 15 fields. After: 14 on every row, the location and name intact.
+  - BC-15: CCR-0028, DUPSN on both stacks. Before: the raw SQLite error. After: "Serial DUPSN is typed on more than one stack." Nothing written either way.
+- Controls on the fixed build: editing a lab number and a serial on stacks that are already full both saved. A plain motor order still took the plain unit first. A TC order with too little TC filled exactly as before (one plain, one TC, loan 1). An Add to a new location for Falcon made the stack on Falcon. A Location Transfer by a real stack id split as usual.
+- BC-14 in the browser on the fixed build: the picker shows and posts only for Add + New location; Location Transfer, Internal - Transfer, Edit Details, Scrap and Adjustment each hide it and leave `variantTeam` out of the form; it comes back on picking New location again. No console errors.
+- No server errors on either build. Build 0 errors, 14 warnings. `inventory.dev.db` SHA-256 `15d21a55…` unchanged.
+- Not checked: transfer approval's TC pull (the same helper as pickup, code-read only); Intake's own serial path (the cap was exercised through Modify Stock's Add); BC-15's positive case, distinct new serials on two stacks (that path is unchanged apart from the one added check); a real phone.
+Remaining issues, each a decision rather than a code fix:
+- BC-02 when the TC isn't on the shelves: fill with plain units (today), refuse the line, or split it.
+- BC-04: a stale Unit Tracker form restores old notes. Either keep only the fields the person changed, or refuse with a "changed since you opened it" message.
+- BC-11 and BC-12 (Front_Load A9): a unique index on ItemId (a migration, after checking the data for duplicates) and a concurrency check on stock writes.
+- BC-13: whether a value starting with `=`, `+`, `-` or `@` gets a leading quote in the CSV so a spreadsheet can't run it.
+- BC-09 stays as ruled.
+Deployment status: committed as `0f949b3` on master (2026-11-16, with the two entries below), not pushed, not in any release. These fixes alone need no migration, but the commit carries migration 44 (next entry).
+Links to saved artifacts: none kept; the fixtures, the HTTP script and both result files were in the session scratchpad.
+
+
+## 2026-11-16 — BC-02, the Non-TC Motor question
+
+Date: 2026-11-16 (evening)
+Purpose: BC-02's remaining case, a TC line at pickup with no TC on its shelves, which still filled with plain motors. Kason's ruling, scoped back to him and confirmed before any file was opened: the whole line waits, nothing leaves, and the orderer is asked "Is a Non-TC Motor okay for this order?"; the orderer or an Engineer and up on the item's Line can answer; Yes resubmits and rechecks against every other order; No cancels the line; the wording is "Non-TC Motor"; the note on the order line gets its own column (migration 44).
+Source revision: `666c9fa` plus the uncommitted fixes from the entry above. Migration 44, `20261116214123_AddOrderItemNote`: one nullable `Note` column on `OrderItems`, nothing else.
+Changes made:
+- `FulfillOrderItem`: after the quantity and holds checks, a motor line whose TC asked is more than the free TC on its team's shelves (other people's holds excluded) is set `Waiting`, gets a note ("Thermocoupled not available at pickup, date (picker): N asked, M on the shelves."), writes a `TC Not Available` log row, and pulls nothing. Other lines on the order pick up as usual; the order stays Pending while any line waits, and records the picker if anything left.
+- `AnswerNonTc` (`OrderService`, POST `/Home/AnswerNonTc`, Standard and up, then the orderer, Engineer and up on the item's Line, or Admin). Yes: a new order for the same quantity, linked with `SplitFromOrderId`, at the back of the line, taking whatever TC is free then, refused with "Only N available now" if it doesn't fit alongside every pending order and hold; the old line becomes `Resubmitted`. No: the line becomes `Declined`. Either way the order closes once nothing is Pending or Waiting, and a log row and the line's note record who answered. A Yes notifies the pickup-alert subscribers like a new order; an answer by someone else notifies the orderer.
+- A short-pull correction's reissue goes through the same check, so it can wait too.
+- Waiting lines don't count against stock (only Pending lines do), so the recheck on Yes is real.
+- Pages: Pickup Queue warns on the line before Pick Up and lists held lines under "Waiting on an Answer" with Yes / No for whoever may answer; Order Details shows each line's note, a badge, and the question with "Yes, resubmit it" / "No, cancel this line"; My Activity opens with "Needs Your Answer". The orderer's notification is a new "OrderQuestion" category (the bell's default icon).
+- Also: the "your order was picked up" notification now goes out only when a line actually left the shelf. It used to go out even when every line came up short.
+Verification and observed results (fixed build on a scratch copy of `inventory.dev.db`, migrated 42 to 44 on start; five fixture orders written to the copy; driven through the real endpoints as six roster users):
+- Pickup Queue showed "1 thermocoupled asked, 0 on the shelves. Pick Up holds this line…" before Pick Up, and Kason's own order sat under Ready to Pick: an orderer sees and picks up their own order. The page just had no sidebar link (only the Command Center "Pending" card and the notification led there), likely why Kason once couldn't find his own order; a "Pickup Queue" sidebar link for everyone signed in was added later that night at his word, checked as a Viewer.
+- Kason picked up his own order (a TC motor line and an EEV line): the EEV line completed, the motor line waited with its note and log row, the stack was untouched, the order stayed Pending with Kason as picker. The queue moved it to Waiting on an Answer; My Activity and Order Details showed the question.
+- Dustin's order (2 TC asked, none on the shelf), picked up by Kason: held, and Dustin got the notification. Colton (Standard, another Line) and Apoorva (Engineer, another Line) were refused by name; Hunter (Viewer) was stopped by the level gate; the line stayed Waiting.
+- With another Pending order taking one of the two plain units, Dustin's Yes was refused ("Only 1 … available now … needs 2"), line still Waiting. Brady (Engineer, same Line) answered No: line Declined with the note, order Cancelled, Dustin notified. Answering again was refused.
+- Kason's Yes: Order #22 with 1 Non-TC Motor, the old line Resubmitted with its note, the old order Completed, 8 pickup subscribers notified. Picking up #22 took a plain motor, loan 0.
+- 3 TC asked with 1 TC on the shelf: the whole line waited and nothing moved; Yes reissued 3 with 1 TC; its pickup took that TC unit, loan 1.
+- TC on the shelf: an ordinary pickup, TC taken, loan 1.
+- A short pull on a TC line, corrected, reissued as #24 and held for the answer, with its own toast.
+- In the browser: Order Details, Pickup Queue and My Activity rendered as above; no console errors; no server errors. Build 0 errors, 14 warnings. `inventory.dev.db` and `inventory.db` hashes unchanged (the migration was generated with a scratch connection string).
+- Not checked: a real phone; the bell's look for the new category.
+Remaining issues: BC-04, BC-11, BC-12, BC-13's formula-leading values (decisions); BC-09 as ruled.
+Deployment status: committed as `0f949b3`, with the other fixes, not pushed, in no release. Migration 44 rides with 43: the next release moves a database from 42 to 44 on first start. Back up first.
+Links to saved artifacts: none kept; fixtures, script, results and screenshots were in the session scratchpad.
+
+
+## 2026-11-16 — BC-04, two people editing one unit
+
+Date: 2026-11-16 (late)
+Purpose: BC-04, a Unit Tracker Edit form left open while someone else saves the same unit, then saved over their change. The audit's case: the old form's notes put back over a colleague's newer notes. Kason's ruling, scoped back to him and confirmed: refuse a stale save rather than merge it, and while the form is open, check in every 45 seconds in the background, with no page reload, to show who else has the unit open and whether it has changed. Unit Tracker only; Modify Stock's stale writes are BC-12.
+Source revision: `666c9fa` plus the uncommitted fixes from the two entries above. No schema change, no migration.
+Changes made:
+- Edit form (`Views/UnitTracker/Index.cshtml`): seven hidden `orig_*` fields hold what the form showed when it opened (model, package, serial, sample, Line, Team, notes), filled by `openEdit` from the same row data as the visible fields.
+- `TrackedUnitService.Update` and `UpdateNotes` take those values (`UnitSnapshot`) and refuse, with nothing saved and no log row, when any of them differs from what's stored now (both sides trimmed, line breaks folded): "Unit #N was changed since you opened it (last saved by X at h:mm PM). Your edit wasn't saved. Open the unit again to see the change, then make yours." It compares values, not `UpdatedAt`, so a Where or Build click (not on the form) doesn't count. A Viewer's Notes save compares Notes only, the one field a Viewer can change. A form posted without the `orig_*` fields (a page loaded before this build) saves as before. A refused save loses what was typed, as every refused save on this page does; the check-in below is the warning before that happens.
+- `EditPresence` (new, one for the whole app): who has which unit's Edit form open, in memory only. A heads-up, not a lock: a restart forgets it, and the refusal above is the real guard. Someone who stops checking in drops off after 100 seconds, a little over two check-ins.
+- `UnitTrackerController.EditCheckIn` (POST, anti-forgery; no level attribute, since Viewers edit Notes in the same form): records the caller and answers JSON with everyone else on that unit and how long ago they opened it, plus the changed sentence, ending "Reload before you save.", if the unit changed since the form opened. `leaving=true` takes the caller off.
+- The form's script checks in when the form opens and every 45 seconds after, by `fetch`, so the page never reloads. The answer shows in a yellow box at the top of the form: "Brady Brasher (opened just now) is also editing this unit. Only the first save will go through." Closing the form or leaving the page sends `leaving`. The check-ins stop after 30 minutes, so a form left open doesn't keep a session alive forever.
+Verification and observed results:
+- The audit's reproduction, the same script on both builds, each on its own copy of `inventory.dev.db`: Kason's form opens on unit #15 with "Original note.", Brady saves "New note from colleague.", Kason's old form changes only the serial. Before (the play build, `bin/Debug` from 15:48, which has the BC-02 work and not this): saved, the notes back to "Original note.", Brady's note gone. After: refused with the sentence above; Brady's note and the old serial kept.
+- Fixed build on a scratch copy, through the real endpoints as Kason (Admin), Brady (Engineer), Dustin (Standard) and Hunter (Viewer):
+  - Kason's stale save after Brady's serial change: refused, no log row. Reopened, it saved.
+  - Hunter's stale Notes save after Dustin's note: refused, Dustin's note kept. Brady changing only the serial didn't block Hunter's note.
+  - Dustin, who can't move a unit, was refused after Brady moved it to Ninja.
+  - Where and Build set by Dustin while Kason's form was open: Kason's save went through.
+  - A two-line note posted with CRLF line breaks: a change saved, an untouched save answered "Nothing changed." A blank Team and a form with no `orig_*` fields both saved.
+  - A unit deleted while open: "Unit #22 no longer exists."
+  - Check-ins: each user saw the others; a Viewer could check in; `leaving` took a user off at once; after Dustin saved, both open forms got the changed sentence; no token was a 400; an unknown unit answered "no longer exists". A user who went quiet was still listed at 60 seconds and gone at 105.
+- In the browser, as Kason on unit #10 (a two-line note), with Brady and Dustin driven by a script: the heads-up showed on open, cleared on the next 45-second tick after Brady left, then showed the changed sentence after Dustin saved. Three check-ins, no reload (a marker set on the page survived). Saving that form: refused, the toast as above, nothing written. Closing the form, and leaving the page by saving, each took Kason off the list. Reopened: an untouched save said "Nothing changed.", an edit saved. No console errors, no server errors.
+- Build 0 errors, 14 warnings. `inventory.dev.db` and `inventory.db` hashes unchanged.
+- Not checked: a real phone; two real browsers on two machines (the second user was a script on the same endpoints); the 30-minute stop.
+Remaining issues: BC-11, BC-12, BC-13's formula-leading values (decisions); BC-09 as ruled.
+Deployment status: committed as `0f949b3`, with the fixes above, not pushed, in no release. No migration of its own.
+Links to saved artifacts: none kept; the scripts and results were in the session scratchpad.
 
 
 ## Continuing a debugging session

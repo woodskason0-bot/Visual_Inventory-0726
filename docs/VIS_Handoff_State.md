@@ -87,6 +87,38 @@ rather than assuming one exists.
   folder. No behavior change, so it can ride in any release. The pick-up notes
   (`docs/Handoff_2026-11-11.md`) and the scripts in `docs/comment_move/` were never
   committed and went to the Recycle Bin on 2026-11-16.
+- **Bug fixes from `docs/Bug_Checks.md`, 2026-11-16: committed as `0f949b3` with BC-04
+  and the sidebar link below, not pushed, in no release.**
+  BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed where the TC is
+  on the shelves, and BC-15 (one new serial typed on two stacks in the Reserve dialog)
+  is new and fixed. Four code files, no migration; each was reproduced on the committed
+  build and checked on the fixed one in the running app, against copies of the dev db.
+  Later the same day I ruled on BC-02's last case and it was built: a TC line with no
+  TC on its shelves waits at pickup and I'm asked "Is a Non-TC Motor okay for this
+  order?" (Yes resubmits it as a new order, rechecked against every other order; No
+  cancels the line; the orderer or an Engineer and up on the Line can answer). **That
+  brings migration 44 (`AddOrderItemNote`, one nullable `Note` column on
+  `OrderItems`)**, so the next build from master moves a db from 42 to 44:
+  back up the host's `inventory.db` first. Still open, each needing a call from me:
+  BC-11 and BC-12 (Front_Load A9), and whether the CSV guards formula-leading values.
+  Nothing ever stopped an orderer picking up their own order; there was just no link to
+  the page, so the sidebar now has a "Pickup Queue" link for everyone signed in (my
+  call, 2026-11-16, `_Layout.cshtml`). Record: `docs/VIS_Debugging_Log.md`,
+  2026-11-16 (all three entries).
+- **BC-04 (two people editing one unit), ruled, built and verified 2026-11-16,
+  committed as `0f949b3`, not pushed.** My pick: the Unit Tracker Edit form refuses a save if the unit changed
+  since the form opened ("Your edit wasn't saved. Open the unit again to see the
+  change, then make yours."), plus a heads-up in the form when someone else has the same
+  unit open, checked every 45 seconds in the background (no page reload; stops after 30
+  minutes open). Unit Tracker only, no migration. Files: `Services/EditPresence.cs`
+  (new, in memory, one for the app, drops anyone not seen for 100 seconds), its line in
+  `Program.cs`, `TrackedUnitService`, `UnitTrackerController` (`EditCheckIn`) and
+  `Views/UnitTracker/Index.cshtml`. The save check compares the field values the form
+  showed, not `UpdatedAt`, so a Where or Build click doesn't block an Edit save.
+  Reproduced on the play build (a colleague's note put back to the old text) and refused
+  on the fixed one; checked with four users and in the browser on scratch copies of the
+  dev db. A refused save still loses what was typed (Front_Load C2). Record:
+  `docs/VIS_Debugging_Log.md`, 2026-11-16, "BC-04".
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
   (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every
@@ -199,8 +231,8 @@ rather than assuming one exists.
   duplicate-PN error. No migration. Verified live on a copy of the dev db: the audit's
   marker name reproduced as a real element on the old build and shows as literal text
   on the fixed one. One visible change: Unit Tracker toasts now show a typed backslash
-  as `\` instead of `/`. The other 12 findings in `docs/Bug_Checks.md` (BC-01 to BC-13)
-  are still open. Record: `docs/VIS_Debugging_Log.md`, 2026-10-26.
+  as `\` instead of `/`. What's still open in `docs/Bug_Checks.md` is listed at the top
+  of that file. Record: `docs/VIS_Debugging_Log.md`, 2026-10-26.
 - **Repair the drift already in the data by hand — the code only stops new drift.**
   In the 9/24 dev copy: CCR-0213 V2 (quantity 0) carries 9 unnamed On Hand rows,
   ids 196 to 204, left from the 8/25 Add of 9 whose pickup (Order #8) was

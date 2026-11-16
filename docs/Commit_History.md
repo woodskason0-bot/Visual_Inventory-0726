@@ -11,6 +11,42 @@ landed, when."
 
 ## 2026-11-16
 
+### docs — log the bug fixes (`0f949b3`)
+Docs only. `Bug_Checks.md`: BC-02 to BC-06, BC-08, BC-13, BC-14 and BC-15 marked fixed
+in `0f949b3`, each with a status paragraph (before and after); open are BC-09 (ruled),
+BC-11, BC-12 and BC-13's formula-leading values. `VIS_Debugging_Log.md`: three dated
+entries (the fixes, the Non-TC Motor question, BC-04) and their register rows.
+`Code_Notes.md`: notes for every file the fixes touched, `EditPresence.cs` new.
+`Front_Load.md`: C1 needs nothing now; the read-first line count. Handoff: the OPEN
+bullets for the fixes and BC-04, with migration 44's backup warning.
+*Files:* `docs/Bug_Checks.md`, `docs/VIS_Debugging_Log.md`, `docs/Code_Notes.md`,
+`docs/Front_Load.md`, `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
+### `0f949b3` — Fix: BC-02, 03, 04, 05, 06, 08, 13, 14, 15 from the bug audit; Non-TC Motor question (migration 44); Pickup Queue sidebar link
+Migration 44 (`AddOrderItemNote`): one nullable `Note` column on `OrderItems`. BC-03: a
+stale stack id is refused instead of changing the primary stack. BC-05 / BC-06: roster
+saves can't record more units than the stack holds, and a serial twice in one save is
+refused by name. BC-08: short-pull corrections are checked against the line's team.
+BC-13: one CSV quoting rule for every text field. BC-14: the new-stack Team picker
+shows only for Add + New location. BC-15 (new): one new serial on two stacks in the
+Reserve dialog is refused by name. BC-02: TC comes off the stacks that have it; with
+none on the shelves the line waits and the orderer is asked "Is a Non-TC Motor okay
+for this order?" (Yes resubmits, rechecked; No cancels the line). BC-04: a stale Unit
+Tracker Edit save is refused, and the open form checks in every 45 seconds (no
+reload) to show who else has the unit open. Sidebar: a Pickup Queue link for everyone
+signed in. Each reproduced on the committed build and checked on the fixed one in the
+running app on scratch copies of the dev db. Build at the 14-warning baseline.
+*Files:* `Services/InventoryService.cs`, `Services/OrderService.cs`,
+`Services/ReservationService.cs`, `Services/TrackedUnitService.cs`,
+`Services/EditPresence.cs` (new), `Controllers/HomeController.cs`,
+`Controllers/UnitTrackerController.cs`, `Program.cs`, `Models/OrderItem.cs`,
+`Models/ViewModels/PendingOrderItemViewModel.cs`,
+`Models/ViewModels/PendingOrderViewModel.cs`,
+`Migrations/20261116214123_AddOrderItemNote*`, `Migrations/AppDbContextModelSnapshot.cs`,
+`Views/Home/PickupQueue.cshtml`, `Views/Home/OrderDetails.cshtml`,
+`Views/Home/MyActivity.cshtml`, `Views/Home/_ModifyStockPartial.cshtml`,
+`Views/UnitTracker/Index.cshtml`, `Views/Shared/_Layout.cshtml`
+
 ### docs — BC-14 logged; the comment-move scaffolding gone
 Docs only. `Bug_Checks.md`: BC-14, Modify Stock's new-stack Team picker staying on screen
 after Add + "New location..." then Location Transfer, Internal - Transfer or Edit

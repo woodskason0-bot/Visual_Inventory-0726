@@ -91,7 +91,7 @@ repeat across all of them.
 | Inline `style="..."` in views / hard-coded hex colours | 310 / 126 | 310 / 122 |
 | Automated tests | 0 | 0 |
 | README | none | none |
-| Lines an agent is told to read before starting | 4,336 (handoff 3,962 + addendum 374) | 4,354 (handoff 3,980 + addendum 374) |
+| Lines an agent is told to read before starting | 4,336 (handoff 3,962 + addendum 374) | 4,386 (handoff 4,012 + addendum 374) |
 
 The banner and dated rows first said 296 and 429. The search behind them also counted
 the three old copies under `.claude/worktrees/` (D4); the repo by itself was 101 and
@@ -133,7 +133,7 @@ the three old copies under `.claude/worktrees/` (D4); the repo by itself was 101
 
 | # | What | Why | Size | Needs from me |
 |---|---|---|---|---|
-| C1 | **Old pages acting on new data.** BC-03 (a deleted stack silently becomes the primary one), BC-04 (an old Unit Tracker form restores old notes), BC-05 and BC-06 (roster saves). | These are the ones people will actually feel: the wrong shelf changes, or someone's notes disappear, with no message. | M | Go-ahead, in that order. |
+| C1 | **Old pages acting on new data.** BC-03 (a deleted stack silently becomes the primary one), BC-04 (an old Unit Tracker form restores old notes), BC-05 and BC-06 (roster saves). | These are the ones people will actually feel: the wrong shelf changes, or someone's notes disappear, with no message. | M | **Nothing.** BC-03, BC-05 and BC-06 fixed 2026-11-16, and BC-04 the same night at my call: a stale save is refused ("changed since you opened it"), and the open form shows who else has the unit open, checked every 45 seconds with no reload. Committed as `0f949b3`, not pushed. A refused save still loses what was typed; that's C2. |
 | C2 | **Never lose what was typed.** A failed save comes back with the form still filled in. | BC-06 loses a whole roster entry on one duplicate serial. A 30-minute idle timeout sends the next click to sign-in. | M | Go-ahead. Mostly solved by A1 for the timeout. |
 | C3 | **One way to confirm.** The two Release buttons on reservations use the browser's own confirm box; everything else uses a VIS dialog. | Mine, from the reservations build. Small, but it's the kind of inconsistency the research calls out. | S | Nothing. |
 | C4 | **A click-through I haven't done.** Every table when it's empty, every button that takes more than a second, the whole app by keyboard only, and Reservations on a real phone. | Not checked, so not claimed either way. | S to check | Nothing. |
@@ -152,7 +152,7 @@ the three old copies under `.claude/worktrees/` (D4); the repo by itself was 101
 
 | # | What | Why | Size | Needs from me |
 |---|---|---|---|---|
-| E1 | **Split the handoff.** A current-state file (open items, deployed state, conventions, load-bearing facts, traps) short enough to read every session, and the Pass log and history in a second file read on demand. | `CLAUDE.md` tells every session to read 4,354 lines before doing anything. That's most of a session's attention spent before the first question, and the open-items heading still says 9/24. | M | Go-ahead. Nothing is deleted, only moved. |
+| E1 | **Split the handoff.** A current-state file (open items, deployed state, conventions, load-bearing facts, traps) short enough to read every session, and the Pass log and history in a second file read on demand. | `CLAUDE.md` tells every session to read 4,386 lines before doing anything. That's most of a session's attention spent before the first question, and the open-items heading still says 9/24. | M | Go-ahead. Nothing is deleted, only moved. |
 | E2 | **Commands in `CLAUDE.md`.** Build, run on the dev db, run on a scratch copy of it, add a migration. | Each session works these out again. The scratch-copy run is the one that protects the dev db. | S | Nothing. |
 | E3 | **`AGENTS.md` at the root** that points at `CLAUDE.md`. | Copilot and the other tools read that name, and I've already used Copilot on this repo. | S | Nothing. |
 | E4 | **Reasoning by file.** `docs/Code_Notes.md` (B1). | An agent looks up why a file is the way it is by its name, instead of reading history in comments. | with B1 | With B1. |

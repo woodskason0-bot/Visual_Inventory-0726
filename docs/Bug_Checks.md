@@ -16,6 +16,14 @@ Visual Inventory System — repository audit
 
 **Update 2026-11-16:** BC-14 added, after the audit. It was found reading `_ModifyStockPartial.cshtml` during the comment move (2026-11-11) and seen in the running app on a scratch copy of the dev db (2026-11-12). It is cosmetic: nothing is saved wrong. 11 findings are open.
 
+**Update 2026-11-16 (later):** BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed for the case where the TC is on the shelves, and BC-15 is new and fixed. All were reproduced on the committed build and checked on the fixed one in the running app, and none is committed yet; see `docs/VIS_Debugging_Log.md`, 2026-11-16. Still open, each waiting on a decision: BC-02 when the TC isn't there, BC-04, BC-09 (ruled), BC-11, BC-12, and BC-13's formula-leading values.
+
+**Update 2026-11-16 (evening):** BC-02 is fully fixed, uncommitted: when the TC isn't there, the line now waits and the orderer is asked "Is a Non-TC Motor okay for this order?" (Kason's ruling). It carries migration 44. Open: BC-04, BC-09 (ruled), BC-11, BC-12, BC-13's formula-leading values.
+
+**Update 2026-11-16 (late):** BC-04 is fixed, uncommitted: a stale Unit Tracker Edit save is refused, and the open form shows who else has the unit open (Kason's ruling). No migration. Open: BC-09 (ruled), BC-11, BC-12, BC-13's formula-leading values.
+
+**Update 2026-11-16 (night):** every 2026-11-16 fix above, with migration 44 and a Pickup Queue sidebar link, is committed as `0f949b3` on master, not pushed, in no release.
+
 ## Result
 
 There are **13 actionable findings: 5 P1 and 8 P2**. Twelve were reproduced with isolated service/database checks; one HTML-injection path was established by source tracing and an executed JavaScript sink check. None is represented as a completed browser test.
@@ -27,19 +35,20 @@ P1 means prioritize in the next repair cycle because the issue can corrupt inven
 | ID | Priority | Finding | Evidence | Relationship to previous audit |
 | --- | --- | --- | --- | --- |
 | BC-01 | P1 | Team-scoped orders ignore existing unscoped reservations — **fixed 2026-11-09 (`3c08bd6`)** | Service reproduction | Distinct from fixed VIS-1 |
-| BC-02 | P2 | TC request completes with a non-TC motor despite TC stock elsewhere | Service reproduction | Distinct from fixed VIS-2 |
-| BC-03 | P2 | Deleted or retired target stack silently falls back to primary | Service reproduction | New in this report |
-| BC-04 | P2 | Stale Unit Tracker edit overwrites newer notes | Service reproduction | New in this report |
-| BC-05 | P2 | Roster logging creates more on-hand records than physical stock | Service reproduction | Different entrance from fixed VIS-9 |
-| BC-06 | P2 | Duplicate serials within one save cause a database exception | Service reproduction | New in this report |
+| BC-02 | P2 | TC request completes with a non-TC motor despite TC stock elsewhere — **fixed 2026-11-16 (`0f949b3`): TC taken where it is; with none, the orderer is asked about a Non-TC Motor** | Service reproduction | Distinct from fixed VIS-2 |
+| BC-03 | P2 | Deleted or retired target stack silently falls back to primary — **fixed 2026-11-16 (`0f949b3`)** | Service reproduction | New in this report |
+| BC-04 | P2 | Stale Unit Tracker edit overwrites newer notes — **fixed 2026-11-16 (`0f949b3`): a stale save is refused** | Service reproduction | New in this report |
+| BC-05 | P2 | Roster logging creates more on-hand records than physical stock — **fixed 2026-11-16 (`0f949b3`)** | Service reproduction | Different entrance from fixed VIS-9 |
+| BC-06 | P2 | Duplicate serials within one save cause a database exception — **fixed 2026-11-16 (`0f949b3`)** | Service reproduction | New in this report |
 | BC-07 | P2 | Separate orders can reserve the same TC motor — **fixed 2026-11-09 (`3c08bd6`)** | Service reproduction | Separate from BC-02 allocation |
-| BC-08 | P2 | Short-pull correction accepts another team's stack | Service reproduction | Known minor, reconfirmed |
+| BC-08 | P2 | Short-pull correction accepts another team's stack — **fixed 2026-11-16 (`0f949b3`)** | Service reproduction | Known minor, reconfirmed |
 | BC-09 | P1 | Empty database cannot complete the migration chain | Migration reproduction | Separate from accepted startup error handling |
 | BC-10 | P1 | Toast message can become active HTML through JavaScript escapes — **fixed in `282ad8e` (2026-10-26)** | Source + JavaScript sink reproduction | Different sink from fixed VIS-7 |
 | BC-11 | P1 | Overlapping registrations can persist duplicate ItemIds | Two-context reproduction | Different race from fixed VIS-15 |
 | BC-12 | P1 | Overlapping stock changes lose an update | Controlled stale-context reproduction | Known concurrency minor, reconfirmed |
-| BC-13 | P2 | CSV export shifts columns when location contains a comma | Export reproduction | Known minor, reconfirmed |
-| BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions | Source + seen in the running app | Added 2026-11-16, after the audit |
+| BC-13 | P2 | CSV export shifts columns when location contains a comma — **fixed 2026-11-16 (`0f949b3`); formula-leading values open** | Export reproduction | Known minor, reconfirmed |
+| BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions — **fixed 2026-11-16 (`0f949b3`)** | Source + seen in the running app | Added 2026-11-16, after the audit |
+| BC-15 | P2 | Reserve dialog: one new serial typed on two stacks hits the unique index and loses the form — **fixed 2026-11-16 (`0f949b3`)** | Reproduced in the running app | Added 2026-11-16, after the audit |
 
 ## Scope and verification
 
@@ -84,6 +93,8 @@ The team overloads subtract only pending lines with `oi.Team == team`. An existi
 
 **P2 · Reproduced · Wrong subtype fulfilled**
 
+**Status 2026-11-16: fixed in `0f949b3`.** Fixed first for the case where the TC is on the shelves. When the free TC across the pull's stacks covers the line, `PlanTake` gives each stack only the line's plain share, so the TC comes off the stacks that have it; the pull order is unchanged, and transfer approval gets the same. Reproduced on the committed build (the unit came off the plain stack, loan 0) and fixed (off the TC stack, loan 1). When the TC isn't there, Kason ruled the same day: the whole line waits, nothing leaves, and the orderer (or an Engineer and up on the item's Line, or Admin) is asked "Is a Non-TC Motor okay for this order?" Yes resubmits the line as a new order, checked against every pending order and hold like a new cart, keeping whatever TC is free; No cancels the line. Built and verified in the running app the same evening, with migration 44 (`OrderItems.Note`); see `docs/VIS_Debugging_Log.md`, 2026-11-16, "the Non-TC Motor question".
+
 **Location:** `Services/OrderService.cs:606–819`, particularly the pull loop at `663–693`.
 
 The loop chooses `take` from total quantity before considering how many TC motors remain owed. It stops once total quantity is satisfied, even if `remainingTc` is nonzero. The line then completes.
@@ -99,6 +110,8 @@ The loop chooses `take` from total quantity before considering how many TC motor
 ### BC-03 — An explicit stale stack ID changes the primary stack
 
 **P2 · Reproduced · Wrong stock location changed**
+
+**Status 2026-11-16: fixed in `0f949b3`.** A posted stack id that isn't an active stack of the item is refused with nothing changed, for Add, Scrap, Adjustment and Location Transfer; blank still means the primary. Before: Add 1 with a stale id went to the primary (15 to 16). After: refused, 15.
 
 **Location:** `Services/InventoryService.cs:1843–1856`; controller entry at `Controllers/HomeController.cs:520–568`.
 
@@ -116,6 +129,8 @@ After resolving an explicit variant ID among active variants, `pv ??= item.Prima
 
 **P2 · Reproduced · Silent collaborative-edit loss**
 
+**Status 2026-11-16: fixed in `0f949b3`.** Kason ruled: refuse a stale save rather than merge it, plus a heads-up while the form is open. The Edit form carries the values it opened with, and `Update` and `UpdateNotes` refuse the save, with nothing written, when any of them differs from what's stored: "Unit #15 was changed since you opened it (last saved by Brady Brasher at 4:28 PM). Your edit wasn't saved. Open the unit again to see the change, then make yours." A Viewer's Notes save compares Notes only; the Where and Build boxes aren't on the form and don't count. While the form is open it checks in every 45 seconds in the background, with no reload, and shows who else has the unit open and whether it has changed since; that list lives in memory only. The reproduction below, before: the old notes put back. After: refused, the colleague's note kept. There is no notes autosave on this page: Notes is edited in the same Edit form. See `docs/VIS_Debugging_Log.md`, 2026-11-16, "BC-04".
+
 **Location:** `Controllers/UnitTrackerController.cs:65–81,122–134`; `Services/TrackedUnitService.cs:226–315,318–335`.
 
 The page snapshots all editable values. A full edit submits that snapshot, and `Update` assigns its notes over the latest stored notes without a version or original-value check.
@@ -129,6 +144,8 @@ The page snapshots all editable values. A full edit submits that snapshot, and `
 ### BC-05 — Stale roster slots can create more records than shelf stock
 
 **P2 · Reproduced for compressors · Motor sibling identified in source**
+
+**Status 2026-11-16: fixed in `0f949b3`.** A new row is refused once the stack's On Hand rows reach its quantity (TC count for motors); edits to existing rows are never blocked. Serials typed on an Add (Modify Stock, Registry, Intake) are capped the same way. Before: 8 rows recorded on a stack of 6, 7 motor rows on TC 5, 6 rows after an Add to 4. After: 6, 5 and 4.
 
 **Location:** `Services/InventoryService.cs:1137–1219,1245–1311`.
 
@@ -145,6 +162,8 @@ New roster rows validate that a stack exists, but do not check its remaining cap
 ### BC-06 — Duplicate serials in one submission escape validation
 
 **P2 · Reproduced · Save fails and entered data is lost**
+
+**Status 2026-11-16: fixed in `0f949b3`.** The second use of a serial in one save is refused by name (case-sensitive, like the index), and the rest of the save goes through. Before: a generic save error and nothing saved. After: the first row saved, "Serial 'DUPA' is entered twice in this save."
 
 **Location:** `Services/InventoryService.cs:1183–1216`; `Controllers/HomeController.cs:2243–2271`; unique constraint in `Data/AppDbContext.cs:183`.
 
@@ -175,6 +194,8 @@ Submission validates total available quantity and clamps TC requested to the lin
 ### BC-08 — Short-pull correction accepts out-of-scope stacks
 
 **P2 · Reproduced · Previously documented minor**
+
+**Status 2026-11-16: fixed in `0f949b3`.** Every posted correction is checked against the line's team before anything changes. Before: another team's stack went 6 to 0. After: refused by name, nothing changed, and the line's own correction still went through.
 
 **Location:** `Services/OrderService.cs:1067–1131`, specifically stack selection at `1090`; POST parsing at `Controllers/HomeController.cs:2164–2197`.
 
@@ -260,6 +281,8 @@ Stock changes use a tracked entity's read-modify-write quantity without a concur
 
 **P2 · Reproduced · Previously documented minor**
 
+**Status 2026-11-16: fixed in `0f949b3`, except the formula policy.** Every text field is quoted when it holds a comma, a quote or a line break; the existing comma-to-semicolon swaps stay. Before: rows of 14 and 15 fields. After: 14 on every row. Whether a value starting with `=`, `+`, `-` or `@` gets a leading quote is still a decision.
+
 **Location:** `Services/InventoryService.cs:629–649`.
 
 Export replaces commas in selected text fields and emits the remaining fields without CSV quoting. Location includes free-text rack/row components and is emitted directly. Type and ProjectCode are also emitted directly.
@@ -274,6 +297,8 @@ Export replaces commas in selected text fields and emits the remaining fields wi
 
 **P2 · Seen in the running app · Stray control, nothing saved wrong**
 
+**Status 2026-11-16: fixed in `0f949b3`.** One function shows and enables the picker for Add + "New location..." only; both places that decide call it, and hidden, the select is disabled so `variantTeam` doesn't post. Checked in the browser on each of the six actions.
+
 **Location:** `Views/Home/_ModifyStockPartial.cshtml:86–95` (the picker), `toggleStockUI()` at `695–784` (only its Add / Scrap / Adjustment branch shows or hides it, `763–764`), the stack selector's change handler at `1084–1085`; server read at `Services/InventoryService.cs:1524`.
 
 The Team picker for a new stack (`stock-variant-team-div`) belongs only to Add with "+ New location...". `toggleStockUI()` sets its visibility in its last branch, which covers Add, Scrap and Adjustment. The Location Transfer, Internal - Transfer (`Ownership`) and Edit Details branches never touch it, so it keeps whatever state it had.
@@ -285,6 +310,20 @@ The Team picker for a new stack (`stock-variant-team-div`) belongs only to Add w
 **Repair:** Hide the picker, and disable its select so it doesn't post, in every branch of `toggleStockUI()` except Add with "New location...", the same way the Edit Details and Internal - Transfer inputs are disabled when their action isn't the active one.
 
 **Acceptance check:** Add with "New location..." shows the picker; each of the other five actions hides it and leaves `variantTeam` out of the post; picking Add and "New location..." again brings it back; an Add to a new location with a team picked still creates the stack on that team.
+
+### BC-15 — One new serial typed on two stacks in the Reserve dialog
+
+**P2 · Reproduced in the running app · Raw database error, form lost**
+
+**Status 2026-11-16: fixed in `0f949b3`.**
+
+**Location:** `Services/ReservationService.cs`, `Save`.
+
+`Save` checked each typed serial against the units on record and the serials typed on the same stack, but not across stacks. The same new serial on V1 and V2 passed every check and reached the `(ItemId, SerialNumber)` unique index.
+
+**Reproduction:** Reserve 1 on each of CCR-0028's two stacks and type DUPSN as a new serial on both. Before: "Reserve failed: SQLite Error 19: 'UNIQUE constraint failed: CompressorUnits.ItemId, CompressorUnits.SerialNumber'", and the dialog's input is gone. Nothing was written. After: "Serial DUPSN is typed on more than one stack. Name it on one only." Nothing was written.
+
+**Acceptance check:** one serial on two stacks is refused by name; distinct new serials on two stacks still record and hold.
 
 ## Suggested repair sequence
 
