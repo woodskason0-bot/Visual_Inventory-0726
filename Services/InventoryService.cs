@@ -454,7 +454,7 @@ namespace Visual_Inventory_System.Services
                 if (isOwn) tags.Add("Ownership Changed");
                 string tagString = string.Join(" | ", tags);
 
-                // Commas would break the CSV.
+                // Commas become ';' in these. Csv() quotes any field that still needs it.
                 string safeName = i.ItemName?.Replace(",", ";") ?? "";
                 string safeBrand = i.Brand?.Replace(",", ";") ?? "";
                 string safeRpn = i.RheemPartNumber?.Replace(",", ";") ?? "";
@@ -465,10 +465,17 @@ namespace Visual_Inventory_System.Services
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 string safeTeam = (activeTeams.Count > 0 ? string.Join("; ", activeTeams) : (i.Team ?? "")).Replace(",", ";");
 
-                builder.AppendLine($"{i.ItemId},{safeRpn},{safeName},{i.Type},{safeBrand},{i.FdaString},{i.Quantity},{i.Group},{safeLine},{safeTeam},{i.ProjectCode},{tagString},{scrapQty},{ownCount}");
+                builder.AppendLine($"{Csv(i.ItemId)},{Csv(safeRpn)},{Csv(safeName)},{Csv(i.Type)},{Csv(safeBrand)},{Csv(i.FdaString)},{i.Quantity},{Csv(i.Group)},{Csv(safeLine)},{Csv(safeTeam)},{Csv(i.ProjectCode)},{Csv(tagString)},{scrapQty},{ownCount}");
             }
 
             return Encoding.UTF8.GetBytes(builder.ToString());
+        }
+
+        // One CSV field: quoted when it holds a comma, a quote or a line break.
+        private static string Csv(string? s)
+        {
+            s ??= "";
+            return s.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
         }
 
         /// <summary>
@@ -882,6 +889,9 @@ namespace Visual_Inventory_System.Services
             if (inv == null) { result.Errors.Add("Item not found."); return result; }
 
             var now = System.DateTime.UtcNow;
+            // Serials set by this save (case-sensitive, like the unique index), and new rows per stack.
+            var setThisSave = new HashSet<string>(System.StringComparer.Ordinal);
+            var addedTo = new Dictionary<int, int>();
             foreach (var row in rows)
             {
                 string? serial = string.IsNullOrWhiteSpace(row.Serial) ? null : row.Serial.Trim();
@@ -899,6 +909,11 @@ namespace Visual_Inventory_System.Services
                         c.Id != unit.Id && c.ItemId == itemId && c.SerialNumber == serial))
                     {
                         result.Errors.Add($"Serial '{serial}' is already recorded on this model.");
+                        continue;
+                    }
+                    if (serial != null && !setThisSave.Add(serial))
+                    {
+                        result.Errors.Add($"Serial '{serial}' is entered twice in this save.");
                         continue;
                     }
                     unit.SerialNumber = serial;
@@ -925,6 +940,20 @@ namespace Visual_Inventory_System.Services
                         result.Errors.Add($"Serial '{serial}' is already recorded on this model.");
                         continue;
                     }
+                    // Recorded units can't outnumber the stack.
+                    int onRecord = _db.CompressorUnits.Count(c => c.ItemVariantId == variant.Id && c.Status == UnitStatus.OnHand)
+                        + addedTo.GetValueOrDefault(variant.Id);
+                    if (onRecord >= variant.Quantity)
+                    {
+                        result.Errors.Add($"Variant {variant.VariantNumber} holds {variant.Quantity} and already has {onRecord} recorded -- '{serial ?? lab}' wasn't added. Refresh to see the roster as it is now.");
+                        continue;
+                    }
+                    if (serial != null && !setThisSave.Add(serial))
+                    {
+                        result.Errors.Add($"Serial '{serial}' is entered twice in this save.");
+                        continue;
+                    }
+                    addedTo[variant.Id] = addedTo.GetValueOrDefault(variant.Id) + 1;
                     _db.CompressorUnits.Add(new CompressorUnit
                     {
                         ItemId = itemId,
@@ -982,6 +1011,7 @@ namespace Visual_Inventory_System.Services
             if (inv == null) { result.Errors.Add("Item not found."); return result; }
 
             var now = System.DateTime.UtcNow;
+            var addedTo = new Dictionary<int, int>();   // new rows per stack, this save
             foreach (var row in rows)
             {
                 string? lab = string.IsNullOrWhiteSpace(row.Lab) ? null : row.Lab.Trim();
@@ -1010,6 +1040,15 @@ namespace Visual_Inventory_System.Services
                         result.Errors.Add("That location is no longer active.");
                         continue;
                     }
+                    // Motor rows are TC-only, so the stack's TC count is the cap.
+                    int onRecord = _db.MotorUnits.Count(m => m.ItemVariantId == variant.Id && m.Status == UnitStatus.OnHand)
+                        + addedTo.GetValueOrDefault(variant.Id);
+                    if (onRecord >= variant.ThermocoupledQty)
+                    {
+                        result.Errors.Add($"Variant {variant.VariantNumber} has {variant.ThermocoupledQty} TC and already has {onRecord} recorded -- lab '{lab}' wasn't added. Refresh to see the roster as it is now.");
+                        continue;
+                    }
+                    addedTo[variant.Id] = addedTo.GetValueOrDefault(variant.Id) + 1;
                     _db.MotorUnits.Add(new MotorUnit
                     {
                         ItemId = itemId,
@@ -1226,11 +1265,15 @@ namespace Visual_Inventory_System.Services
             if (!IsCompressorType(_db.InventoryItems.AsNoTracking()
                     .FirstOrDefault(i => i.ItemId == itemId)?.Type)) return;
 
+            // No more rows than units on the stack. Extras are skipped and reported.
+            int room = (_db.ItemVariants.AsNoTracking().Where(v => v.Id == variantId).Select(v => (int?)v.Quantity).FirstOrDefault() ?? 0)
+                - _db.CompressorUnits.Count(c => c.ItemVariantId == variantId && c.Status == UnitStatus.OnHand);
             foreach (var serial in serials)
             {
                 bool dupe = _db.CompressorUnits.Any(c => c.ItemId == itemId
                     && c.SerialNumber != null && c.SerialNumber.ToLower() == serial.ToLower());
                 if (dupe) { res.Skipped.Add($"{itemId}: serial '{serial}' already on record."); continue; }
+                if (room <= 0) { res.Skipped.Add($"{itemId}: serial '{serial}' not recorded -- more serials than units on that stack."); continue; }
 
                 _db.CompressorUnits.Add(new CompressorUnit
                 {
@@ -1238,6 +1281,7 @@ namespace Visual_Inventory_System.Services
                     Status = UnitStatus.OnHand, RecordedAt = now, RecordedBy = by
                 });
                 res.SerialsLogged++;
+                room--;
             }
             _db.SaveChanges();
         }
@@ -1486,6 +1530,11 @@ namespace Visual_Inventory_System.Services
             ItemVariant? pv = null;
             if (!wantsNewLocation && int.TryParse(targetVariant, out int tvId))
                 pv = item.ActiveVariants.FirstOrDefault(v => v.Id == tvId);
+            // A named stack that is gone is refused, never swapped for the primary.
+            bool actsOnStack = actionType is "Add" or "Scrap" or "Adjustment" or "Location Transfer";
+            if (pv == null && actsOnStack && !wantsNewLocation && !string.IsNullOrWhiteSpace(targetVariant))
+                throw new System.InvalidOperationException(
+                    "That stack isn't on this item any more -- reload the page and pick again. Nothing was changed.");
             pv ??= item.PrimaryVariant;
             if (pv == null && !wantsNewLocation)
             {

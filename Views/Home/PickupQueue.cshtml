@@ -3,8 +3,10 @@
 @{
     ViewData["Title"] = "Tasks Available";
     var orders = Model?.Orders ?? new List<Visual_Inventory_System.Models.ViewModels.PendingOrderViewModel>();
-    var ready = orders.Where(o => o.CanFulfill).ToList();
+    @* An order whose only lines wait on the Non-TC Motor answer has nothing to pick. *@
+    var ready = orders.Where(o => o.CanFulfill && o.Items.Any()).ToList();
     var blocked = orders.Where(o => !o.CanFulfill).ToList();
+    var waiting = orders.Where(o => o.WaitingLines.Any()).ToList();
     var storeTasks = Model?.StoreTasks ?? new List<Visual_Inventory_System.Models.VisTask>();
 
     bool canCreate = CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Engineer;
@@ -162,6 +164,10 @@
     <div class="mb-2 d-flex gap-3">
         <span class="badge bg-success fs-6">Ready: @ready.Count</span>
         <span class="badge bg-warning text-dark fs-6">Blocked: @blocked.Count</span>
+        @if (waiting.Any())
+        {
+            <span class="badge bg-secondary fs-6">Waiting on an answer: @waiting.Sum(o => o.WaitingLines.Count)</span>
+        }
     </div>
 
     <h6 class="fw-bold mb-2"><i class="bi bi-check2-circle me-1 text-success"></i>Ready to Pick</h6>
@@ -206,6 +212,13 @@
                                     {
                                         <li>
                                             @it.ItemId@(string.IsNullOrWhiteSpace(it.RheemPartNumber) ? "" : $" [{it.RheemPartNumber}]") &mdash; @it.ItemName &mdash; Qty: @it.Quantity (avail: @it.AvailableForThisOrder)
+                                            @if (it.TcAsked > it.TcOnShelves)
+                                            {
+                                                <span class="d-block text-warning fw-bold" style="font-size:11px;">
+                                                    <i class="bi bi-thermometer-half me-1"></i>@it.TcAsked thermocoupled asked, @it.TcOnShelves on the shelves.
+                                                    Pick Up holds this line and asks @Requester(order.RequestedBy) whether a Non-TC Motor is okay.
+                                                </span>
+                                            }
                                             @if (it.RequestedVariantId.HasValue)
                                             {
                                                 <span class="d-block text-info" style="font-size:11px;">
@@ -342,6 +355,61 @@
         </table>
         </div>
     </div>
+
+    @if (waiting.Any())
+    {
+        @* TC lines held at pickup. Nothing is pulled until the orderer, or an Engineer on the Line, answers. *@
+        <h6 class="fw-bold mb-2"><i class="bi bi-hourglass-split me-1 text-secondary"></i>Waiting on an Answer</h6>
+        <div class="queue-card p-3 mb-5">
+            <div class="table-responsive">
+            <table class="table table-hover align-middle" style="min-width:640px;">
+                <thead>
+                    <tr>
+                        <th>Order</th>
+                        <th>Requested By</th>
+                        <th>Item</th>
+                        <th>Is a Non-TC Motor okay?</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var order in waiting)
+                    {
+                        foreach (var w in order.WaitingLines)
+                        {
+                            <tr>
+                                <td class="fw-bold">#@order.OrderId</td>
+                                <td>@Requester(order.RequestedBy)</td>
+                                <td>
+                                    @w.ItemId &mdash; @w.ItemName &mdash; Qty: @w.Quantity (@w.TcAsked thermocoupled asked)
+                                    @if (!string.IsNullOrWhiteSpace(w.Note))
+                                    {
+                                        <span class="d-block text-dim" style="font-size:11px;">@w.Note</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (w.CanAnswer)
+                                    {
+                                        <form asp-controller="Home" asp-action="AnswerNonTc" method="post" class="d-inline">
+                                            @Html.AntiForgeryToken()
+                                            <input type="hidden" name="orderItemId" value="@w.OrderItemId" />
+                                            <button type="submit" name="answer" value="yes" class="btn btn-sm btn-success fw-bold">Yes</button>
+                                            <button type="submit" name="answer" value="no" class="btn btn-sm btn-outline-danger fw-bold ms-1">No</button>
+                                        </form>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-dim small">Waiting on @Requester(order.RequestedBy)</span>
+                                    }
+                                    <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@order.OrderId" class="btn btn-sm btn-info text-white ms-1">View</a>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+            </div>
+        </div>
+    }
 
     @* Go Store These: claimable sticky-note tasks *@
     <h4 class="section-h mb-2"><i class="bi bi-sticky me-2" style="color:#F59E0B;"></i>Go Store These</h4>

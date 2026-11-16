@@ -710,6 +710,9 @@ namespace Visual_Inventory_System.Migrations
                     b.Property<int>("LoanOutstanding")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Note")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("OrderId")
                         .HasColumnType("INTEGER");
 

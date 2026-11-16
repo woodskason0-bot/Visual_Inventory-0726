@@ -22,6 +22,8 @@ builder.Services.AddScoped<CurrentUserService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<SuperuserGateService>();
 builder.Services.AddScoped<TrackedUnitService>();
+// One for the whole app: it is the shared "who has this unit open" list.
+builder.Services.AddSingleton<EditPresence>();
 builder.Services.AddScoped<ReservationService>();
 builder.Services.AddHostedService<ReservationSweepService>();
 

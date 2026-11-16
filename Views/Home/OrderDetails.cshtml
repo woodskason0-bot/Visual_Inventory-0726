@@ -31,23 +31,33 @@
     var splitTo = ViewBag.SplitTo as System.Collections.Generic.List<int> ?? new System.Collections.Generic.List<int>();
     var unitsByOrderItem = ViewBag.UnitsByOrderItem as System.Collections.Generic.Dictionary<int?, System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>>
         ?? new System.Collections.Generic.Dictionary<int?, System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>>();
+    var answerable = ViewBag.AnswerableLineIds as System.Collections.Generic.HashSet<int> ?? new System.Collections.Generic.HashSet<int>();
+    bool fromResubmission = ViewBag.FromResubmission is bool fr && fr;
+    bool hasResubmitted = Model.Items.Any(i => i.Status == "Resubmitted");
 }
 <h2>Order @Model.Id</h2>
 <p>Created: @Model.CreatedAt.ToLocalTime() @(string.IsNullOrEmpty(Model.RequestedBy) ? "" : $"by {Model.RequestedBy}")</p>
 <p>Status: @Model.Status</p>
 @if (Model.SplitFromOrderId.HasValue)
 {
-    <p class="text-muted">Split from <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@Model.SplitFromOrderId">Order #@Model.SplitFromOrderId</a> -- the rest of that line's original request.</p>
+    if (fromResubmission)
+    {
+        <p class="text-muted">Resubmitted from <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@Model.SplitFromOrderId">Order #@Model.SplitFromOrderId</a> -- a thermocoupled motor wasn't on the shelves and a Non-TC Motor was OK'd.</p>
+    }
+    else
+    {
+        <p class="text-muted">Split from <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@Model.SplitFromOrderId">Order #@Model.SplitFromOrderId</a> -- the rest of that line's original request.</p>
+    }
 }
 @if (splitTo.Any())
 {
     <p class="text-muted">
-        Part of this order's demand was split off to
+        @(hasResubmitted ? "A line on this order was resubmitted as" : "Part of this order's demand was split off to")
         @for (int i = 0; i < splitTo.Count; i++)
         {
             <a asp-controller="Home" asp-action="OrderDetails" asp-route-id="@splitTo[i]">Order #@splitTo[i]</a>@(i < splitTo.Count - 1 ? ", " : "")
         }
-        -- a picker took what was on hand and deferred the rest.
+        @(hasResubmitted ? "-- see the line's note below." : "-- a picker took what was on hand and deferred the rest.")
     </p>
 }
 @if (Model.FulfilledAt.HasValue || !string.IsNullOrEmpty(Model.FulfilledBy))
@@ -76,9 +86,10 @@
         @* "Corrected" is a short line already acted on. The two short states get their own badge wording. *@
         var wasShort = it.Status == "Cancelled" || it.Status == "Corrected";
         var shortCorrected = it.Status == "Corrected";
+        var closedNoPull = it.Status == "Resubmitted" || it.Status == "Declined";
         var isCompressor = Visual_Inventory_System.Services.InventoryService.IsCompressorType(inv?.Type);
         var lineUnits = unitsByOrderItem.TryGetValue(it.Id, out var uList) ? uList : new System.Collections.Generic.List<Visual_Inventory_System.Models.CompressorUnit>();
-        <tr class="@(wasShort ? "text-muted" : "")">
+        <tr class="@(wasShort || closedNoPull ? "text-muted" : "")">
             <td>@it.ItemId</td>
             <td>@(inv?.ItemName ?? "Unknown item")@(string.IsNullOrWhiteSpace(inv?.RheemPartNumber) ? "" : $" — PN: {inv!.RheemPartNumber}")</td>
             <td>@(string.IsNullOrWhiteSpace(inv?.Brand) ? "----" : inv.Brand)</td>
@@ -131,8 +142,50 @@
                 {
                     <span class="badge bg-info text-dark" title="Picker took what was on hand here; the remainder was deliberately deferred to a new order.">Split — remainder deferred</span>
                 }
+                @if (it.Status == "Waiting")
+                {
+                    <span class="badge bg-warning text-dark" title="No thermocoupled units were on the shelves at pickup. Nothing was pulled for this line.">Waiting on an answer</span>
+                }
+                else if (it.Status == "Resubmitted")
+                {
+                    <span class="badge bg-info text-dark" title="A Non-TC Motor was OK'd and the line went out again as a new order.">Resubmitted</span>
+                }
+                else if (it.Status == "Declined")
+                {
+                    <span class="badge bg-secondary" title="A Non-TC Motor was declined, so this line was cancelled. Nothing was pulled.">Cancelled — no Non-TC Motor</span>
+                }
             </td>
         </tr>
+        @if (!string.IsNullOrWhiteSpace(it.Note) || it.Status == "Waiting")
+        {
+            <tr>
+                <td colspan="8" class="pt-0 border-top-0">
+                    @if (!string.IsNullOrWhiteSpace(it.Note))
+                    {
+                        <div class="small text-muted"><i class="bi bi-info-circle me-1"></i>@it.Note</div>
+                    }
+                    @if (it.Status == "Waiting" && Model.Status == "Pending")
+                    {
+                        <div class="d-flex align-items-center flex-wrap gap-2 mt-1">
+                            <span class="fw-bold">Is a Non-TC Motor okay for this order?</span>
+                            @if (answerable.Contains(it.Id))
+                            {
+                                <form asp-controller="Home" asp-action="AnswerNonTc" method="post" class="d-inline">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="orderItemId" value="@it.Id" />
+                                    <button type="submit" name="answer" value="yes" class="btn btn-sm btn-success fw-bold">Yes, resubmit it</button>
+                                    <button type="submit" name="answer" value="no" class="btn btn-sm btn-outline-danger fw-bold ms-1">No, cancel this line</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <span class="small text-muted">Waiting on @((Model.RequestedBy ?? "").Replace('.', ' ')), or an Engineer on this item's Line.</span>
+                            }
+                        </div>
+                    }
+                </td>
+            </tr>
+        }
     }
     </tbody>
 </table>

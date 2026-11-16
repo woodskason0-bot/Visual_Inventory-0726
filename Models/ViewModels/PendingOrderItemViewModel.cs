@@ -14,6 +14,10 @@ namespace Visual_Inventory_System.Models.ViewModels
         public int Quantity { get; set; }
         public int AvailableForThisOrder { get; set; }
 
+        // Thermocoupled asked, and free on this line's shelves. Fewer = Pick Up holds the line for the orderer's answer.
+        public int TcAsked { get; set; }
+        public int TcOnShelves { get; set; }
+
         // Requested pull location and its display label. Null = no preference.
         public int? RequestedVariantId { get; set; }
         public string? RequestedLabel { get; set; }

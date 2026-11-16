@@ -395,11 +395,21 @@
             <form asp-controller="UnitTracker" asp-action="@(canEditCore ? "Update" : "UpdateNotes")" method="post" id="editUnitForm" class="d-flex flex-column" style="min-height: 0;">
                 @Html.AntiForgeryToken()
                 <input type="hidden" name="id" id="ue-id" value="" />
+                @* What the form showed when it opened. The server refuses the save if any of it changed since. *@
+                <input type="hidden" name="orig_model" id="ue-orig-model" />
+                <input type="hidden" name="orig_pkg" id="ue-orig-pkg" />
+                <input type="hidden" name="orig_serial" id="ue-orig-serial" />
+                <input type="hidden" name="orig_sample" id="ue-orig-sample" />
+                <input type="hidden" name="orig_line" id="ue-orig-line" />
+                <input type="hidden" name="orig_team" id="ue-orig-team" />
+                <input type="hidden" name="orig_notes" id="ue-orig-notes" />
                 <div class="modal-header">
                     <h5 class="modal-title" id="editUnitTitle">Edit Unit</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
+                    @* Filled by the 45-second check-in: someone else has it open, or it changed. *@
+                    <div id="ue-presence" class="alert alert-warning py-2 small d-none" role="status"></div>
                     @if (!canEditCore)
                     {
                         <p class="text-light-gray small mb-3">At Viewer access you can edit a unit&rsquo;s Notes only.</p>
@@ -641,6 +651,10 @@
                 document.getElementById('ue-serial').value = u.serial;
                 document.getElementById('ue-sample').value = u.sample;
                 document.getElementById('ue-notes').value = u.notes;
+                [['model', u.model], ['pkg', u.pkg], ['serial', u.serial], ['sample', u.sample],
+                 ['line', u.line], ['team', u.team], ['notes', u.notes]].forEach(function (p) {
+                    document.getElementById('ue-orig-' + p[0]).value = p[1] || '';
+                });
 
                 @* Seed from the row's CURRENT Line. A Line hidden in Settings has no *@
                 @* Branch here; it stays selectable as "(current, hidden)". *@
@@ -663,6 +677,78 @@
             }
             document.querySelectorAll('.ut-edit').forEach(function (btn) {
                 btn.addEventListener('click', function () { openEdit(btn.dataset.id); });
+            });
+
+            @* Check-in while the form is open: every 45 seconds, in the background, no reload. *@
+            @* A heads-up only; the server refuses a stale save either way. Stops after 30 minutes, *@
+            @* so an open form doesn't keep the session alive forever. *@
+            const presenceBox = document.getElementById('ue-presence');
+            const token = form.querySelector('input[name="__RequestVerificationToken"]');
+            let presenceTimer = null, presenceTicks = 0;
+            function presenceBody(leaving) {
+                const body = new URLSearchParams();
+                body.append('id', document.getElementById('ue-id').value);
+                if (leaving) { body.append('leaving', 'true'); return body; }
+                ['model', 'pkg', 'serial', 'sample', 'line', 'team', 'notes'].forEach(function (k) {
+                    body.append('orig_' + k, document.getElementById('ue-orig-' + k).value);
+                });
+                return body;
+            }
+            function showPresence(d) {
+                presenceBox.textContent = '';
+                const lines = [];
+                if (d.others && d.others.length) {
+                    const names = d.others.map(function (o) {
+                        return o.name + ' (opened ' + (o.minutes < 1 ? 'just now' : o.minutes + ' min ago') + ')';
+                    });
+                    lines.push(names.join(' and ') + (d.others.length === 1 ? ' is' : ' are') + ' also editing this unit. Only the first save will go through.');
+                }
+                if (d.changed) lines.push(d.changed);
+                lines.forEach(function (t) {
+                    const div = document.createElement('div');
+                    div.textContent = t;
+                    presenceBox.appendChild(div);
+                });
+                presenceBox.classList.toggle('d-none', lines.length === 0);
+            }
+            async function checkIn(leaving) {
+                if (!token || !document.getElementById('ue-id').value) return;
+                try {
+                    const r = await fetch('/UnitTracker/EditCheckIn', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        keepalive: !!leaving,
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'RequestVerificationToken': token.value,
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        body: presenceBody(leaving).toString()
+                    });
+                    if (!leaving && r.ok) showPresence(await r.json());
+                } catch (e) { /* a missed check-in only delays the heads-up */ }
+            }
+            function stopPresence() {
+                if (presenceTimer) clearInterval(presenceTimer);
+                presenceTimer = null;
+            }
+            editEl.addEventListener('shown.bs.modal', function () {
+                stopPresence();
+                presenceTicks = 0;
+                showPresence({});
+                checkIn(false);
+                presenceTimer = setInterval(function () {
+                    if (++presenceTicks >= 40) { stopPresence(); return; }
+                    checkIn(false);
+                }, 45000);
+            });
+            editEl.addEventListener('hidden.bs.modal', function () {
+                stopPresence();
+                checkIn(true);
+                showPresence({});
+            });
+            window.addEventListener('pagehide', function () {
+                if (presenceTimer) { stopPresence(); checkIn(true); }
             });
         }
 

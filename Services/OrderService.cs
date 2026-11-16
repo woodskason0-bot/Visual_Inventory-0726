@@ -47,6 +47,10 @@ namespace Visual_Inventory_System.Services
         public int? NewOrderId { get; set; }   // set by ReportShortPull when a correction reissues clean
         public System.Collections.Generic.List<ShortPullLine> ShortLines { get; set; } = new();
         public bool HasShortLines => ShortLines.Count > 0;
+        /// <summary>TC lines held for the orderer's Non-TC Motor answer, one sentence each.</summary>
+        public System.Collections.Generic.List<string> WaitingLines { get; set; } = new();
+        /// <summary>Lines picked up by this call.</summary>
+        public int CompletedLines { get; set; }
     }
 
     public class OrderService
@@ -290,18 +294,25 @@ namespace Visual_Inventory_System.Services
                 if (order.Status != "Pending") throw new InvalidOperationException($"Order #{orderId} was cancelled and can no longer be picked up.");
 
                 // Only lines still Pending. A second attempt must not re-touch resolved lines.
-                foreach (var it in order.Items.Where(i => i.Status == "Pending"))
+                foreach (var it in order.Items.Where(i => i.Status == "Pending").ToList())
                 {
-                    var shortLine = FulfillOrderItem(it, orderId, variantChoices, compressorUnits);
+                    var shortLine = FulfillOrderItem(it, orderId, variantChoices, compressorUnits, result.WaitingLines);
                     if (shortLine != null) result.ShortLines.Add(shortLine);
+                    if (it.Status == "Completed") result.CompletedLines++;
                 }
 
                 // The order follows its lines. Every line short = Cancelled: nothing left the shelf.
-                // Any Completed or Split line = Completed.
-                bool anyPending = order.Items.Any(i => i.Status == "Pending");
+                // Any Completed or Split line = Completed. A line waiting on an answer keeps it open.
+                bool anyPending = order.Items.Any(i => i.Status == "Pending" || i.Status == "Waiting");
                 if (anyPending)
                 {
-                    // Should not happen. Leave the order Pending rather than lie about it.
+                    // A Waiting line, or something unexpected. Leave the order Pending rather than lie about it.
+                    // What did leave was picked up by this person, whoever answers the question later.
+                    if (result.CompletedLines > 0)
+                    {
+                        order.FulfilledBy ??= _currentUser.Name;
+                        order.FulfilledAt ??= System.DateTime.UtcNow;
+                    }
                 }
                 else
                 {
@@ -330,11 +341,14 @@ namespace Visual_Inventory_System.Services
                 if (!string.IsNullOrWhiteSpace(requesterToNotify)
                 && !string.Equals(requesterToNotify, fulfiller, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    _notifications.Create(
-                    requesterToNotify,
-                    "Fulfilled",
-                    $"Your order #{orderId} was picked up by {fulfiller}.",
-                    $"/Home/OrderDetails/{orderId}");
+                    if (result.CompletedLines > 0)
+                        _notifications.Create(
+                        requesterToNotify,
+                        "Fulfilled",
+                        $"Your order #{orderId} was picked up by {fulfiller}.",
+                        $"/Home/OrderDetails/{orderId}");
+                    if (result.WaitingLines.Count > 0)
+                        NotifyNonTcQuestion(requesterToNotify, orderId);
                 }
             }
             catch { /* swallow: pickup already committed */ }
@@ -438,7 +452,7 @@ namespace Visual_Inventory_System.Services
                     User = _currentUser.Name
                 });
 
-                bool anyPending = order.Items.Any(i => i.Status == "Pending");
+                bool anyPending = order.Items.Any(i => i.Status == "Pending" || i.Status == "Waiting");
                 if (!anyPending)
                 {
                     bool anyCompleted = order.Items.Any(i => i.Status == "Completed" || i.Status == "Split");
@@ -523,11 +537,13 @@ namespace Visual_Inventory_System.Services
             ?? "";
 
         /// <summary>How much of one stack a pull may take, and how much of that is TC, leaving what others hold.</summary>
-        private static (int Take, int TcTake) PlanTake(ItemVariant v, int remaining, int remainingTc, (int Qty, int Tc) heldByOthers)
+        /// <param name="keepTc">The TC still owed can be met from the pull's stacks: no plain unit stands in for it.</param>
+        private static (int Take, int TcTake) PlanTake(ItemVariant v, int remaining, int remainingTc, (int Qty, int Tc) heldByOthers, bool keepTc = false)
         {
             int capQ = System.Math.Max(0, v.Quantity - heldByOthers.Qty);
             int capT = System.Math.Max(0, v.ThermocoupledQty - heldByOthers.Tc);
             int nonTcFree = System.Math.Max(0, (v.Quantity - v.ThermocoupledQty) - System.Math.Max(0, heldByOthers.Qty - heldByOthers.Tc));
+            if (keepTc) nonTcFree = System.Math.Min(nonTcFree, System.Math.Max(0, remaining - remainingTc));
             int take = System.Math.Min(remaining, System.Math.Min(capQ, nonTcFree + capT));
             if (take <= 0) return (0, 0);
             int forcedTc = System.Math.Max(0, take - nonTcFree);
@@ -535,6 +551,10 @@ namespace Visual_Inventory_System.Services
             int tcTake = System.Math.Min(maxTc, System.Math.Max(forcedTc, remainingTc));
             return (take, tcTake);
         }
+
+        /// <summary>Free TC across these stacks covers what is owed. Then PlanTake keeps plain units off the TC slots.</summary>
+        private static bool TcCanBeMet(List<ItemVariant> stacks, int tcOwed, StockClaims holdView, string requester) =>
+            tcOwed > 0 && stacks.Sum(v => System.Math.Max(0, v.ThermocoupledQty - holdView.HeldByOthers(v.Id, requester).Tc)) >= tcOwed;
 
         /// <summary>The refusal when other people's holds are what make a pull come up short.</summary>
         private string HeldRefusal(string itemId, List<ItemVariant> stacks, string requester, StockClaims view, int free, int wanted)
@@ -554,7 +574,8 @@ namespace Visual_Inventory_System.Services
         /// </summary>
         private ShortPullLine? FulfillOrderItem(OrderItem it, int orderId,
             Dictionary<int, int>? variantChoices,
-            Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits)
+            Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits,
+            List<string>? waiting = null)
         {
             var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
             if (inv == null)
@@ -585,6 +606,32 @@ namespace Visual_Inventory_System.Services
             if (it.Quantity > freeForRequester)
                 throw new InvalidOperationException(HeldRefusal(it.ItemId, activeVariants, requester, holdView, freeForRequester, it.Quantity));
 
+            // TC asked and not on the shelves: the whole line waits for the orderer's Non-TC Motor answer. Nothing leaves.
+            if (InventoryService.IsMotorType(inv.Type) && it.ThermocoupledCount > 0)
+            {
+                int tcFree = activeVariants.Sum(v => System.Math.Max(0, v.ThermocoupledQty - holdView.HeldByOthers(v.Id, requester).Tc));
+                if (tcFree < it.ThermocoupledCount)
+                {
+                    it.Status = "Waiting";
+                    it.Note = AddNote(it.Note, $"Thermocoupled not available at pickup, {ReservationService.Fmt(System.DateTime.Today)} "
+                        + $"({ReservationService.Person(_currentUser.Name)}): {it.ThermocoupledCount} asked, {tcFree} on the shelves.");
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = System.DateTime.UtcNow,
+                        ActionType = "TC Not Available",
+                        ItemId = it.ItemId,
+                        ItemName = inv.ItemName,
+                        QuantityChange = 0,
+                        Details = $"Order #{orderId}: {it.ThermocoupledCount} thermocoupled asked, {tcFree} on the shelves. Nothing was picked up for this line; "
+                            + $"waiting on {ReservationService.Person(requester)} to say whether a Non-TC Motor is okay.",
+                        User = _currentUser.Name
+                    });
+                    waiting?.Add($"{it.ItemId} ({inv.ItemName}) needs {it.ThermocoupledCount} thermocoupled and {tcFree} {(tcFree == 1 ? "is" : "are")} on the shelves, "
+                        + $"so that line is held until {ReservationService.Person(requester)} says whether a Non-TC Motor is okay.");
+                    return null;
+                }
+            }
+
             // Pull from: the line's requested location, else the picker's choice, else no preference.
             int? preferId = it.RequestedVariantId;
             if (preferId == null && variantChoices != null
@@ -606,10 +653,11 @@ namespace Visual_Inventory_System.Services
             var pulls = new List<string>();   // snapshot for the log
             // Which variant each pulled unit came from, so unit rows are matched on that shelf, not pooled.
             var variantPulls = new List<(int VariantId, int Take, int TcTake)>();
+            bool keepTc = TcCanBeMet(pullOrder, remainingTc, holdView, requester);
             foreach (var v in pullOrder)
             {
                 if (remaining <= 0) break;
-                var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester));
+                var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester), keepTc);
                 if (take > 0)
                 {
                     v.Quantity -= take;
@@ -920,6 +968,15 @@ namespace Visual_Inventory_System.Services
                 var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
                 if (inv == null) throw new InvalidOperationException("That item no longer exists in inventory.");
 
+                // Only the line's own team's stacks, the same set the form shows. Checked before anything changes.
+                foreach (var key in corrections.Keys)
+                {
+                    var target = inv.Variants.FirstOrDefault(x => x.Id == key && !x.IsRetired);
+                    if (target != null && !string.IsNullOrEmpty(it.Team) && target.Team != it.Team)
+                        throw new InvalidOperationException(
+                            $"V{target.VariantNumber} belongs to {(string.IsNullOrWhiteSpace(target.Team) ? "no team" : target.Team)}, not {it.Team} -- this correction can only change its own team's stock. Nothing was changed.");
+                }
+
                 // Leave "Cancelled" at once so a double submit cannot apply the correction twice.
                 it.Status = "Corrected";
 
@@ -986,8 +1043,13 @@ namespace Visual_Inventory_System.Services
                     System.Math.Min(it.ThermocoupledCount, correctedQty), it.Team);
 
                 // Picked up at once: the picker is standing there with the corrected count.
-                var shortLine = FulfillOrderItem(newItem, newOrder.Id, null, null);
-                if (shortLine == null)
+                var shortLine = FulfillOrderItem(newItem, newOrder.Id, null, null, result.WaitingLines);
+                if (newItem.Status == "Waiting")
+                {
+                    // The reissue needs TC that isn't there. It waits in the queue for the orderer's answer.
+                    result.NewOrderId = newOrder.Id;
+                }
+                else if (shortLine == null)
                 {
                     newOrder.Status = "Completed";
                     newOrder.FulfilledBy = _currentUser.Name;
@@ -1002,6 +1064,14 @@ namespace Visual_Inventory_System.Services
 
                 _db.SaveChanges();
                 tx.Commit();
+                tx.Dispose(); // release the ambient tx so the post-commit ping can SaveChanges cleanly
+
+                if (result.WaitingLines.Count > 0
+                    && !string.Equals(lineRequester, _currentUser.Name, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    try { NotifyNonTcQuestion(lineRequester, newOrder.Id); }
+                    catch { /* best-effort: the correction is already committed */ }
+                }
                 return result;
             }
             catch
@@ -1276,6 +1346,138 @@ namespace Visual_Inventory_System.Services
             StartOrder();
         }
 
+        // Non-TC Motor question: a TC line found no TC at pickup (see FulfillOrderItem) and waits here.
+
+        private static string AddNote(string? note, string sentence) =>
+            string.IsNullOrWhiteSpace(note) ? sentence : note.TrimEnd() + " " + sentence;
+
+        private void NotifyNonTcQuestion(string orderer, int orderId) =>
+            _notifications.Create(orderer, "OrderQuestion",
+                $"Order #{orderId}: the thermocoupled motor you asked for isn't on the shelves. Is a Non-TC Motor okay? Answer on the order.",
+                $"/Home/OrderDetails/{orderId}");
+
+        /// <summary>The orderer, Engineer and up on the item's Line, or Admin.</summary>
+        public bool CanAnswerNonTc(Order order, InventoryItem? item)
+        {
+            if (_currentUser.Level >= AccessLevels.Admin) return true;
+            if (_currentUser.Level < AccessLevels.Standard) return false;
+            if (SameName(order.RequestedBy, _currentUser.Name)) return true;
+            return _currentUser.Level >= AccessLevels.Engineer && item != null
+                && new InventoryService(_db, _currentUser).IsOwnLine(item.Line);
+        }
+
+        /// <summary>Settled lines close the order: Completed if anything left under it, else Cancelled.</summary>
+        private void CloseIfDone(Order order, System.DateTime now)
+        {
+            if (order.Items.Any(i => i.Status == "Pending" || i.Status == "Waiting")) return;
+            order.Status = order.Items.Any(i => i.Status == "Completed" || i.Status == "Split") ? "Completed" : "Cancelled";
+            order.FulfilledBy ??= _currentUser.Name;
+            order.FulfilledAt ??= now;
+        }
+
+        /// <summary>
+        /// The answer to "Is a Non-TC Motor okay?". Yes resubmits the line as a new order, checked against every
+        /// pending order and hold like a new cart. No cancels the line. Returns the new order's id on a Yes.
+        /// </summary>
+        public (bool Ok, string Message, int? NewOrderId) AnswerNonTc(int orderItemId, bool yes)
+        {
+            string? notifyOrderer = null;
+            int? newOrderId = null;
+            string message;
+            var now = System.DateTime.UtcNow;
+
+            using var tx = _db.Database.BeginTransaction();
+            try
+            {
+                var it = _db.OrderItems.FirstOrDefault(o => o.Id == orderItemId);
+                if (it == null) return (false, "That order line no longer exists.", null);
+                var order = _db.Orders.Include(o => o.Items).First(o => o.Id == it.OrderId);
+                if (order.Status != "Pending" || it.Status != "Waiting")
+                    return (false, $"Order #{order.Id}'s {it.ItemId} line isn't waiting on an answer any more.", null);
+
+                var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
+                if (!CanAnswerNonTc(order, item))
+                    return (false, $"Only {ReservationService.Person(order.RequestedBy)}, or Engineer and up on this item's Line, can answer for Order #{order.Id}.", null);
+
+                string who = ReservationService.Person(_currentUser.Name);
+                string day = ReservationService.Fmt(System.DateTime.Today);
+                string requester = order.RequestedBy ?? "";
+
+                if (!yes)
+                {
+                    it.Status = "Declined";
+                    it.Note = AddNote(it.Note, $"Non-TC Motor declined by {who}, {day}: line cancelled.");
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "Non-TC Motor Declined", ItemId = it.ItemId, ItemName = item?.ItemName,
+                        QuantityChange = 0, User = _currentUser.Name,
+                        Details = $"Order #{order.Id}: a Non-TC Motor was declined, so the {it.ItemId} line is cancelled. Nothing was picked up."
+                    });
+                    CloseIfDone(order, now);
+                    message = $"Order #{order.Id}: the {it.ItemId} line is cancelled.";
+                }
+                else
+                {
+                    if (item == null)
+                        return (false, $"{it.ItemId} no longer exists in inventory, so the line can't be resubmitted. Answer No to cancel it.", null);
+
+                    // Resubmitted = a new order at the back of the line, checked like a new cart. TC is kept where it is free.
+                    var claims = StockClaims.Load(_db, it.ItemId);
+                    int tcNow = System.Math.Min(it.ThermocoupledCount, claims.AvailableTc(requester, it.Team));
+                    if (!claims.Fits(new[] { StockClaims.NewLine(requester, it.Team, it.Quantity, tcNow) }))
+                    {
+                        int avail = claims.AvailableQty(requester, it.Team);
+                        return (false, $"Only {avail} of {it.ItemId} {(avail == 1 ? "is" : "are")} available now (pending orders and reservations come first), "
+                            + $"and the line needs {it.Quantity}. It stays waiting; answer No to cancel it.", null);
+                    }
+
+                    var (newOrder, newItem) = CreateSplitOrder(order, it.ItemId, it.Quantity, it.RequestedVariantId, tcNow, it.Team);
+                    newItem.Note = $"Non-TC Motor OK'd by {who}, {day} (Order #{order.Id} asked for {it.ThermocoupledCount} thermocoupled)."
+                        + (tcNow > 0 ? $" {tcNow} thermocoupled still asked for." : "");
+                    it.Status = "Resubmitted";
+                    it.Note = AddNote(it.Note, $"Non-TC Motor OK'd by {who}, {day}: resubmitted as Order #{newOrder.Id}.");
+                    _db.TransactionLogs.Add(new TransactionLog
+                    {
+                        Timestamp = now, ActionType = "Non-TC Motor OK'd", ItemId = it.ItemId, ItemName = item.ItemName,
+                        QuantityChange = 0, User = _currentUser.Name,
+                        Details = $"Order #{order.Id}: a Non-TC Motor was OK'd for {it.Quantity} of {it.ItemId}; resubmitted as Order #{newOrder.Id}"
+                            + (tcNow > 0 ? $" with {tcNow} thermocoupled." : " with no thermocoupled.")
+                    });
+                    CloseIfDone(order, now);
+                    newOrderId = newOrder.Id;
+                    message = $"Resubmitted as Order #{newOrder.Id}: {it.Quantity} of {it.ItemId}"
+                        + (tcNow > 0 ? $", {tcNow} of them thermocoupled." : ", Non-TC Motors.");
+                }
+
+                _db.SaveChanges();
+                tx.Commit();
+                tx.Dispose(); // release the ambient tx so the post-commit pings can SaveChanges cleanly
+                if (!SameName(requester, _currentUser.Name)) notifyOrderer = requester;
+
+                // Best-effort: the answer is already committed.
+                try
+                {
+                    if (newOrderId.HasValue)
+                        _notifications.CreateForSubscribers("PickupRequested",
+                            $"New pickup requested: Order #{newOrderId} from {requester} (Non-TC Motor OK'd, was thermocoupled on Order #{order.Id}).",
+                            "/Home/PickupQueue", excludeUserName: _currentUser.Name);
+                    if (notifyOrderer != null)
+                        _notifications.Create(notifyOrderer, "OrderQuestion",
+                            $"{who} answered for your Order #{order.Id}: " + (yes ? $"a Non-TC Motor is okay, resubmitted as Order #{newOrderId}." : "no Non-TC Motor, the line is cancelled."),
+                            $"/Home/OrderDetails/{newOrderId ?? order.Id}");
+                }
+                catch { }
+
+                return (true, message, newOrderId);
+            }
+            catch
+            {
+                tx.Rollback();
+                _db.ChangeTracker.Clear();
+                throw;
+            }
+        }
+
         // Internal transfer. One-way, one approval. Parallel to the cart and order pipeline:
         // a transfer never creates an Order row. Approval needs Engineer+ on the item's Line, enforced here.
 
@@ -1400,10 +1602,11 @@ namespace Visual_Inventory_System.Services
                 int pulledTc = 0;   // summed as taken -- see FulfillOrderItem for why
                 var pulls = new List<string>();
                 var variantPulls = new List<(int VariantId, int Take, int TcTake)>();
+                bool keepTc = TcCanBeMet(pullOrder, remainingTc, holdView, requester);
                 foreach (var v in pullOrder)
                 {
                     if (remaining <= 0) break;
-                    var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester));
+                    var (take, tcTake) = PlanTake(v, remaining, remainingTc, holdView.HeldByOthers(v.Id, requester), keepTc);
                     if (take <= 0) continue;
 
                     v.Quantity -= take;

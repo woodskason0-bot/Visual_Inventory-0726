@@ -1373,6 +1373,15 @@ namespace Visual_Inventory_System.Controllers
                               .ToDictionary(g => g.Key, g => g.Select(c => new OnHandUnitViewModel { SerialNumber = c.SerialNumber, LabNumber = c.LabNumber }).ToList())
                         : new Dictionary<int, List<OnHandUnitViewModel>>();
 
+                    // The TC on this line's shelves, minus other people's holds: the count Pick Up checks before it pulls.
+                    int tcAsked = InventoryService.IsMotorType(itemEntity?.Type) ? it.ThermocoupledCount : 0;
+                    int tcOnShelves = 0;
+                    if (tcAsked > 0 && itemEntity != null)
+                    {
+                        var holdView = StockClaims.FromVariants(_db, it.ItemId, itemEntity.Variants);
+                        tcOnShelves = activeVars.Sum(v => Math.Max(0, v.ThermocoupledQty - holdView.HeldByOthers(v.Id, order.RequestedBy ?? "").Tc));
+                    }
+
                     var itemVm = new PendingOrderItemViewModel
                     {
                         OrderItemId = it.Id,
@@ -1382,6 +1391,8 @@ namespace Visual_Inventory_System.Controllers
                         Type = itemEntity?.Type,
                         Quantity = it.Quantity,
                         AvailableForThisOrder = availForThis,
+                        TcAsked = tcAsked,
+                        TcOnShelves = tcOnShelves,
                         RequestedVariantId = it.RequestedVariantId,
                         RequestedLabel = it.RequestedVariantId.HasValue
                             ? activeVars.Where(v => v.Id == it.RequestedVariantId.Value).Select(VLabel).FirstOrDefault()
@@ -1399,6 +1410,22 @@ namespace Visual_Inventory_System.Controllers
 
                     vm.Items.Add(itemVm);
                     if (availForThis < it.Quantity) { canFulfill = false; if (totalAvailable >= it.Quantity) blockedByPriority = true; }
+                }
+
+                // Lines held for the Non-TC Motor answer. Shown on their own, never pickable.
+                foreach (var it in order.Items.Where(i => i.Status == "Waiting"))
+                {
+                    var waitItem = _db.InventoryItems.AsNoTracking().FirstOrDefault(i => i.ItemId == it.ItemId);
+                    vm.WaitingLines.Add(new WaitingLineViewModel
+                    {
+                        OrderItemId = it.Id,
+                        ItemId = it.ItemId,
+                        ItemName = waitItem?.ItemName ?? "Unknown",
+                        Quantity = it.Quantity,
+                        TcAsked = it.ThermocoupledCount,
+                        Note = it.Note ?? "",
+                        CanAnswer = _orderService.CanAnswerNonTc(order, waitItem)
+                    });
                 }
                 vm.CanFulfill = canFulfill;
                 vm.IsBlockedByPriority = blockedByPriority;
@@ -1773,14 +1800,22 @@ namespace Visual_Inventory_System.Controllers
                 var result = _orderService.PickUpOrder(orderId, choices.Count > 0 ? choices : null,
                     compressorUnits.Count > 0 ? compressorUnits : null);
 
+                // TC lines held for the orderer's answer, said after whatever else happened.
+                string held = result.WaitingLines.Count > 0 ? " Held: " + string.Join(" ", result.WaitingLines) : "";
                 if (result.HasShortLines)
                 {
                     // Short lines left stock untouched. Stash them for the queue page's correction form.
                     TempData["ShortPullOrderId"] = orderId;
                     TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(result.ShortLines);
-                    TempData["Error"] = result.ShortLines.Count == 1
+                    TempData["Error"] = (result.ShortLines.Count == 1
                         ? $"{result.ShortLines[0].ItemName} came up short -- report the real shelf count below."
-                        : $"{result.ShortLines.Count} items came up short -- report the real shelf counts below.";
+                        : $"{result.ShortLines.Count} items came up short -- report the real shelf counts below.") + held;
+                }
+                else if (result.WaitingLines.Count > 0)
+                {
+                    TempData["Error"] = $"Order #{orderId}: "
+                        + (result.CompletedLines > 0 ? $"{result.CompletedLines} line{(result.CompletedLines == 1 ? "" : "s")} picked up." : "nothing picked up.")
+                        + held;
                 }
                 else
                 {
@@ -1869,6 +1904,10 @@ namespace Visual_Inventory_System.Controllers
                     TempData["ShortPullOrderId"] = result.OrderId;
                     TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(result.ShortLines);
                     TempData["Error"] = "Still short after that correction -- another check may have beaten you to it.";
+                }
+                else if (result.WaitingLines.Count > 0)
+                {
+                    TempData["Error"] = $"Stock corrected and reissued as Order #{result.NewOrderId}, but nothing was picked up. Held: " + string.Join(" ", result.WaitingLines);
                 }
                 else if (result.NewOrderId.HasValue)
                 {
@@ -1970,6 +2009,26 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer3) ? RedirectToAction("Index") : Redirect(referer3);
         }
 
+        // "Is a Non-TC Motor okay?" for a TC line held at pickup. The orderer, Engineer and up on the Line, or Admin.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        [RequireLevel(AccessLevels.Standard)]
+        public IActionResult AnswerNonTc(int orderItemId, string? answer)
+        {
+            if (answer != "yes" && answer != "no")
+            {
+                TempData["Error"] = "Answer Yes or No.";
+                return SmartRedirect();
+            }
+            try
+            {
+                var (ok, message, _) = _orderService.AnswerNonTc(orderItemId, answer == "yes");
+                TempData[ok ? "Success" : "Error"] = message;
+            }
+            catch (Exception ex) { TempData["Error"] = "That answer wasn't saved: " + ex.GetBaseException().Message; }
+            return SmartRedirect();
+        }
+
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Engineer)]
@@ -2040,6 +2099,13 @@ namespace Visual_Inventory_System.Controllers
                 .ToList()
                 .GroupBy(c => c.OrderItemId)
                 .ToDictionary(g => g.Key, g => g.ToList());
+            // Waiting lines this person may answer, and whether this order is a Non-TC Motor resubmission.
+            var lookup = (Dictionary<string, InventoryItem>)ViewBag.InventoryLookup;
+            ViewBag.AnswerableLineIds = order.Status != "Pending" ? new HashSet<int>() : order.Items
+                .Where(i => i.Status == "Waiting" && _orderService.CanAnswerNonTc(order, lookup.GetValueOrDefault(i.ItemId)))
+                .Select(i => i.Id).ToHashSet();
+            ViewBag.FromResubmission = order.SplitFromOrderId.HasValue
+                && _db.OrderItems.AsNoTracking().Any(i => i.OrderId == order.SplitFromOrderId && i.Status == "Resubmitted");
             return View(order);
         }
 

@@ -297,6 +297,10 @@
                 <a class="sidebar-link @(isActiveAction("SearchCenter") ? "active" : "")" asp-controller="Home" asp-action="SearchCenter">
                     <i class="bi bi-search"></i><span class="sidebar-link-text">Search Center</span>
                 </a>
+                @* Pending orders, for any signed-in user. Pick Up itself is Standard and up. *@
+                <a class="sidebar-link @(isActiveAction("PickupQueue") ? "active" : "")" asp-controller="Home" asp-action="PickupQueue">
+                    <i class="bi bi-clipboard-check"></i><span class="sidebar-link-text">Pickup Queue</span>
+                </a>
                 @* Every live hold across the org. *@
                 <a class="sidebar-link @(isReservationsActive ? "active" : "")" asp-controller="Reservations" asp-action="Index">
                     <i class="bi bi-bookmark-fill"></i><span class="sidebar-link-text">Reserved Items</span>

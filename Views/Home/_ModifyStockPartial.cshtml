@@ -85,7 +85,7 @@
                     @* Team for a new stack (Add, "New location..." only). Blank = the item's own Team. *@
                     <div id="stock-variant-team-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Team</label>
-                        <select name="variantTeam" id="stock-variant-team-sel" class="form-select fw-bold">
+                        <select name="variantTeam" id="stock-variant-team-sel" class="form-select fw-bold" disabled>
                             <option value="">Same as item's default team</option>
                             @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
                             {
@@ -710,6 +710,7 @@
         populateVariantSel(action);
         const variantSel = document.getElementById('stock-variant-sel');
         const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
+        setVariantTeamPicker(addingNew);
 
         @* Edit Details pane: inputs stay disabled, so they never post, unless this action is active. *@
         const editDiv = document.getElementById('stock-edit-div');
@@ -760,8 +761,6 @@
             @* Add-to-NEW-location reuses the transfer cascade for the address, *@
             @* but hides the move-qty row (the main Quantity box is the amount). *@
             if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
-            const teamDiv = document.getElementById('stock-variant-team-div');
-            if (teamDiv) teamDiv.style.display = addingNew ? 'block' : 'none';
             if (moveQtyDiv) moveQtyDiv.style.display = 'none';
             qtyInput.required = true;
             if (addingNew) {
@@ -781,6 +780,13 @@
         refreshSerialFields(action);
         refreshUnitPicker();
         refreshLeavingPicker();
+    }
+    @* The new-stack Team picker is for Add + "New location..." only. Hidden, it is disabled and never posts. *@
+    function setVariantTeamPicker(on) {
+        const div = document.getElementById('stock-variant-team-div');
+        const sel = document.getElementById('stock-variant-team-sel');
+        if (div) div.style.display = on ? 'block' : 'none';
+        if (sel) sel.disabled = !on;
     }
     @* Quantity bounds. Scrap is capped at the selected stack. Add and Scrap floor at 1; Adjustment *@
     @* cannot take the stack below 0. Clamped live because form.submit() skips validation. *@
@@ -1081,8 +1087,7 @@
                 const locDiv = document.getElementById('stock-loc-div');
                 const addingNew = (sel.value === 'NEW');
                 if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
-                const teamDiv = document.getElementById('stock-variant-team-div');
-                if (teamDiv) teamDiv.style.display = addingNew ? 'block' : 'none';
+                setVariantTeamPicker(addingNew);
                 const helpText = document.getElementById('stock-qty-help');
                 if (helpText) helpText.innerText = addingNew
                     ? "Amount to place at the NEW location."

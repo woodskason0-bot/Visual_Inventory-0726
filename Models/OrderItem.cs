@@ -10,8 +10,14 @@ namespace Visual_Inventory_System.Models
         public string ItemId { get; set; } = "";
         public int Quantity { get; set; }
 
-        /// <summary>"Pending" | "Completed" | "Cancelled" | "Corrected" | "Split". Per line, not per order.</summary>
+        /// <summary>
+        /// "Pending" | "Completed" | "Cancelled" | "Corrected" | "Split" | "Waiting" | "Resubmitted" | "Declined".
+        /// Per line, not per order. Waiting = TC asked, none on the shelves, the orderer is asked about a Non-TC Motor.
+        /// </summary>
         public string Status { get; set; } = "Pending";
+
+        /// <summary>What happened to this line, in sentences, oldest first. Null = nothing to say.</summary>
+        public string? Note { get; set; }
 
         /// <summary>Units requested thermocoupled. 0 for non-motors.</summary>
         public int ThermocoupledCount { get; set; } = 0;

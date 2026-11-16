@@ -14,11 +14,13 @@ namespace Visual_Inventory_System.Controllers
     {
         private readonly TrackedUnitService _units;
         private readonly CurrentUserService _currentUser;
+        private readonly EditPresence _presence;
 
-        public UnitTrackerController(TrackedUnitService units, CurrentUserService currentUser)
+        public UnitTrackerController(TrackedUnitService units, CurrentUserService currentUser, EditPresence presence)
         {
             _units = units;
             _currentUser = currentUser;
+            _presence = presence;
         }
 
         // Filters live in the query string so a filtered view can be linked and survives a write.
@@ -109,7 +111,7 @@ namespace Visual_Inventory_System.Controllers
             string? teamArg = Request.Form.ContainsKey("team") ? (team ?? "") : null;
             string? pkgArg = Request.Form.ContainsKey("packageType") ? (packageType ?? "") : null;
 
-            return Finish(_units.Update(id, modelNumber, pkgArg, serialNumber, sampleNumber, lineArg, teamArg, notes));
+            return Finish(_units.Update(id, modelNumber, pkgArg, serialNumber, sampleNumber, lineArg, teamArg, notes, Opened(notesOnly: false)));
         }
 
         // No level attribute: Notes is the one field a Viewer may edit. Takes id and notes only.
@@ -117,7 +119,42 @@ namespace Visual_Inventory_System.Controllers
         [ValidateAntiForgeryToken]
         public IActionResult UpdateNotes(int id, string? notes)
         {
-            return Finish(_units.UpdateNotes(id, notes));
+            return Finish(_units.UpdateNotes(id, notes, Opened(notesOnly: true)));
+        }
+
+        // The open Edit form checks in every 45 seconds: who else has this unit open, and has it changed.
+        // Answers JSON, never a redirect, so the page doesn't reload. No level attribute: Viewers edit Notes here too.
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public IActionResult EditCheckIn(int id, bool leaving = false)
+        {
+            if (leaving)
+            {
+                _presence.Leave(id, _currentUser.Name);
+                return Json(new { ok = true });
+            }
+            var now = System.DateTime.UtcNow;
+            var others = _presence.CheckIn(id, _currentUser.Name, now)
+                .Select(o => new { name = o.User.Replace('.', ' '), minutes = (int)(now - o.Opened).TotalMinutes })
+                .ToList();
+            // The same fields the save compares: all of them, or Notes only below Standard.
+            var changed = _units.CheckChanged(id, Opened(notesOnly: _currentUser.Level < AccessLevels.Standard));
+            return Json(new { ok = true, others, changed });
+        }
+
+        // What the Edit form showed when it opened (orig_* fields). Null when a form predates this check.
+        private UnitSnapshot? Opened(bool notesOnly)
+        {
+            var f = Request.Form;
+            if (!f.ContainsKey("orig_notes")) return null;
+            string? Field(string key) => f.ContainsKey(key) ? f[key].ToString() : null;
+            return notesOnly
+                ? new UnitSnapshot { Notes = Field("orig_notes") }
+                : new UnitSnapshot
+                {
+                    Model = Field("orig_model"), Package = Field("orig_pkg"), Serial = Field("orig_serial"),
+                    Sample = Field("orig_sample"), Line = Field("orig_line"), Team = Field("orig_team"), Notes = Field("orig_notes")
+                };
         }
 
         // Saves on click, so it answers JSON: a redirect would reload a long list and lose the user's place.

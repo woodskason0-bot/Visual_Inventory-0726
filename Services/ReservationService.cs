@@ -555,6 +555,7 @@ namespace Visual_Inventory_System.Services
             var motors = isMotor ? _db.MotorUnits.Where(m => m.ItemId == item.ItemId).ToList() : new List<MotorUnit>();
 
             var lines = new List<(ItemVariant V, int Qty, int Tc, List<int> Pins, List<string> New)>();
+            var newSerials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // across every stack in this save
             foreach (var li in input.Lines)
             {
                 var pins = (li.PinIds ?? new List<int>()).Distinct().ToList();
@@ -594,8 +595,12 @@ namespace Visual_Inventory_System.Services
                 if (isComp)
                 {
                     foreach (var s in fresh)
+                    {
                         if (comps.Any(c => string.Equals(c.SerialNumber ?? "", s, StringComparison.OrdinalIgnoreCase)))
                             return (false, $"Serial {s} is already on record for {item.ItemId}. Tick it in the list instead.");
+                        if (!newSerials.Add(s))
+                            return (false, $"Serial {s} is typed on more than one stack. Name it on one only.");
+                    }
                     int rows = comps.Count(c => c.Status == UnitStatus.OnHand && c.ItemVariantId == v.Id);
                     if (rows + fresh.Count > v.Quantity)
                         return (false, $"{where} has {v.Quantity} on the shelf and {rows} already recorded, so only {Math.Max(0, v.Quantity - rows)} new serial(s) can be added there.");

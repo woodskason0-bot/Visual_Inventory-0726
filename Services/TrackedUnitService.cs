@@ -18,6 +18,18 @@ namespace Visual_Inventory_System.Services
         public TrackedUnit? Unit { get; init; }
     }
 
+    /// <summary>What the Edit form showed when it was opened. A null field isn't compared.</summary>
+    public class UnitSnapshot
+    {
+        public string? Model { get; init; }
+        public string? Package { get; init; }
+        public string? Serial { get; init; }
+        public string? Sample { get; init; }
+        public string? Line { get; init; }
+        public string? Team { get; init; }
+        public string? Notes { get; init; }
+    }
+
     /// <summary>
     /// Every query and write for the Unit Tracker list. The controller holds no LINQ.
     /// Access rules live here or in [RequireLevel]. The server is the only validation
@@ -196,10 +208,12 @@ namespace Visual_Inventory_System.Services
         /// A changed Line or Team is a move: Engineer only, and validated only when it changed.
         /// </summary>
         public TrackedUnitResult Update(int id, string? modelNumber, string? packageType, string? serialNumber,
-            string? sampleNumber, string? line, string? team, string? notes)
+            string? sampleNumber, string? line, string? team, string? notes, UnitSnapshot? opened = null)
         {
             var unit = _db.TrackedUnits.Find(id);
             if (unit == null) return Gone(id);
+            var stale = ChangedSince(unit, opened);
+            if (stale != null) return Fail(stale + StaleRefusal);
 
             string? lineChange = null, teamChange = null;
             if (line != null)
@@ -285,10 +299,12 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>Anyone signed in, Viewer included. Changes the Notes and nothing else.</summary>
-        public TrackedUnitResult UpdateNotes(int id, string? notes)
+        public TrackedUnitResult UpdateNotes(int id, string? notes, UnitSnapshot? opened = null)
         {
             var unit = _db.TrackedUnits.Find(id);
             if (unit == null) return Gone(id);
+            var stale = ChangedSince(unit, opened);
+            if (stale != null) return Fail(stale + StaleRefusal);
 
             var noteText = Clean(notes);
             var err = TooLong("Notes", noteText, NotesMax);
@@ -390,7 +406,42 @@ namespace Visual_Inventory_System.Services
             };
         }
 
+        /// <summary>The Edit form's check-in: a sentence if the unit changed since the form opened, else null.</summary>
+        public string? CheckChanged(int id, UnitSnapshot? opened)
+        {
+            var unit = _db.TrackedUnits.AsNoTracking().FirstOrDefault(u => u.Id == id);
+            if (unit == null) return $"Unit #{id} no longer exists.";
+            var stale = ChangedSince(unit, opened);
+            return stale == null ? null : stale + " Reload before you save.";
+        }
+
         // Helpers
+
+        /// <summary>
+        /// A sentence when any field the form showed differs from what's stored now, else null.
+        /// Stale forms are refused, not merged: someone else's newer value is never overwritten.
+        /// </summary>
+        private static string? ChangedSince(TrackedUnit unit, UnitSnapshot? opened)
+        {
+            if (opened == null) return null;
+            bool Differs(string? was, string now) => was != null && !string.Equals(Clean(was), now, StringComparison.Ordinal);
+            bool changed = Differs(opened.Model, unit.ModelNumber) || Differs(opened.Package, unit.PackageType)
+                || Differs(opened.Serial, unit.SerialNumber) || Differs(opened.Sample, unit.SampleNumber)
+                || Differs(opened.Line, unit.Line) || Differs(opened.Team, unit.Team) || Differs(opened.Notes, unit.Notes);
+            if (!changed) return null;
+
+            string last = "";
+            if (unit.UpdatedAt.HasValue)
+            {
+                var local = unit.UpdatedAt.Value.ToLocalTime();
+                string when = local.Date == DateTime.Today ? local.ToString("h:mm tt") : local.ToString("MMM d, h:mm tt");
+                last = $" (last saved by {unit.UpdatedBy.Replace('.', ' ')} at {when})";
+            }
+            return $"Unit #{unit.Id} was changed since you opened it{last}.";
+        }
+
+        // The save redirects back to the list, which already shows the newer values.
+        private const string StaleRefusal = " Your edit wasn't saved. Open the unit again to see the change, then make yours.";
 
         private static TrackedUnitResult Fail(string message) => new() { Ok = false, Message = message };
 
