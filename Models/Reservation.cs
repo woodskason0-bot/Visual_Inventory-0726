@@ -5,33 +5,22 @@ using System.ComponentModel.DataAnnotations;
 namespace Visual_Inventory_System.Models
 {
     /// <summary>
-    /// A hold on some of one item's stock (2026-11-08, docs/Unit_Reservations_Spec.md):
-    /// "reserved for (Reason) by (ReservedBy) from (StartDate) to (EndDate or until
-    /// notice)". A hard hold -- nobody but ReservedBy can order, pick up, transfer or
-    /// scrap what it holds -- counted per stack in ReservationLines, with specific
-    /// compressor / TC motor units optionally named through their ReservationId.
-    ///
-    /// A hold reduces AVAILABLE, never On hand: the stock stays on the shelf and in
-    /// ItemVariant.Quantity until it really leaves. See StockClaims for the math.
-    ///
-    /// "Live" = Status Active and EndDate null or not yet passed. Every query goes
-    /// through ReservationService.Live so an expired hold stops holding at midnight
-    /// even before the sweep marks it Expired.
+    /// A hard hold on some of one item's stock. Reduces Available, never On hand.
+    /// Live = Active and EndDate null or not passed. Query through ReservationService.Live.
     /// </summary>
     public class Reservation
     {
         public int Id { get; set; }
 
-        /// <summary>Business id of the item, e.g. "CCR-0029". Loose reference, no FK (same as every other table).</summary>
+        /// <summary>Item, e.g. "CCR-0029". Loose reference, no FK.</summary>
         [Required, MaxLength(30)]
         public string ItemId { get; set; } = "";
 
-        /// <summary>Free text, required. Also the purpose group: the Reserve dialog offers
-        /// a person's open reasons back to them, and Reserved Items groups their holds by it.</summary>
+        /// <summary>Free text, required. Also the grouping key on Reserved Items and in the Reserve dialog.</summary>
         [Required, MaxLength(200)]
         public string Reason { get; set; } = "";
 
-        /// <summary>First.Last of whoever made it -- always the signed-in person.</summary>
+        /// <summary>First.Last of the signed-in person who made it.</summary>
         [Required, MaxLength(100)]
         public string ReservedBy { get; set; } = "";
 
@@ -61,8 +50,7 @@ namespace Visual_Inventory_System.Models
         public List<ReservationLine> Lines { get; set; } = new();
     }
 
-    /// <summary>How much of one stack a reservation holds. TcQuantity is the thermocoupled
-    /// part (motors only) and never exceeds Quantity.</summary>
+    /// <summary>How much of one stack a reservation holds. TcQuantity (motors) never exceeds Quantity.</summary>
     public class ReservationLine
     {
         public int Id { get; set; }
@@ -70,7 +58,7 @@ namespace Visual_Inventory_System.Models
         public int ReservationId { get; set; }
         public Reservation Reservation { get; set; } = null!;
 
-        /// <summary>The ItemVariant (stack). Loose reference, same as CompressorUnit.ItemVariantId.</summary>
+        /// <summary>The stack (ItemVariant.Id). Loose reference.</summary>
         public int ItemVariantId { get; set; }
 
         public int Quantity { get; set; }

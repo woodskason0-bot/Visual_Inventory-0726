@@ -9,16 +9,8 @@ using Microsoft.AspNetCore.Http;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// Saves delivery photos to disk, external to the publish folder -- same
-    /// "moved deliberately" pattern as inventory.db (see appsettings.json's
-    /// connection string), so a republish can never touch them. Program.cs maps
-    /// RootPath onto RequestPathPrefix over HTTP so saved files are directly
-    /// viewable without living in wwwroot.
-    ///
-    /// System.Drawing.Common (GDI+), not ImageSharp -- VIS is Windows-only by
-    /// design already (self-contained win-x64 publish, absolute C:\ paths
-    /// throughout), so there's no portability cost, and it avoids ImageSharp
-    /// v4's commercial license requirement for a closed-source app like this.
+    /// Saves delivery photos outside the publish folder, so a republish never touches them.
+    /// Program.cs serves RootPath at RequestPathPrefix.
     /// </summary>
     [SupportedOSPlatform("windows")]
     public static class DeliveryPhotoStorage
@@ -26,11 +18,10 @@ namespace Visual_Inventory_System.Services
         public const string RootPath = @"C:\VIS_Image-Uploads";
         public const string RequestPathPrefix = "/delivery-photos";
 
-        // Keeps db-adjacent storage from growing unbounded -- a label photo
-        // doesn't need phone-camera resolution to stay readable.
+        // Caps stored size. A label photo stays readable well below camera resolution.
         private const int MaxDimension = 1600;
 
-        /// <summary>Resizes/re-encodes, saves under a fresh GUID name, returns the saved filename (not a full path).</summary>
+        /// <summary>Resizes, re-encodes, saves under a new GUID name. Returns the filename, not a path.</summary>
         public static string Save(IFormFile photo)
         {
             Directory.CreateDirectory(RootPath);

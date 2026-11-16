@@ -12,19 +12,13 @@
     string theme = CurrentUser.Theme;
     string visUser = signedIn ? CurrentUser.Name : "";
 
-    // Supervisor low-stock summary is scoped to the viewer's Line, same
-    // convention as InventoryService.ApplyLineVisibility:
-    //   Admin (Level 5)      -> all Lines, no filter
-    //   Line set             -> that Line's low-stock count, plus unassigned items
-    //   Line blank (default) -> fails OPEN, all Lines (matches rollout safety posture)
+    // The low-stock summary follows Line visibility: Admin sees all, a Line sees its own plus unassigned, blank fails open.
     string myLine = signedIn ? CurrentUser.Line : "";
 
     int alertCount = 0;
     try
     {
-        // Quantity lives on ItemVariants (item.Quantity is a NotMapped
-        // pass-through and cannot be used inside an EF query), so the badge
-        // sums each item's active variants database-side.
+        // Quantity is a NotMapped pass-through, so the badge sums active variants in the query.
         var alertQ = Db.InventoryItems.Where(i => i.AlertThreshold > 0
             && (i.Variants.Where(v => !v.IsRetired).Sum(v => (int?)v.Quantity) ?? 0) <= i.AlertThreshold);
         if (signedIn && CurrentUser.Level < Visual_Inventory_System.Services.AccessLevels.Admin
@@ -47,16 +41,13 @@
         if (initials.Length > 2) initials = initials.Substring(0, 2);
     }
 
-    // --- Notification bell data ---
+    // Notification bell data
     var notifications = signedIn
         ? Notifications.GetActiveFor(visUser)
         : new List<Visual_Inventory_System.Models.Notification>();
     int unreadCount = notifications.Count(n => !n.IsRead);
     bool isManager = signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Management;
-    // Deliberately NOT isManager: the Unknown Delivery bucket routes to Engineer+
-    // (Pass 33 follow-up), but the low-stock line in the bell below still keys off
-    // isManager. Folding them together would quietly hand Engineers a second thing
-    // nobody asked to widen.
+    // Not isManager on purpose: deliveries are Engineer and up, the low-stock line stays Management and up.
     bool canHandleDeliveries = signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Engineer;
 
     Func<DateTime, string> relTime = utc =>
@@ -76,20 +67,15 @@
     if (!string.IsNullOrWhiteSpace(myTierLabel)) breadcrumbParts.Add(myTierLabel);
     string identityBreadcrumb = string.Join(" | ", breadcrumbParts);
 
-    // Active-state helper for sidebar links -- same action/controller checks
-    // the old top navbar used, just applied to the new markup.
-    // The Home links match on the action name alone, so they must also require the
-    // Home controller: UnitTracker/Index (and Settings/Index) would otherwise light
-    // up Command Center too, since all of them are an action called "Index".
+    // Sidebar active state. Home links also require the Home controller:
+    // UnitTracker/Index and Settings/Index are an action called "Index" too.
     string currentController = ViewContext.RouteData.Values["controller"]?.ToString() ?? "Home";
     Func<string, bool> isActiveAction = action => currentController == "Home" && currentAction == action;
     bool isSettingsActive = ViewContext.RouteData.Values["controller"]?.ToString() == "Settings";
     bool isUnitTrackerActive = currentController == "UnitTracker";
     bool isReservationsActive = currentController == "Reservations";
 
-    // Sign-in has nothing to navigate to yet -- every other route just
-    // bounces back here pre-authentication -- so the shell adds nothing but
-    // wasted screen space on a page that's supposed to be one centered card.
+    // The sign-in page has nothing to navigate to, so it renders without the shell.
     bool isIdentifyPage = currentAction == "Identify";
 }
 <!DOCTYPE html>
@@ -104,10 +90,7 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/Visual_Inventory_System.styles.css" asp-append-version="true" />
     <style>
-        /* Green accent across the top bar while an order is being built --
-           same effect the old horizontal navbar had, just retargeted from
-           .rheem-navbar to .top-bar (still a horizontal bar, so the geometry
-           carries over unchanged). */
+        @* Green accent across the top bar while an order is being built. *@
         .top-bar { position: relative; }
         .top-bar.order-mode {
             border-bottom: 4px solid var(--vis-green);
@@ -157,9 +140,7 @@
             .top-bar.order-mode::after { transform: scaleX(1); }
             .top-bar.order-mode::before { opacity: 0; }
         }
-        /* Top-bar cart button (Pass 40). Filled either way so it reads as the
-           primary action wherever you are: brand red when empty, the same
-           green-on-dark-text as the order-mode accent once it holds lines. */
+        @* Top-bar cart button: red when empty, green once it holds lines. *@
         .vis-cart-btn {
             display: inline-flex;
             align-items: center;
@@ -177,9 +158,7 @@
             transition: filter .15s ease, box-shadow .15s ease;
         }
         .vis-cart-btn i { font-size: 16px; }
-        /* !important on the text colour: _Layout.cshtml.css styles every <a>
-           with a scoped attribute selector that outranks a plain class, which
-           rendered this label link-blue on the red fill (1.05:1). */
+        @* !important on the colour: the scoped layout stylesheet styles every link and outranks a plain class. *@
         .vis-cart-btn, .vis-cart-btn:visited, .vis-cart-btn:hover, .vis-cart-btn:focus { color: #FFFFFF !important; }
         .vis-cart-btn:hover { filter: brightness(1.08); }
         .vis-cart-btn.has-items {
@@ -201,7 +180,7 @@
             .vis-cart-label { display: none; }
             .vis-cart-btn { padding: 6px 10px; }
         }
-        /* Notification bell dropdown */
+        @* Notification bell dropdown *@
         .notif-menu {
             width: 360px;
             max-width: 92vw;
@@ -246,23 +225,12 @@
     </style>
 </head>
 <body>
-    @* Pass 27: jQuery/Bootstrap/site.js load HERE, before any page's own
-       content/inline scripts render via @@RenderBody() below -- previously
-       these loaded at the very bottom of body, AFTER a page's own script had
-       already executed, which is the exact reason a shared helper couldn't
-       be centralized in site.js before now (see the Traps entry this
-       supersedes: encodeLoc's move to site.js was "tried and reverted" for
-       this reason). All the DOM these scripts might reference synchronously
-       lives above this point in the document (sidebar shell) or is added by
-       @@RenderBody() itself further down, so nothing here depends on body
-       content that hasn't rendered yet -- only script EXECUTION order moved. *@
+    @* Scripts load here, before the page body renders, so page-inline scripts can call the shared helpers in site.js. *@
     <script src="~/lib/jquery/dist/jquery.min.js"></script>
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     <script>
-        // The message is set as text, never parsed as markup: toast text carries
-        // user-typed names and server messages (BC-10). Only the icon is markup, and
-        // it is one of the two fixed choices below, never anything from the caller.
+        @* The message is set as text, never parsed as markup. Only the icon is markup, from two fixed choices. *@
         function showToast(message, type) {
             var container = document.getElementById('toastContainer');
             if (!container) return;
@@ -314,8 +282,7 @@
         <aside class="sidebar" id="appSidebar">
             <a class="sidebar-brand text-decoration-none" asp-area="" asp-controller="Home" asp-action="Index">
                 <img src="~/images/RheemLogo.png" alt="Rheem" />
-                @* 0.8rem, not 0.95: at 0.95 the name was 181px in a ~165px slot, so it
-                   ran through the right padding and was clipped at the sidebar edge. *@
+                @* 0.8rem: at 0.95 the name was wider than its slot and got clipped at the sidebar edge. *@
                 <span class="sidebar-brand-text text-white fw-bold" style="font-size: 0.8rem; line-height: 1.15;">
                     <span style="color: var(--vis-red);">V</span>isual
                     <span style="color: var(--vis-red);">I</span>nventory
@@ -327,18 +294,14 @@
                 <a class="sidebar-link @(isActiveAction("Index") ? "active" : "")" asp-controller="Home" asp-action="Index">
                     <i class="bi bi-grid-1x2-fill"></i><span class="sidebar-link-text">Command Center</span>
                 </a>
-                @* Pass 28 (2d): real link now that the route exists -- Pass 27
-                   deliberately left this out while it was still a dead link. *@
                 <a class="sidebar-link @(isActiveAction("SearchCenter") ? "active" : "")" asp-controller="Home" asp-action="SearchCenter">
                     <i class="bi bi-search"></i><span class="sidebar-link-text">Search Center</span>
                 </a>
-                @* Reservations (2026-11-08): every live hold across the org, under
-                   Search Center because it's a view of the same inventory. *@
+                @* Every live hold across the org. *@
                 <a class="sidebar-link @(isReservationsActive ? "active" : "")" asp-controller="Reservations" asp-action="Index">
                     <i class="bi bi-bookmark-fill"></i><span class="sidebar-link-text">Reserved Items</span>
                 </a>
-                @* Unit Tracker holdover: a plain list of whole AC units, visible to
-                   every signed-in user (adding needs Standard, deleting Engineer). *@
+                @* A plain list of whole AC units, visible to every signed-in user. *@
                 <a class="sidebar-link @(isUnitTrackerActive ? "active" : "")" asp-controller="UnitTracker" asp-action="Index">
                     <i class="bi bi-boxes"></i><span class="sidebar-link-text">Unit Tracker</span>
                 </a>
@@ -348,8 +311,7 @@
                 <a class="sidebar-link @(isActiveAction("MyActivity") ? "active" : "")" asp-controller="Home" asp-action="MyActivity">
                     <i class="bi bi-activity"></i><span class="sidebar-link-text">My Activity</span>
                 </a>
-                @* Pass 9: bulk intake, Standard+ -- interns can log stock without
-                   being able to invent a location. *@
+                @* Bulk intake, Standard and up. *@
                 <a class="sidebar-link @(isActiveAction("Intake") ? "active" : "")" asp-controller="Home" asp-action="Intake">
                     <i class="bi bi-inboxes-fill"></i><span class="sidebar-link-text">Intake</span>
                 </a>
@@ -389,11 +351,7 @@
                 </div>
 
                 <div class="d-flex align-items-center">
-                    @* Pass 40: the cart used to be one plain card among the Actions
-                       row, easy to miss. Now a fixed, bright button in the same spot
-                       on every page -- it takes over from the old "Order Mode" badge,
-                       turning green with a live line count once the cart has
-                       anything in it. Standard+ only, same gate as View Cart. *@
+                    @* The cart: a fixed button on every page, green with a live line count once it holds anything. Standard and up. *@
                     @if (signedIn && CurrentUser.Level >= Visual_Inventory_System.Services.AccessLevels.Standard)
                     {
                         <a href="/Home/SearchCenter?mode=Ledger" id="visCartBtn"
@@ -528,12 +486,11 @@
     </div>
     }
 
-    <!-- Toast container (Fixed Z-Index) -->
+    @* Toast container (Fixed Z-Index) *@
     <div class="toast-container position-fixed top-0 end-0 p-3" id="toastContainer" style="z-index: 12000;"></div>
 
     <script>
-        // Top-bar cart button (Pass 40): pages that add to the cart without a
-        // reload call this with the server's new line count.
+        @* Pages that add to the cart without a reload call this with the server's new line count. *@
         window.visSetCartCount = function (n) {
             var btn = document.getElementById('visCartBtn');
             var badge = document.getElementById('visCartCount');
@@ -557,7 +514,7 @@
                 empty.classList.toggle('d-none', hasItems);
             }
 
-            // Mark all read when the bell opens (clears the badge).
+            @* Mark all read when the bell opens (clears the badge). *@
             var bellWrap = document.getElementById('notifBellWrap');
             if (bellWrap) {
                 bellWrap.addEventListener('show.bs.dropdown', function () {
@@ -572,7 +529,7 @@
                 });
             }
 
-            // Dismiss (x) a single notification.
+            @* Dismiss (x) a single notification. *@
             document.addEventListener('click', function (e) {
                 var btn = e.target.closest('.notif-dismiss');
                 if (!btn) return;
@@ -597,10 +554,7 @@
         })();
     </script>
 
-    @* Serialized as a JSON string, not HTML-encoded into quotes: HTML encoding leaves
-       backslash escapes like \x3C alone for JavaScript to decode (BC-10). JsonSerializer
-       escapes quotes, backslashes, line breaks and "<", so the text can't end the string
-       or the script tag. *@
+    @* Serialized as JSON, not HTML-encoded: JsonSerializer escapes quotes, backslashes, line breaks and "<". *@
     @if (TempData["Success"] != null)
     {
         <script>showToast(@Html.Raw(System.Text.Json.JsonSerializer.Serialize(TempData["Success"]?.ToString())), "success");</script>

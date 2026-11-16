@@ -74,10 +74,8 @@
 </div>
 
 <script>
-    // Management-only: validate, then show a styled confirm popup before bulk-
-    // setting the alert threshold. We CLOSE the alerts modal first and open the
-    // confirm popup only once it's fully hidden, so the two never stack (the app
-    // pins every modal to the same z-index, so stacking would misbehave).
+    @* Management only. The alerts modal closes before the confirm opens: *@
+    @* every modal shares one z-index, so they must never stack. *@
     function applyBulkThreshold() {
         const input = document.getElementById('bulk-threshold-input');
         const raw = input ? input.value.trim() : '';

@@ -7,12 +7,7 @@
     int week = ViewBag.EndingThisWeek;
     int open = ViewBag.UntilNotice;
 }
-@*
-    Reserved Items (2026-11-08, docs/Unit_Reservations_Spec.md section 6). Kason's
-    order: yours (grouped by reason), your Line, the rest of your Branch, then the
-    other branches greyed. Rows open the Item Card on Search Center; Edit opens the
-    Reserve dialog there. Filters are client-side -- the whole list is one page.
-*@
+@* Reserved Items. Order: yours by reason, your Line, the rest of your Branch, other branches greyed. Filters are client-side. *@
 <div class="container-fluid py-4 px-3 px-md-4" style="max-width:1400px;">
     <h2 class="res-page-title text-white">Reserved Items</h2>
     <p class="mt-1 mb-3">
@@ -146,7 +141,7 @@
     type.addEventListener('change', filter);
     when.addEventListener('change', filter);
 
-    // A row opens its Item Card; the Edit link and Release button do their own thing.
+    @* A row opens its Item Card; the Edit link and Release button do their own thing. *@
     document.querySelectorAll('.res-table tbody tr[data-href]').forEach(function (tr) {
         tr.addEventListener('click', function (e) {
             if (e.target.closest('a, button, form')) return;

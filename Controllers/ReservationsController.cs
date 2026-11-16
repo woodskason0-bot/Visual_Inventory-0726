@@ -46,11 +46,8 @@ namespace Visual_Inventory_System.Controllers
     }
 
     /// <summary>
-    /// Reserved Items (2026-11-08, docs/Unit_Reservations_Spec.md section 6) and the
-    /// Reserve dialog's form/save/release. Every signed-in user can read the page
-    /// (the global RequireNameFilter covers it); reserving, editing and releasing
-    /// are Standard+ here and checked again, per item and per reservation, in
-    /// ReservationService.
+    /// Reserved Items and the Reserve dialog's form, save and release. Everyone signed in can read.
+    /// Writes are Standard+ here and checked again per item in ReservationService.
     /// </summary>
     public class ReservationsController : Controller
     {
@@ -118,7 +115,7 @@ namespace Visual_Inventory_System.Controllers
             var rowsAll = live.Select(Row).ToList();
             var tiers = new List<ReservedTierViewModel>();
 
-            // 1. Yours, one group per reason (Kason's purpose groups, rule 4).
+            // Yours, one group per reason.
             var mine = rowsAll.Where(x => x.Mine).ToList();
             var mineTier = new ReservedTierViewModel { Title = "Your reservations", Sub = "Edit or release from here", Mine = true };
             foreach (var g in mine.GroupBy(x => x.R.Reason.Trim(), StringComparer.OrdinalIgnoreCase)
@@ -164,7 +161,7 @@ namespace Visual_Inventory_System.Controllers
                 var noLine = rest.Where(x => x.ItemLine.Length == 0).ToList();
                 if (noLine.Count > 0) AddTier("Items with no Line", "Unassigned items show to everyone", noLine);
 
-                // Other branches, greyed (Kason: less important, still readable).
+                // Other branches, greyed: less important, still readable.
                 var others = rest.Where(x => x.ItemLine.Length > 0 && !Same(x.ItemBranch, myBranch)).ToList();
                 var otherTier = new ReservedTierViewModel { Title = "Other branches", Sub = "Read only", Dim = true };
                 foreach (var b in OrgStructure.BranchLines.Keys.Where(b => !Same(b, myBranch)))
@@ -264,11 +261,7 @@ namespace Visual_Inventory_System.Controllers
             return BackTo(itemId);
         }
 
-        /// <summary>
-        /// Back to the page the request came from, always as a local path. From
-        /// Search Center the Item Card reopens on the item just changed, so the
-        /// result is right there.
-        /// </summary>
+        /// <summary>Back to the referring page, always as a local path. From Search Center the Item Card reopens on the item.</summary>
         private IActionResult BackTo(string? itemId)
         {
             string referer = Request.Headers["Referer"].ToString();

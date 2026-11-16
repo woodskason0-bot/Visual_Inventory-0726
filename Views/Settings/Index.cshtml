@@ -53,8 +53,7 @@
         </form>
     </div>
 
-    <!-- USERS & ACCESS -->
-<!-- ============ PENDING INTAKES (Pass 9) ============ -->
+@* Pending intakes *@
 @{
     var pending = (List<Visual_Inventory_System.Models.IntakeBatch>)(ViewBag.PendingIntakes ?? new List<Visual_Inventory_System.Models.IntakeBatch>());
     var allLocs = (List<Visual_Inventory_System.Models.Location>)ViewBag.Locations;
@@ -150,7 +149,7 @@
     }
 </div>
 
-<!-- ============ MAP ZONES (Pass 8) ============ -->
+@* Map zones *@
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Locations &mdash; Map</h5>
     <p class="text-light-gray small mb-3">
@@ -178,9 +177,7 @@
         <input type="hidden" name="x" id="zone-x" /><input type="hidden" name="y" id="zone-y" />
         <input type="hidden" name="w" id="zone-w" /><input type="hidden" name="h" id="zone-h" />
         <span class="text-light-gray small" id="zone-readout">Drag a box on the map first.</span>
-        @* Drawing a box round an area that isn't registered yet is the normal case
-           when a team turns up, so the Parent can be created right here rather than
-           forcing a trip to the Locations panel and back. *@
+        @* A new Parent can be created here, in the same step as drawing its zone. *@
         <select name="locationId" id="zone-parent" class="form-select form-select-sm" style="max-width:220px;">
             @foreach (var p in parentLocs)
             {
@@ -224,7 +221,7 @@
     </div>
 </div>
 
-<!-- ============ LOCATIONS (Pass 7C) ============ -->
+@* Locations *@
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Locations</h5>
     <p class="text-light-gray small mb-3">
@@ -293,7 +290,7 @@
     </div>
 </div>
 
-<!-- ============ TEAMS / PROJECTS (Pass 7A) ============ -->
+@* Teams and projects *@
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Teams &amp; Projects</h5>
     <p class="text-light-gray small mb-3">
@@ -322,8 +319,7 @@
                     </form>
                 </td>
                 <td>
-                    @* Metadata only -- does not gate visibility. Feeds the registration/
-                       ownership auto-fill and the compressor filter's Team suggestion. *@
+                    @* Metadata only: feeds auto-fill suggestions, never gates visibility. *@
                     <form asp-controller="Settings" asp-action="UpdateTeamLine" method="post" class="d-flex gap-2 line-picker" data-current-line="@t.Line">
                         @Html.AntiForgeryToken()
                         <input type="hidden" name="teamId" value="@t.Id" />
@@ -413,7 +409,7 @@
     }
 </div>
 
-<!-- ============ BRANCHES & LINES (Pass 13) ============ -->
+@* Branches and Lines *@
 <div class="settings-card p-4 mb-4">
     <h5 class="text-white fw-bold mb-1">Branches &amp; Lines</h5>
     <p class="text-light-gray small mb-3">
@@ -623,7 +619,7 @@
     </div>
 </div>
 
-<!-- DELETE USER CONFIRM MODALS -->
+@* DELETE USER CONFIRM MODALS *@
 @foreach (var u in users)
 {
     <div class="modal fade" id="deleteUserModal-@u.Id" tabindex="-1">
@@ -706,7 +702,7 @@
             var currentBranch = branchForLine(currentLine);
             var lineToSelect = currentLine;
             if (!currentBranch) {
-                // No specific Line -- check for a whole-Branch assignment instead.
+                @* No specific Line -- check for a whole-Branch assignment instead. *@
                 var wholeBranch = container.getAttribute('data-current-branch') || '';
                 if (wholeBranch) {
                     currentBranch = wholeBranch;
@@ -726,10 +722,7 @@
         var addUserForm = document.getElementById('addUserForm');
         if (addUserForm) wireLinePicker(addUserForm);
 
-        // Team Membership picker: a plain server round-trip, same pattern as
-        // every other Settings control -- picking a team reloads the page with
-        // ?manageTeam=<name> so the controller can pre-render that team's
-        // checked/unchecked roster.
+        @* Team Membership picker: picking a team reloads the page with the team in the manageTeam query string. *@
         var teamMembershipPicker = document.getElementById('teamMembershipPicker');
         if (teamMembershipPicker) {
             teamMembershipPicker.addEventListener('change', function () {
@@ -743,16 +736,13 @@
 </script>
 
 <script>
-    // Add-Location owner picker: a Major belongs to a Parent, a Sub to a Major.
-    // Built from the same rows the table above renders, so it can't offer an
-    // owner that doesn't exist.
+    @* Add Location's owner picker: a Major belongs to a Parent, a Sub to a Major. *@
     (function () {
         const levelSel = document.getElementById('loc-level');
         const ownerSel = document.getElementById('loc-owner');
         if (!levelSel || !ownerSel) return;
 
-        // Serialized, not string-interpolated: a quote or backslash in a location
-        // name used to break out of the literal and kill this whole script block.
+        @* Serialized, not interpolated: a quote in a location name would break the script block. *@
         const parents = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Parent" && x.IsActive).Select(x => new { id = x.Id, name = x.Name })));
         const majors  = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(((List<Visual_Inventory_System.Models.Location>)ViewBag.Locations).Where(x => x.Level == "Major" && x.IsActive).Select(x => new { id = x.Id, name = x.Name })));
 
@@ -778,10 +768,7 @@
 </script>
 
 <script>
-    // ---- Pass 8: drag-to-draw map zones -------------------------------------
-    // Everything is normalised against the OVERLAY's rendered box, so the numbers
-    // saved are fractions of the image and independent of how big it happens to
-    // be drawn on this screen.
+    @* Drag-to-draw map zones. Coordinates are fractions of the overlay's box, so screen size does not matter. *@
     (function () {
         const overlay = document.getElementById('zone-overlay');
         const readout = document.getElementById('zone-readout');
@@ -795,7 +782,7 @@
             ((IEnumerable<dynamic>)ViewBag.MapZones).Select(z => new {
                 name = (string)z.Name, x = (double)z.X, y = (double)z.Y, w = (double)z.W, h = (double)z.H }))); 
 
-        // Paint what's already placed so you can see coverage before adding more.
+        @* Paint what's already placed so you can see coverage before adding more. *@
         existing.forEach(function (z) {
             const d = document.createElement('div');
             d.style.cssText = 'position:absolute;border:2px solid #22C55E;background:rgba(34,197,94,.18);'
@@ -810,8 +797,7 @@
 
         function frac(e) {
             const r = overlay.getBoundingClientRect();
-            // Clamp: a drag that leaves the image would otherwise post coordinates
-            // the server has to reject, which reads as the save mysteriously failing.
+            @* Clamped, so a drag that leaves the image cannot post coordinates the server rejects. *@
             return {
                 x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
                 y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
@@ -831,8 +817,7 @@
         window.addEventListener('mousemove', function (e) {
             if (!drawing || !box) return;
             const p = frac(e);
-            // Dragging up or left is normal -- take the min corner and an absolute
-            // size so any direction produces a valid rectangle.
+            @* Any drag direction works: min corner, absolute size. *@
             const x = Math.min(startX, p.x), y = Math.min(startY, p.y);
             const w = Math.abs(p.x - startX), h = Math.abs(p.y - startY);
             box.style.left = (x * 100) + '%'; box.style.top = (y * 100) + '%';
@@ -850,9 +835,7 @@
             if (!ok) readout.textContent = 'That box is too small to click — drag a larger area.';
         });
 
-        // "＋ New parent…" swaps the dropdown for a name box. The field is only
-        // sent when it's visible -- an empty newParentName means "use the picked
-        // Parent", which is what the server branches on.
+        @* "New parent" swaps the dropdown for a name box. An empty name means "use the picked Parent". *@
         const parentSel = document.getElementById('zone-parent');
         const newParentIn = document.getElementById('zone-newparent');
         if (parentSel && newParentIn) {

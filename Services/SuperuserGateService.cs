@@ -4,13 +4,8 @@ using Microsoft.Extensions.Configuration;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// A second, independent lock on the Settings area -- separate from the
-    /// AccessLevel system on purpose, since Settings is what edits AccessLevel.
-    /// The passcode and the allowed name both live in appsettings.json
-    /// (Superuser:UserName / Superuser:Passcode), never in the database, so
-    /// neither can be changed or discovered through the mechanism it guards.
-    /// This is NOT meant to be rotated from inside the app -- if you ever
-    /// need to change it, edit appsettings.json directly.
+    /// The second lock on Settings, separate from AccessLevel because Settings edits AccessLevel.
+    /// Name and passcode come from configuration, never the database.
     /// </summary>
     public class SuperuserGateService
     {

@@ -8,10 +8,8 @@ using Visual_Inventory_System.Models;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// What a Unit Tracker write produced. Message is the toast text either way
-    /// (success text with any "Heads up" appended, or the reason it was refused);
-    /// Unit is set on a successful Add/Update so the controller can carry values
-    /// into "Save &amp; add another".
+    /// Result of a Unit Tracker write. Message is the toast text either way.
+    /// Unit is set on a successful Add or Update.
     /// </summary>
     public class TrackedUnitResult
     {
@@ -21,19 +19,9 @@ namespace Visual_Inventory_System.Services
     }
 
     /// <summary>
-    /// Every query and write for the Unit Tracker holdover list. The controller
-    /// holds no LINQ of its own.
-    ///
-    /// Every access rule is enforced HERE or by [RequireLevel] on the action --
-    /// hidden buttons are cosmetic. The one rule that can't be an attribute is
-    /// Update's: Standard may edit a unit, only Engineer may move it to another
-    /// Line or Team.
-    ///
-    /// Forms on this page post normally, but VIS forms elsewhere submit through
-    /// form.submit(), which skips HTML validation (Pass 39 / VIS-12), so the
-    /// server is the only check that counts: every text field is trimmed, every
-    /// over-length value is REFUSED with a message naming the field (never
-    /// truncated), and Package/Split, Line and Team are validated here.
+    /// Every query and write for the Unit Tracker list. The controller holds no LINQ.
+    /// Access rules live here or in [RequireLevel]. The server is the only validation
+    /// that counts: over-length values are refused, never truncated.
     /// </summary>
     public class TrackedUnitService
     {
@@ -51,14 +39,9 @@ namespace Visual_Inventory_System.Services
             _user = user;
         }
 
-        // =====================================================================
-        // READS
-        // =====================================================================
+        // Reads
 
-        /// <summary>
-        /// The list, newest first. Every signed-in user sees every row (units are
-        /// visible across Lines), so there is deliberately no Line scoping here.
-        /// </summary>
+        /// <summary>The list, newest first. No Line scoping: every signed-in user sees every row.</summary>
         public List<TrackedUnit> Query(string? q, string? pkg, string? team, string? line,
             string? whereabouts = null, string? buildStatus = null)
         {
@@ -76,9 +59,7 @@ namespace Visual_Inventory_System.Services
                     u.Team.ToLower().Contains(term));
             }
 
-            // Same three-way rule as Where and Build below: "none" asks for the units
-            // with no Package/Split recorded, one of the two labels asks for just those,
-            // anything else means Any.
+            // "none" = nothing recorded, a label = just those, anything else = Any.
             var pkgFilter = (pkg ?? "").Trim();
             if (string.Equals(pkgFilter, TrackedUnitPackage.NotSet, StringComparison.OrdinalIgnoreCase))
             {
@@ -96,8 +77,7 @@ namespace Visual_Inventory_System.Services
             var lineFilter = (line ?? "").Trim();
             if (lineFilter != "") query = query.Where(u => u.Line == lineFilter);
 
-            // "none" asks for the units nobody has said anything about; one of the
-            // three labels asks for just those; anything else means Any.
+            // Same three-way rule.
             var whFilter = (whereabouts ?? "").Trim();
             if (string.Equals(whFilter, TrackedUnitWhereabouts.NotSet, StringComparison.OrdinalIgnoreCase))
             {
@@ -109,7 +89,7 @@ namespace Visual_Inventory_System.Services
                 if (canonicalWh != null) query = query.Where(u => u.Whereabouts == canonicalWh);
             }
 
-            // Same three-way rule for Build: "none", one of the two labels, or Any.
+            // Same three-way rule.
             var bsFilter = (buildStatus ?? "").Trim();
             if (string.Equals(bsFilter, TrackedUnitBuildStatus.NotSet, StringComparison.OrdinalIgnoreCase))
             {
@@ -134,7 +114,7 @@ namespace Visual_Inventory_System.Services
             _db.TrackedUnits.AsNoTracking().Where(u => u.Line != "")
                 .Select(u => u.Line).Distinct().OrderBy(l => l).ToList();
 
-        /// <summary>Active teams, ordered by name -- the Add/Edit Team picker.</summary>
+        /// <summary>Active teams by name, for the Add/Edit Team picker.</summary>
         public List<Team> ActiveTeams() =>
             _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
 
@@ -143,9 +123,7 @@ namespace Visual_Inventory_System.Services
             _db.Teams.AsNoTracking().Where(t => t.IsActive && t.Line != null)
                 .ToDictionary(t => t.Name, t => t.Line);
 
-        // =====================================================================
-        // WRITES
-        // =====================================================================
+        // Writes
 
         public TrackedUnitResult Add(string? modelNumber, string? packageType, string? serialNumber,
             string? sampleNumber, string? line, string? team, string? notes)
@@ -190,10 +168,8 @@ namespace Visual_Inventory_System.Services
                 UpdatedBy = ""
             };
 
-            // The unit's Id is assigned by the INSERT, and the log's Details name
-            // it ("Unit #12"), so the log can't ride in the very same SaveChanges
-            // the way Update/Notes/Delete do. One transaction instead: either both
-            // rows land or neither does.
+            // The log names the unit's Id, which the INSERT assigns, so the two saves
+            // share one transaction: both rows land or neither does.
             using var tx = _db.Database.BeginTransaction();
             _db.TrackedUnits.Add(unit);
             _db.SaveChanges();
@@ -216,12 +192,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Standard and up. line/team are null when the form didn't post them (a
-        /// Standard user's disabled selects), which means "leave alone". A posted
-        /// Line or Team that differs from the stored one is a MOVE and needs
-        /// Engineer; it is validated only when it actually changed, so a Line or
-        /// Team hidden in Settings since the row was saved can still be carried
-        /// through an untouched Save.
+        /// Standard and up. A null line or team was not posted and is left alone.
+        /// A changed Line or Team is a move: Engineer only, and validated only when it changed.
         /// </summary>
         public TrackedUnitResult Update(int id, string? modelNumber, string? packageType, string? serialNumber,
             string? sampleNumber, string? line, string? team, string? notes)
@@ -257,8 +229,7 @@ namespace Visual_Inventory_System.Services
                       ?? TooLong("Notes", noteText, NotesMax);
             if (err != null) return Fail(err);
 
-            // Same posted-vs-not rule as line/team: null means the form didn't post the
-            // field, which leaves it alone; a posted blank ("Not set") clears it.
+            // Null = not posted, left alone. A posted blank ("Not set") clears it.
             var pkg = packageType == null ? unit.PackageType : CanonicalPackage(packageType);
             if (pkg == null) return Fail(PackageRefusal);
 
@@ -277,8 +248,7 @@ namespace Visual_Inventory_System.Services
                 newTeam = resolved;
             }
 
-            // Table-column order. Notes text is never logged -- it can be long and
-            // it is free for everyone to write.
+            // Table-column order. Notes text is never logged.
             var changes = new List<string>();
             void Diff(string label, string oldV, string newV, Action apply)
             {
@@ -337,12 +307,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Standard and up (the action carries [RequireLevel]). Sets or clears where
-        /// a unit is: one of In Lab / In Storage / Outbound, or blank for "not
-        /// recorded". Touches the Whereabouts column and nothing else, so it can't
-        /// move a unit's Line or Team. Posting the value it already has changes
-        /// nothing and writes no log. The message deliberately carries no typed
-        /// text (the page shows it in a toast built with innerHTML).
+        /// Standard and up. Sets or clears Whereabouts and nothing else. The same value
+        /// again changes nothing and logs nothing. The message carries no typed text.
         /// </summary>
         public TrackedUnitResult SetWhereabouts(int id, string? value)
         {
@@ -372,14 +338,7 @@ namespace Visual_Inventory_System.Services
             };
         }
 
-        /// <summary>
-        /// Standard and up (the action carries [RequireLevel]). Sets or clears whether
-        /// a unit has been built: "Built" or "Not Built", or blank for "not recorded".
-        /// Touches the BuildStatus column and nothing else (Whereabouts, Line and Team
-        /// are untouched), and works exactly like SetWhereabouts: only the two values or
-        /// blank, a value the unit already has changes nothing and writes no log, and
-        /// the message carries no typed text.
-        /// </summary>
+        /// <summary>Standard and up. Sets or clears BuildStatus and nothing else. Works like SetWhereabouts.</summary>
         public TrackedUnitResult SetBuildStatus(int id, string? value)
         {
             var unit = _db.TrackedUnits.Find(id);
@@ -408,10 +367,7 @@ namespace Visual_Inventory_System.Services
             };
         }
 
-        /// <summary>
-        /// Engineer and up (the action carries [RequireLevel]). A hard delete of the
-        /// row; the log row written here is the record, so it says what was removed.
-        /// </summary>
+        /// <summary>Engineer and up. A hard delete: the log row written here is the record.</summary>
         public TrackedUnitResult Delete(int id)
         {
             var unit = _db.TrackedUnits.Find(id);
@@ -434,19 +390,13 @@ namespace Visual_Inventory_System.Services
             };
         }
 
-        // =====================================================================
-        // HELPERS
-        // =====================================================================
+        // Helpers
 
         private static TrackedUnitResult Fail(string message) => new() { Ok = false, Message = message };
 
         private static TrackedUnitResult Gone(int id) => Fail($"Unit #{id} no longer exists.");
 
-        /// <summary>
-        /// Trim, and fold line breaks to "\n". A textarea's maxlength counts a break
-        /// as one character but the browser posts it as "\r\n"; counting two would
-        /// refuse a Notes box the form just accepted.
-        /// </summary>
+        /// <summary>Trim, and fold line breaks to "\n" so a break counts once, as the textarea's maxlength counts it.</summary>
         private static string Clean(string? s) =>
             (s ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
 
@@ -484,10 +434,7 @@ namespace Visual_Inventory_System.Services
             return null;
         }
 
-        /// <summary>
-        /// "Sample 1a" for a Sample # of "1a". The field's own placeholder is
-        /// "e.g. Sample 1a", so people type the word too; don't print it twice.
-        /// </summary>
+        /// <summary>"Sample 1a" for "1a". People often type the word too, so it is not printed twice.</summary>
         private static string SampleLabel(string sample) =>
             sample.StartsWith("sample", StringComparison.OrdinalIgnoreCase) ? sample : "Sample " + sample;
 
@@ -499,9 +446,7 @@ namespace Visual_Inventory_System.Services
 
         private void Log(string actionType, int quantityChange, string details)
         {
-            // Blank ItemId is VIS's "not about an inventory item" marker. A tag
-            // doesn't exist yet, and a non-blank value that isn't an item would be
-            // read as a deleted item (handoff Pass 14).
+            // Blank ItemId = not about an inventory item. A non-blank non-item would read as a deleted item.
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = DateTime.UtcNow,
@@ -514,11 +459,7 @@ namespace Visual_Inventory_System.Services
             });
         }
 
-        /// <summary>
-        /// False when the row vanished between the load and the write (EF sees an
-        /// UPDATE/DELETE hit zero rows). Nothing was changed in that case, so the
-        /// caller reports "no longer exists" instead of letting the exception out.
-        /// </summary>
+        /// <summary>False when the row vanished between load and write. Nothing was changed.</summary>
         private bool TrySave()
         {
             try
@@ -533,10 +474,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// " Heads up: ..." text for the success toast, or "". Warns, never blocks
-        /// (blocking is an open question for Conner). Compared AFTER materializing:
-        /// EF Core can't translate string.Equals(a, b, StringComparison...) against
-        /// a live query (handoff Pass 29 trap).
+        /// " Heads up: ..." text for the success toast, or "". Warns, never blocks.
+        /// Compared after materializing: EF cannot translate the StringComparison overload.
         /// </summary>
         private string DuplicateWarnings(TrackedUnit unit)
         {
@@ -557,8 +496,7 @@ namespace Visual_Inventory_System.Services
             }
             else if (unit.SampleNumber != "")
             {
-                // No serial to go on: the same model + Sample # on a row that also
-                // has no serial is probably the same physical unit entered twice.
+                // No serial: the same model + Sample # on another serial-less row is likely a double entry.
                 var same = others.Where(o => o.SerialNumber == "" && o.SampleNumber != ""
                     && string.Equals(o.ModelNumber, unit.ModelNumber, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(o.SampleNumber, unit.SampleNumber, StringComparison.OrdinalIgnoreCase))

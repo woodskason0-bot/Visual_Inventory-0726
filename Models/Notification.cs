@@ -9,7 +9,7 @@ namespace Visual_Inventory_System.Models
         // Who should see this. One row per recipient (fan-out on write).
         public string RecipientUserName { get; set; } = "";
 
-        // "OrderSubmitted" | "PickupRequested" | "Fulfilled" -- drives the bell icon/color.
+        // "OrderSubmitted" | "PickupRequested" | "Fulfilled". Drives the bell icon and color.
         public string Category { get; set; } = "";
 
         public string Message { get; set; } = "";

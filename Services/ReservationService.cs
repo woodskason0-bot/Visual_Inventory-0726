@@ -53,7 +53,7 @@ namespace Visual_Inventory_System.Services
         public int Id { get; set; }
         public string Label { get; set; } = "";
         public bool Checked { get; set; }
-        /// <summary>Held by someone else's reservation -- shown, not tickable.</summary>
+        /// <summary>Held by someone else's reservation: shown, not tickable.</summary>
         public string? TakenBy { get; set; }
     }
 
@@ -72,10 +72,8 @@ namespace Visual_Inventory_System.Services
     }
 
     /// <summary>
-    /// Holds on stock (2026-11-08, docs/Unit_Reservations_Spec.md). The instance
-    /// methods are what the Reserve dialog and Reserved Items call; the static ones
-    /// are what pickup, stock changes and the expiry sweep call from inside their
-    /// own transactions with their own context.
+    /// Holds on stock. Instance methods serve the Reserve dialog and Reserved Items.
+    /// Static ones run inside pickup, stock changes and the sweep, on the caller's context.
     /// </summary>
     public class ReservationService
     {
@@ -94,9 +92,7 @@ namespace Visual_Inventory_System.Services
             _inventory = inventory;
         }
 
-        // ------------------------------------------------------------------
         // Shared definitions
-        // ------------------------------------------------------------------
 
         /// <summary>Active, and not past its end date. The one definition of "still holding".</summary>
         public static IQueryable<Reservation> Live(IQueryable<Reservation> q, DateTime today) =>
@@ -109,7 +105,7 @@ namespace Visual_Inventory_System.Services
 
         public static string Person(string? userName) => (userName ?? "").Replace('.', ' ');
 
-        /// <summary>Kason's sentence: reserved for X by Y from A to B / until notice.</summary>
+        /// <summary>The hold in one sentence: reserved for X by Y from A to B, or until notice.</summary>
         public static string Sentence(Reservation r) =>
             $"Reserved for {r.Reason} by {Person(r.ReservedBy)} from {Fmt(r.StartDate)} "
             + (r.EndDate.HasValue ? $"to {Fmt(r.EndDate.Value)}" : "until notice");
@@ -125,7 +121,7 @@ namespace Visual_Inventory_System.Services
                 .ToList()
                 .ToDictionary(x => x.Id, x => x.ReservedBy);
 
-        /// <summary>"Conner Walworth (2, G-cab sample #3 rebuild)" for every live hold on a stack -- for refusal messages.</summary>
+        /// <summary>"Conner Walworth (2, G-cab sample #3 rebuild)" for every live hold on a stack. For refusal messages.</summary>
         public static string DescribeHoldsOn(AppDbContext db, string itemId, int variantId)
         {
             var rows = (from l in db.ReservationLines.AsNoTracking()
@@ -167,10 +163,8 @@ namespace Visual_Inventory_System.Services
             db.InventoryItems.AsNoTracking().Where(i => i.ItemId == itemId).Select(i => i.ItemName).FirstOrDefault() ?? itemId;
 
         /// <summary>
-        /// Keeps named units consistent with the counts: a unit that left the shelf
-        /// isn't held any more, and a stack can't name more units than its line holds
-        /// (the newest-recorded names go first). Clears every name when the
-        /// reservation has stopped holding.
+        /// Keeps named units in step with the counts: a unit off the shelf is no longer held, and a
+        /// stack cannot name more units than its line holds. Clears every name once the hold ends.
         /// </summary>
         public static void TrimPins(AppDbContext db, Reservation r)
         {
@@ -196,14 +190,11 @@ namespace Visual_Inventory_System.Services
             }
         }
 
-        // ------------------------------------------------------------------
-        // Called from pickup / stock changes / the sweep (static, caller's context)
-        // ------------------------------------------------------------------
+        // Called from pickup, stock changes and the sweep (static, caller's context)
 
         /// <summary>
-        /// The requester's own holds go down by what their order just took off each
-        /// stack (rule 1: whoever picks it up, it's the orderer's hold that's used).
-        /// A reservation that reaches 0 ends as Picked Up.
+        /// The requester's own holds go down by what their order took off each stack,
+        /// whoever picked it up. At 0 the hold ends as Picked Up.
         /// </summary>
         public static void ConsumeForPickup(AppDbContext db, string itemId, string? requester,
             IEnumerable<(int VariantId, int Take, int TcTake)> pulls, string actor, string context)
@@ -257,9 +248,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// A short-pull correction is a physical recount, so it's never refused for a
-        /// hold: holds on that stack shrink to what's really there (newest first) and
-        /// their reservers are told.
+        /// A short-pull correction is a recount, so it is never refused for a hold. Holds on the
+        /// stack shrink to what is there, newest first, and their reservers are told.
         /// </summary>
         public static void ShrinkToFit(AppDbContext db, string itemId, ItemVariant v, string actor, string context)
         {
@@ -333,11 +323,7 @@ namespace Visual_Inventory_System.Services
             }
         }
 
-        /// <summary>
-        /// Rule 7: dated holds end on their own after their last day, and the reserver
-        /// hears about it -- once on the last day ("ends today"), once when it ends.
-        /// Run every few minutes by ReservationSweepService and once at startup.
-        /// </summary>
+        /// <summary>Ends dated holds after their last day. Notifies once on the last day and once at the end.</summary>
         public static int Sweep(AppDbContext db, DateTime today)
         {
             int changed = 0;
@@ -375,15 +361,13 @@ namespace Visual_Inventory_System.Services
             return changed;
         }
 
-        // ------------------------------------------------------------------
         // Who may do what
-        // ------------------------------------------------------------------
 
-        /// <summary>Rule 3: Standard and up, on their own Line (Admin anywhere -- IsOwnLine says so).</summary>
+        /// <summary>Standard and up, on their own Line. Admin anywhere.</summary>
         public bool CanReserve(InventoryItem item) =>
             _currentUser.Level >= AccessLevels.Standard && _inventory.IsOwnLine(item.Line);
 
-        /// <summary>Rule 3: the reserver, Engineer and up on the item's Line, Admin.</summary>
+        /// <summary>The reserver, Engineer and up on the item's Line, or Admin.</summary>
         public bool CanManage(Reservation r, InventoryItem? item)
         {
             if (_currentUser.Level >= AccessLevels.Admin) return true;
@@ -394,9 +378,7 @@ namespace Visual_Inventory_System.Services
 
         public bool IsMine(Reservation r) => SameName(r.ReservedBy, _currentUser.Name);
 
-        // ------------------------------------------------------------------
         // Reads
-        // ------------------------------------------------------------------
 
         public List<Reservation> LiveForItem(string itemId) =>
             Live(_db.Reservations.AsNoTracking(), DateTime.Today)
@@ -411,7 +393,7 @@ namespace Visual_Inventory_System.Services
                 .OrderBy(r => r.CreatedAt)
                 .ToList();
 
-        /// <summary>Held quantity per ItemId across every live hold -- Search Center's "N reserved" chip.</summary>
+        /// <summary>Held quantity per ItemId across every live hold, for Search Center's "N reserved" chip.</summary>
         public Dictionary<string, int> HeldPerItem() =>
             (from l in _db.ReservationLines.AsNoTracking()
              join r in Live(_db.Reservations.AsNoTracking(), DateTime.Today) on l.ReservationId equals r.Id
@@ -421,7 +403,7 @@ namespace Visual_Inventory_System.Services
             .Where(x => x.Qty > 0)
             .ToDictionary(x => x.Key, x => x.Qty);
 
-        /// <summary>The signed-in person's open reasons, newest first -- the purpose-group buttons in Reserve.</summary>
+        /// <summary>The signed-in person's open reasons, newest first, for the purpose-group buttons in Reserve.</summary>
         public List<string> MyOpenReasons()
         {
             string me = (_currentUser.Name ?? "").Trim().ToLower();
@@ -534,9 +516,7 @@ namespace Visual_Inventory_System.Services
             return model;
         }
 
-        // ------------------------------------------------------------------
         // Writes
-        // ------------------------------------------------------------------
 
         public (bool Ok, string Message) Save(ReservationInput input)
         {
@@ -746,7 +726,7 @@ namespace Visual_Inventory_System.Services
             return (true, $"Released the hold on {r.ItemId}.");
         }
 
-        /// <summary>"2 on V1 [SN a, SN b], 1 on V2" -- for log rows.</summary>
+        /// <summary>"2 on V1 [SN a, SN b], 1 on V2", for log rows.</summary>
         private string Describe(Reservation r, Dictionary<int, ItemVariant> active,
             List<CompressorUnit>? comps = null, List<MotorUnit>? motors = null)
         {

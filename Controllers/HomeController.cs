@@ -32,22 +32,12 @@ namespace Visual_Inventory_System.Controllers
             _reservations = reservations;
         }
 
-        // Pass 28 (2d) -- the swap. "/" now renders Command Center directly
-        // (KPI strip, map + location list, Activity Feed, Need PN / Need Serial
-        // donuts, Quick Actions, Stock Alerts/Pending/Incoming Shipments) instead
-        // of the old combined dashboard+search page. Advanced Filters/Omni
-        // Search/results grid/Export Wizard/Compressor+Motor Registry moved to
-        // SearchCenter() in 2b and stay there -- Index() takes no query params
-        // anymore, there's no holo-viewer here to feed. Picks up the sidebar's
-        // light/shadow-card visual language rather than the old page's dark/
-        // unstyled look -- Kason's call once he saw the sidebar next to the old
-        // dashboard, ahead of Phase 4's originally-planned broader visual pass.
+        // "/" is Command Center: KPIs, map, activity feed, backlog donuts, alerts. Search lives in SearchCenter().
         public IActionResult Index()
         {
             var allItems = _inventoryService.GetAll().ToList();
             PopulateSearchViewBag(allItems);
-            // The view recomputes its own zoneDataMap from a fresh GetAll() --
-            // needs the service reference for that.
+            // The view builds its own zone data from the service.
             ViewBag.InventoryService = _inventoryService;
 
             // KPI strip.
@@ -57,16 +47,14 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.ActiveLocationsCount = allItems.Select(i => i.Parent).Where(p => !string.IsNullOrEmpty(p)).Distinct().Count();
             ViewBag.PnBacklogCount = GetPnBacklogItems(allItems).Count;
 
-            // Activity Feed (top 5). Pass 15: same Line visibility as View Logs.
+            // Activity feed, top 5, with the same Line visibility as View Logs.
             ViewBag.RecentActivity = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
                 .AsNoTracking())
                 .OrderByDescending(t => t.Timestamp)
                 .Take(5)
                 .ToList();
 
-            // Map zones -- the view builds zoneDataMap client-side from this plus
-            // LocationParents (already in PopulateSearchViewBag), and renders a
-            // Location List from that same object.
+            // Map zones. The view builds zoneDataMap and the Location List from this and LocationParents.
             ViewBag.MapZones = _db.LocationZones.AsNoTracking()
                 .Join(_db.Locations.Where(l => l.Level == LocationLevel.Parent && l.IsActive),
                       z => z.LocationId, l => l.Id,
@@ -76,16 +64,8 @@ namespace Visual_Inventory_System.Controllers
                               X: z.X, Y: z.Y, W: z.W, H: z.H))
                 .ToList();
 
-            // Need Serial donut: real on-hand compressor STOCK (by quantity) that
-            // has no serial recorded, same "physical gap" framing Need PN uses --
-            // not blank-serial rows within the CompressorUnits table alone. Only
-            // 184 of the 849 real on-hand compressor units have ever been logged
-            // into CompressorUnits at all, and whoever creates a row tends to
-            // fill the serial in at the same time, so "blank among rows that
-            // exist" reads as a near-zero gap by construction, not the real one.
-            // Found live (Kason: Need PN said 100%, Need Serial said 0% right
-            // next to it, those should mean the same thing) -- verified against
-            // the real db: true gap is 849 - 184 = 665 (78%), not 0.
+            // Need Serial: on-hand compressor stock by quantity with no serial recorded.
+            // Counted against Quantity, not against CompressorUnit rows: most stock has no row at all.
             var compressorItems = allItems.Where(i => InventoryService.IsCompressorType(i.Type)).ToList();
             var compItemIds = compressorItems.Select(i => i.ItemId).ToHashSet();
             var onHandCompUnits = _db.CompressorUnits.AsNoTracking()
@@ -96,10 +76,7 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.CompUnitsTotal = compQtyTotal;
             ViewBag.CompUnitsNeedSerialCount = Math.Max(0, compQtyTotal - compSerialsRecorded);
 
-            // Bottom row: Pending combines an Order in flight with a held (not yet
-            // approved/rejected) Intake batch -- two different tables, one
-            // number. Incoming Shipments is anything not yet marked Done on the
-            // Deliveries board.
+            // Pending = Pending orders plus held intake batches. Incoming = deliveries not yet Done.
             ViewBag.PendingCount = _db.Orders.AsNoTracking().Count(o => o.Status == "Pending")
                 + _db.IntakeBatches.AsNoTracking().Count(b => b.Status == IntakeStatus.Pending);
             ViewBag.IncomingShipmentsCount = _db.Deliveries.AsNoTracking().Count(d => d.Status != "Done");
@@ -107,11 +84,7 @@ namespace Visual_Inventory_System.Controllers
             return View("CommandCenter");
         }
 
-        // Pass 28 (2b) -- Search Center: Advanced Filters, Omni Search, results
-        // grid, Export Wizard, Compressor/Motor Registry, Modify Stock. Left
-        // dark-themed/unstyled on purpose -- the visual match to the sidebar's
-        // new look is Phase 4, not this pass (Command Center picked that up
-        // early in 2c/2d; this page is still waiting on it).
+        // Search Center: filters, omni search, results, Export wizard, Compressor/Motor registry, Modify Stock.
         public IActionResult SearchCenter(string? omniSearch, string? filterRheem, string? filterType, string? filterBrand, string? filterBranch, string? mode, string? stockView,
             string? filterLocParent, string? filterLocMajor, string? filterLocSub)
         {
@@ -134,12 +107,7 @@ namespace Visual_Inventory_System.Controllers
             var searchResult = new SearchResult { Mode = mode ?? "None" };
             if (!string.IsNullOrEmpty(stockView))
             {
-                // Pass 28 (2c): Command Center's KPI strip links here. None of these
-                // three are expressible through the existing Rheem/Type/Brand/Notes
-                // filters (no quantity-comparison dimension), so this is a fixed
-                // named view over the item list instead of a Search() call -- same
-                // predicates GetLowStockItems/GetOutOfStockItems/GetPnBacklogItems
-                // use everywhere else, not a fourth redefinition.
+                // Command Center's KPI links: a fixed named view, using the same predicates as the cards.
                 searchResult.Items = stockView switch
                 {
                     "LowStock" => GetLowStockItems(allItems),
@@ -162,14 +130,8 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.SearchResult = searchResult;
             ViewBag.InventoryService = _inventoryService;
 
-            // Type and Brand are free text in the schema but a closed set in
-            // practice (14 types, 21 brands across 492 items), so the filter can
-            // offer what actually exists instead of asking someone to guess the
-            // spelling. Built off allItems, which is already materialized and
-            // already Line-scoped -- so the options match what this viewer can
-            // actually see, rather than advertising a brand on a Line they can't
-            // reach. Still a Contains match on the server, so picking "Motor"
-            // deliberately also returns ID Motor and OD Motor.
+            // Type and Brand options come from what this viewer can see. The server match is
+            // still Contains, so "Motor" also returns ID Motor and OD Motor.
             ViewBag.FilterTypeOptions = allItems.Select(i => i.Type)
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(t => t).ToList();
@@ -178,15 +140,8 @@ namespace Visual_Inventory_System.Controllers
                 .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
             ViewBag.LocationFilterRows = BuildLocationFilterRows();
 
-            // Pass 30 (Request Transfer): itemsList (built by PopulateSearchViewBag,
-            // off GetAll()) is Line-scoped -- that's correct for Add to Cart/Handle
-            // Stock, but it means openTransfer can never find the other-Line item
-            // it's meant to act on, since Search() itself stopped filtering by
-            // Line. A separate, narrower JSON blob scoped to exactly what this
-            // search actually returned (regardless of Line) closes that gap
-            // without widening itemsList's own exposure -- AddItem still has no
-            // Line check, so itemsList staying Line-scoped is load-bearing, not
-            // an oversight.
+            // itemsList is Line-scoped and has to stay that way: AddItem has no Line check.
+            // Transfers get their own list, scoped to exactly what this search returned.
             ViewBag.TransferItemsJson = System.Text.Json.JsonSerializer.Serialize(
                 searchResult.Items.Select(i => new
                 {
@@ -194,10 +149,7 @@ namespace Visual_Inventory_System.Controllers
                     name = i.ItemName,
                     type = i.Type,
                     line = i.Line,
-                    // Per-team quantity ownership (2026-08-26): the Request Transfer
-                    // modal needs to show ownership too, so the requester can see
-                    // which team's slice they're actually picking when the location
-                    // dropdown doubles as the team picker.
+                    // Each stack with its team, so the requester sees whose slice they are picking.
                     variants = i.ActiveVariants.OrderBy(v => v.VariantNumber).Select(v => new
                     {
                         vid = v.Id,
@@ -218,21 +170,14 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.FilterLocSub = filterLocSub ?? "";
             ViewBag.FilterBranch = filterBranch ?? "";
 
-            // Reservations (2026-11-08): "N reserved" on result rows.
+            // "N reserved" on result rows.
             ViewBag.HeldPerItem = _reservations.HeldPerItem();
 
             return View();
         }
 
-        // Pass 40 -- the Item Card: everything VIS stores about one item, opened
-        // from a search result row or a Compressor/Motor registry row. Returned
-        // as a partial and injected into the page's #itemCardModal shell, so the
-        // card is always fresh (cart state, pending orders) rather than a
-        // snapshot baked into the page at render time.
-        //
-        // GetById is unfiltered by design (see InventoryService) -- the same
-        // item a search row can already show. What stays Line-scoped is the
-        // activity list, which goes through ApplyLogVisibility like View Logs.
+        // The Item Card: everything VIS stores about one item, returned as a partial so it is always fresh.
+        // GetById is unfiltered by design. The activity list still goes through ApplyLogVisibility.
         [HttpGet]
         public IActionResult ItemCard(string itemId)
         {
@@ -247,8 +192,7 @@ namespace Visual_Inventory_System.Controllers
                 IsOwnLine = _inventoryService.IsOwnLine(item.Line),
                 OnHand = item.Quantity,
                 AvailableToViewer = _inventoryService.GetAvailableForViewer(item),
-                // Line status too, same as GetAvailableQuantity: a Split line's
-                // units already left, even while its order waits on another line.
+                // Line status too: a Split line's units have already left.
                 CommittedToPending = _db.OrderItems.AsNoTracking()
                     .Where(oi => oi.ItemId == item.ItemId && oi.Order.Status == "Pending" && oi.Status == "Pending")
                     .Sum(oi => (int?)oi.Quantity) ?? 0,
@@ -272,7 +216,7 @@ namespace Visual_Inventory_System.Controllers
                 vm.MotorUnits = _db.MotorUnits.AsNoTracking()
                     .Where(u => u.ItemId == item.ItemId).OrderByDescending(u => u.RecordedAt).ToList();
 
-            // Reservations (2026-11-08): the Reserved section, tile and columns.
+            // The Reserved section, tile and columns.
             vm.Reservations = _reservations.LiveForItem(item.ItemId);
             vm.CanReserve = _reservations.CanReserve(item) && item.ActiveVariants.Any();
             vm.ManageableReservationIds = vm.Reservations.Where(r => _reservations.CanManage(r, item)).Select(r => r.Id).ToHashSet();
@@ -281,16 +225,8 @@ namespace Visual_Inventory_System.Controllers
             return PartialView("_ItemCardPartial", vm);
         }
 
-        // Shared "what counts as low stock / out of stock / needs a PN" --
-        // reused by Search Center's stockView filter and Command Center's
-        // Stock Alerts card / Need PN donut, so the definition can't drift into
-        // a third hand-typed copy the way Rack/Row and Locations already did
-        // before Pass 7C/23. GetLowStockItems deliberately does NOT exclude
-        // zero-quantity items -- same "includes zero-stock-with-threshold items"
-        // definition the dashboard's Stock Alerts widget has always used; the KPI
-        // strip's separate "Low Stock" COUNT (which does exclude zero, so it
-        // doesn't double-count with "Out of Stock") stays its own inline
-        // expression in Index(), not routed through this.
+        // The shared definitions of low stock, out of stock and needs-a-PN.
+        // GetLowStockItems includes zero-stock items; the KPI strip's Low Stock count does not.
         private static bool NeedsRheemPn(string? pn) =>
             string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
 
@@ -303,25 +239,15 @@ namespace Visual_Inventory_System.Controllers
         private static List<InventoryItem> GetPnBacklogItems(List<InventoryItem> allItems) =>
             allItems.Where(i => NeedsRheemPn(i.RheemPartNumber)).OrderBy(i => i.ItemName).ToList();
 
-        // Server data every Search Center-side view needs regardless of which
-        // page renders it (Advanced Filters, Omni Search, results grid, Export
-        // Wizard, Compressor/Motor Registry, the Modify Stock shared partial) --
-        // shared by Index() and SearchCenter() so this JSON-shaping logic isn't
-        // kept in sync by hand in two places, same reasoning as every other
-        // "eight copies of the same vocabulary" trap this project has hit.
+        // Data every Search Center-side view needs, shared by Index() and SearchCenter().
         private void PopulateSearchViewBag(List<InventoryItem> allItems)
         {
-            // The Branch this session is scoped to, for graying out the other
-            // Quick Filter branch buttons -- a specific Line wins (derive its
-            // Branch), else a whole-Branch assignment, else blank (unscoped,
-            // sees everything, so nothing gets grayed out for them either).
+            // The session's Branch, for greying out the other Quick Filter buttons: Line wins, else Branch, else blank.
             ViewBag.MyBranch = !string.IsNullOrWhiteSpace(_currentUser.Line)
                 ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
                 : (_currentUser.Branch ?? "");
 
-            // Recorded On Hand units per stack, for Location Transfer's "which
-            // recorded units are moving?" checklist on a partial move. One query
-            // per table, grouped here, not one per item.
+            // Recorded On Hand units per stack, for Location Transfer's checklist. One query per table.
             var compressorsByVariant = _db.CompressorUnits.AsNoTracking()
                 .Where(u => u.Status == UnitStatus.OnHand && u.ItemVariantId != null)
                 .OrderBy(u => u.RecordedAt)
@@ -346,8 +272,7 @@ namespace Visual_Inventory_System.Controllers
                 desc = i.Description,
                 threshold = i.AlertThreshold,
                 quantity = i.Quantity,
-                // Item TYPE drives the motors-only TC gate on the client. A type
-                // that ends with "Motor" (Motor / ID Motor / OD Motor) is TC-eligible.
+                // Type drives the motors-only TC gate on the client.
                 type = i.Type,
                 // Primary-variant location (back-compat seed for the modify-stock widget).
                 parent = i.Parent,
@@ -356,8 +281,7 @@ namespace Visual_Inventory_System.Controllers
                 rack = i.Rack,
                 row = i.Row,
                 fda = i.FdaString,
-                // Every active physical location; powers the variant selector,
-                // transfer seeding, and client-side merge detection.
+                // Every active location: variant selector, transfer seeding, client-side merge detection.
                 variants = i.ActiveVariants.OrderBy(v => v.VariantNumber).Select(v => new {
                     vid = v.Id,
                     num = v.VariantNumber,
@@ -368,12 +292,9 @@ namespace Visual_Inventory_System.Controllers
                     row = v.Row,
                     fda = v.FdaString,
                     qty = v.Quantity,
-                    // How many of this variant's qty are thermocoupled (the tagged
-                    // subset). Feeds the modal's TC cap so the human never guesses.
+                    // The TC subset, for the modal's TC cap.
                     tcqty = v.ThermocoupledQty,
-                    // Which team's slice this stack is (per-team quantity ownership,
-                    // 2026-08-26) -- Modify Stock's variant picker shows it per option
-                    // once an item is split.
+                    // Which team's slice this stack is.
                     team = v.Team,
                     // Recorded On Hand units on this stack (see above).
                     cunits = compressorsByVariant.GetValueOrDefault(v.Id) ?? new List<object>(),
@@ -382,64 +303,39 @@ namespace Visual_Inventory_System.Controllers
             }).ToList();
             ViewBag.AutocompleteJson = System.Text.Json.JsonSerializer.Serialize(autocompleteData);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
-            // Pass 7C: the location vocabulary, straight from the table. Replaces the
-            // hardcoded <option value="RLB"> list AND the locMap {} object that used
-            // to be maintained by hand in this view.
+            // The location vocabulary, straight from the table.
             ViewBag.LocationParents = BuildLocationParents();
             ViewBag.LocationTreeJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationTree());
             ViewBag.LocationHierarchyCodedJson = System.Text.Json.JsonSerializer.Serialize(BuildLocationHierarchyCoded());
             ViewBag.RackRowJson = System.Text.Json.JsonSerializer.Serialize(BuildRackRowMap());
-            // Pass 7A: the Team / Project picker is data-driven now. Only ACTIVE
-            // teams are offered; hidden ones stay on the items already using them.
+            // Only active teams are offered. Hidden ones stay on items already using them.
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking()
                 .Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
-            // Team -> home Line, for the registration/ownership auto-fill and the
-            // compressor filter's Team suggestion. Metadata only -- picking a Team
-            // suggests this Line, never enforces it. Teams with no Line assigned
-            // are simply absent from the map (JS treats a missing key as "no suggestion").
+            // Team -> home Line, a suggestion only. Teams with no Line are absent from the map.
             ViewBag.TeamLinesJson = System.Text.Json.JsonSerializer.Serialize(
                 _db.Teams.AsNoTracking().Where(t => t.IsActive && t.Line != null)
                     .ToDictionary(t => t.Name, t => t.Line));
-            // The export filter offers HIDDEN teams too -- you still need to pull a
-            // report on a team that was retired last quarter.
+            // The export filter offers hidden teams too: a retired team still needs a report.
             ViewBag.AllTeams = _db.Teams.AsNoTracking().OrderBy(t => t.Name).ToList();
-            // Which teams THIS user is on (per-team quantity ownership, 2026-08-26)
-            // -- Add to Cart's team picker only needs to show up when it's
-            // genuinely ambiguous for this specific person, not just whenever an
-            // item happens to be split.
+            // This user's teams, so Add to Cart's team picker only shows when it is ambiguous for them.
             ViewBag.MyTeamsJson = System.Text.Json.JsonSerializer.Serialize(_inventoryService.GetUserTeamNames(_currentUser.Name));
         }
 
-        // Pass 28 (2b): now that a second real page (SearchCenter) can trigger
-        // the same cart/stock actions Index always could, a hardcoded "back to
-        // Index" would silently strand a SearchCenter user back on the old
-        // dashboard after every action. Same fix already used by
-        // LogCompressorUnits/LogMotorUnits/CancelPersisted/SetTheme -- go back to
-        // the exact page the request came from, falling back to Index only when
-        // there's no Referer at all (e.g. a bookmarked POST replay).
+        // Back to the page the request came from. Falls back to an action only when there is no Referer.
         private IActionResult SmartRedirect(string fallbackAction = "Index")
         {
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction(fallbackAction) : Redirect(referer);
         }
 
-        // ============================
-        // CART ACTIONS
-        // ============================
-        // Pass 9: registering and ordering dropped from Engineer to Standard.
-        // Interns come in as Standard and could previously add stock to items that
-        // already existed but could neither create one nor request anything -- a
-        // half-capability that made no sense. Scrap, Ownership, Edit Details and
-        // thresholds stay at Engineer: changing or destroying what exists is a
-        // different kind of trust than adding to it.
+        // Standard: register, order. Engineer: change, scrap.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult AddToCart(string itemId, int quantity, int? requestedVariantId = null, int thermocoupledCount = 0, string? requestedTeam = null)
         {
             _orderService.AddItem(itemId, quantity, requestedVariantId, thermocoupledCount, requestedTeam);
-            // cartCount feeds the top-bar cart button's badge (Pass 40) so it
-            // updates without a reload.
+            // cartCount updates the top-bar cart badge without a reload.
             if (Request.Headers["X-Requested-With"] == "XMLHttpRequest")
                 return Json(new { success = true, message = "Added to cart!", cartCount = _orderService.GetCurrentDraft().Entries.Count });
             TempData["Message"] = "Item added to cart.";
@@ -451,10 +347,7 @@ namespace Visual_Inventory_System.Controllers
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult RemoveFromLedger(string itemId, int? requestedVariantId = null, string? requestedTeam = null)
         {
-            // All three identify ONE cart line -- the same key AddItem stacks on.
-            // Posting itemId alone wiped every line for that item, so removing
-            // "the 2 from the Lean-To" also silently took the 3 from New Test
-            // Cells (and, since Pass 31, the other team's line too).
+            // All three identify one cart line, the same key AddItem stacks on.
             _orderService.RemoveItem(itemId, requestedVariantId, requestedTeam);
             TempData["Message"] = "Item removed.";
             return SmartRedirect();
@@ -480,9 +373,7 @@ namespace Visual_Inventory_System.Controllers
             return SmartRedirect();
         }
 
-        // ============================
-        // TRANSACTIONS & ADMIN ACTIONS
-        // ============================
+        // Stock and admin actions
 
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -496,11 +387,8 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index");
         }
 
-        // Bulk default: set the alert threshold for many items at once.
-        // Management+ only (supervisors/management), NOT engineers. Scope follows
-        // the same team rule as the low-stock summary: a manager with team(s) sets
-        // it for those teams' items; a manager with no teams (e.g. Kevin) sets it
-        // for every item. Drives all alert displays + notifications via AlertThreshold.
+        // Bulk default threshold. Management and up, not Engineers.
+        // A manager with teams sets it for those teams' items; with none, for every item.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Management)]
@@ -538,10 +426,8 @@ namespace Visual_Inventory_System.Controllers
         {
             if (string.IsNullOrWhiteSpace(itemId)) return SmartRedirect();
 
-            // "Add" and "Adjustment" are allowed at Standard (runners restock and fix
-            // counts on recount); Scrap, Ownership, and identity edits (Edit Details)
-            // require Engineer or higher -- same tier that registers items.
-            // Location Transfer is non-destructive (no quantity change) so it stays at Standard.
+            // Add, Adjustment and Location Transfer are Standard. Scrap, Ownership and
+            // Edit Details need Engineer.
             var elevated = new[] { "Scrap", "Ownership", "Edit Details" };
             if (elevated.Contains(actionType, StringComparer.OrdinalIgnoreCase)
                 && _currentUser.Level < AccessLevels.Engineer)
@@ -554,20 +440,14 @@ namespace Visual_Inventory_System.Controllers
             // Identity edits never touch quantities/variants -- separate path.
             if (string.Equals(actionType, "Edit Details", StringComparison.OrdinalIgnoreCase))
             {
-                // Pass 7B: Edit Details no longer edits Line -- that pane's Branch/Line
-                // fields moved to Internal - Transfer. newLine is passed as null so a
-                // stale value posted from the (hidden) transfer pane can never silently
-                // reassign an item's Line while someone edits its part number.
+                // newLine is passed as null: a stale value from the hidden transfer pane must not reassign the Line.
                 var (ok, message) = _inventoryService.UpdateItemDetails(itemId, newRheemPart, newDescription, newBrand, null);
                 if (ok) TempData["Success"] = $"{itemId}: {message}";
                 else TempData["Error"] = message;
                 return SmartRedirect();
             }
 
-            // Compressor serials on an Add, same flat serial_N convention
-            // CreateItem already reads (Pass 17). No-op for any other action --
-            // InventoryService.ModifyStock only consults this on Add, and the
-            // client only ever renders these boxes for Add + Type=Compressor.
+            // Compressor serials on an Add, posted as serial_N. Ignored for every other action.
             var serials = Request.Form.Keys
                 .Where(k => k.StartsWith("serial_"))
                 .Select(k => Request.Form[k].ToString())
@@ -589,8 +469,7 @@ namespace Visual_Inventory_System.Controllers
                 }
                 else
                 {
-                    // null now only means the item lookup failed -- used to fall
-                    // through with no toast at all.
+                    // null means the item lookup failed.
                     TempData["Error"] = $"Transaction '{actionType}' was not applied — item '{itemId}' not found.";
                 }
             }
@@ -608,9 +487,7 @@ namespace Visual_Inventory_System.Controllers
         {
             try
             {
-                // Same reset InventoryService.CreateItem does, needed here too:
-                // the location getters below read a posted variant ahead of the
-                // staged form values.
+                // Same reset as InventoryService.CreateItem: the getters below would read a posted variant first.
                 newItem.Id = 0;
                 newItem.Variants = new List<ItemVariant>();
                 newItem.RegisteredAt = null;
@@ -621,11 +498,7 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Brand ??= "Unknown";
                 newItem.Description ??= "";
 
-                // --- RHEEM PART NUMBER (required on NEW registrations) ---
-                // Leadership: every item should carry one. Legacy rows may still
-                // be blank, but nothing new enters without a PN, and a PN that
-                // already belongs to another family is rejected so the same
-                // physical part can't be registered twice under two ItemIds.
+                // Rheem part number: required on new registrations, and rejected if another item owns it.
                 newItem.RheemPartNumber = (newItem.RheemPartNumber ?? "").Trim();
                 if (newItem.RheemPartNumber.Length == 0)
                 {
@@ -645,8 +518,7 @@ namespace Visual_Inventory_System.Controllers
                 newItem.Rack ??= "";
                 newItem.Row ??= "";
 
-                // Team is now OPTIONAL and no longer defaults to Samurai. Blank is a
-                // real choice; the project code follows whichever team was picked.
+                // Team is optional. Blank is a real choice; the project code follows the team.
                 newItem.Team = (newItem.Team ?? "").Trim();
                 if (string.Equals(newItem.Team, "N/A", StringComparison.OrdinalIgnoreCase))
                     newItem.Team = "";
@@ -654,10 +526,7 @@ namespace Visual_Inventory_System.Controllers
                     ? ""
                     : (_db.Teams.FirstOrDefault(t => t.Name == newItem.Team)?.ProjectCode ?? "");
                 newItem.Line ??= "";
-                // Pass 15: Line is mandatory on new registrations going forward -- the
-                // old "blank fails open" rollout default stays true for items already
-                // in the system (nothing here retroactively touches them), but nobody
-                // should be able to register something with no owner from here on.
+                // Line is required on new registrations. Older items with a blank Line are not touched.
                 if (newItem.Line.Length == 0)
                 {
                     TempData["Error"] = "A Line is required to register an item.";
@@ -669,25 +538,13 @@ namespace Visual_Inventory_System.Controllers
                     return RedirectToAction("Index");
                 }
 
-                // Group is not a form field -- it's derived from the item's own
-                // Line (the Branch/Line picked on THIS registration form), so the
-                // ID prefix follows what was actually selected rather than the
-                // registrant's own account Line. Set once here and never changed
-                // after -- otherwise an item's id and its Group would disagree.
+                // Group is derived from the Line picked on this form, set once, never changed.
                 newItem.Group = OrgStructure.GroupFor(newItem.Line);
 
-                // --- ITEM ID (server-authoritative) ---
-                // The form's ID box is a read-only preview; the real ID is assigned
-                // here from the chosen Group + Type so a stale preview or two
-                // simultaneous registrations can never collide. Whatever the form
-                // posted in ItemId is intentionally discarded.
+                // Item id: assigned here. The form's id box is a preview and whatever it posted is discarded.
                 newItem.ItemId = _inventoryService.GenerateItemId(newItem.Group, newItem.Type);
 
-                // --- LOCATION ENCODING (single source of truth) ---
-                // The form posts friendly names ("RD Lab", "Trailer Area", ...).
-                // I convert them to codes here, store the CODE in Parent for a
-                // consistent column, and rebuild the FDA string from codes so a
-                // client-supplied value can never put bad data in the DB.
+                // Location: the form posts friendly names. Codes are derived here and the FDA string rebuilt from them.
                 string pCode = LocationCodec.Encode(newItem.Parent);
                 string mCode = LocationCodec.Encode(newItem.Major);
                 string sCode = LocationCodec.Encode(newItem.Sub);
@@ -701,9 +558,7 @@ namespace Visual_Inventory_System.Controllers
                     new[] { pCode, mCode, sCode, rack, row }
                         .Where(s => !string.IsNullOrWhiteSpace(s)));
 
-                // Compressor serials, posted as serial_0, serial_1, ... (same flat
-                // prefix-scan convention LogCompressorUnits already uses). No-op
-                // for a non-compressor Type -- CreateItem gates on it internally.
+                // Compressor serials, posted as serial_0, serial_1, ... Ignored for other types.
                 var serials = Request.Form.Keys
                     .Where(k => k.StartsWith("serial_"))
                     .Select(k => Request.Form[k].ToString())
@@ -739,11 +594,7 @@ namespace Visual_Inventory_System.Controllers
             return SmartRedirect();
         }
 
-        // Deletes ONE empty stack without touching the rest of the item --
-        // Delete Item requires the item's TOTAL quantity to be 0, which never
-        // fires for a variant that drained while the item still has stock
-        // elsewhere. Same gate as Delete Item: Admin, since this removes a
-        // row outright rather than mutating a quantity.
+        // Deletes one empty stack and leaves the rest of the item. Admin, like Delete Item: it removes a row.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Admin)]
@@ -805,9 +656,7 @@ namespace Visual_Inventory_System.Controllers
             return SmartRedirect();
         }
 
-        // ============================
-        // LOGS & ORDER MANAGEMENT
-        // ============================
+        // Logs and orders
 
         // This handles the Left Sidebar (Orders Only)
         [HttpGet]
@@ -833,9 +682,7 @@ namespace Visual_Inventory_System.Controllers
                 .OrderByDescending(o => o.CreatedAt)
                 .ToList();
 
-            // Pass Transactions to the main Model. Pass 15: same Line visibility as
-            // browsing -- a log about an item you can't see in Search shouldn't be
-            // readable here either.
+            // Transactions are the model, with the same Line visibility as browsing.
             var transactions = _inventoryService.ApplyLogVisibility(_db.TransactionLogs
                 .AsNoTracking())
                 .OrderByDescending(t => t.Timestamp)
@@ -845,12 +692,7 @@ namespace Visual_Inventory_System.Controllers
         }
 
 
-        // ----------------------------------------------------------------------
-        // LOCATION VOCABULARY (Pass 7C)
-        // Codes are DERIVED here, never read from the table -- LocationCodec.Encode
-        // stays the only thing that turns a name into a code, so a stored code can
-        // never disagree with the rule.
-        // ----------------------------------------------------------------------
+        // Location vocabulary. Codes are derived here with LocationCodec.Encode, never read from the table.
         private List<(string Code, string Name)> BuildLocationParents()
         {
             return _db.Locations.AsNoTracking()
@@ -860,23 +702,9 @@ namespace Visual_Inventory_System.Controllers
                 .ToList();
         }
 
-        // { "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja", ...] }, ... }
-        // Friendly names only -- the client derives codes with its own copy of the
-        // same rule, which is why the shapes must stay identical.
         /// <summary>
-        /// Flat (Parent, Major, Sub) rows carrying BOTH the code and the display
-        /// name at every level, for Search Center's location filter. A third
-        /// projection of the same managed Locations table BuildLocationTree
-        /// (name-keyed) and BuildLocationHierarchyCoded (code-keyed) already
-        /// read -- not a fourth hardcoded copy of the vocabulary, which is the
-        /// thing this project keeps finding. It exists because the filter needs
-        /// both halves at once: the code is what ItemVariant.Parent/Major/Sub
-        /// actually store and what gets posted, the name is what a human reads.
-        /// Rendering it flat lets the three selects filter each other with data
-        /// attributes and no JS dependency on the Modify Stock partial's
-        /// locHierarchyData -- which is declared at that partial's own top level,
-        /// so redeclaring it here would be a duplicate const in shared global
-        /// scope, i.e. a SyntaxError that kills the whole block.
+        /// Flat (Parent, Major, Sub) rows with both code and name at each level, for Search Center's
+        /// location filter. The code is what is stored and posted; the name is what a person reads.
         /// </summary>
         private List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)> BuildLocationFilterRows()
         {
@@ -899,6 +727,8 @@ namespace Visual_Inventory_System.Controllers
             return rows;
         }
 
+        // { "RD Lab": { "Metrology Mezzanine": ["Samurai", "Ninja"] } }. Names only:
+        // the client derives codes with its own copy of the rule.
         private Dictionary<string, Dictionary<string, List<string>>> BuildLocationTree()
         {
             var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
@@ -917,15 +747,8 @@ namespace Visual_Inventory_System.Controllers
             return tree;
         }
 
-        // Same shape and source as BuildLocationTree() above, but CODE-keyed
-        // (Parent code -> Major code -> [Sub codes]) instead of name-keyed --
-        // what the Modify Stock / Location Transfer cascade actually needs,
-        // since ItemVariant.Parent/Major/Sub store codes, not names. Used to be
-        // built by walking allItems' already-stored codes instead of this
-        // table, which meant a Sub added in Settings couldn't be picked as a
-        // transfer destination until something was already stored there --
-        // Registration/Intake never had that problem because BuildLocationTree()
-        // already reads straight from this same table.
+        // The same tree keyed by code (Parent -> Major -> [Sub]), for the Modify Stock and
+        // Location Transfer cascade. Built from the Locations table, not from stored stock.
         private Dictionary<string, Dictionary<string, List<string>>> BuildLocationHierarchyCoded()
         {
             var all = _db.Locations.AsNoTracking().Where(l => l.IsActive).ToList();
@@ -945,13 +768,8 @@ namespace Visual_Inventory_System.Controllers
             return tree;
         }
 
-        // Rack/Row suggestions (Pass 23) -- deliberately NOT a managed
-        // vocabulary table like Parent/Major/Sub. Rack/Row stay free-form,
-        // team-assigned values (see ItemVariant.cs); this just surfaces what's
-        // already been typed into real stock at a given Parent/Major/Sub, so
-        // picking one is a shortcut, never a gate -- a brand new value always
-        // types in fine. Keyed "Parent|Major|Sub" (codes, blanks kept as
-        // empty segments so the key always has exactly 3 parts).
+        // Rack/Row suggestions: what is already typed on real stock at each Parent|Major|Sub.
+        // A shortcut, never a gate. The key always has exactly three parts.
         private Dictionary<string, object> BuildRackRowMap()
         {
             return _db.ItemVariants.AsNoTracking().Where(v => !v.IsRetired).ToList()
@@ -968,12 +786,8 @@ namespace Visual_Inventory_System.Controllers
         }
 
 
-        // =====================================================================
-        // BULK INTAKE (Pass 9) -- Standard+ can submit.
-        // =====================================================================
-        // Location pickers only offer what exists, so nobody can invent a shelf
-        // by typing. The escape hatch is "not listed", which HOLDS the batch for
-        // the superuser to map or create -- it does not block the person entering.
+        // Bulk intake. Standard and up. Location pickers only offer what exists;
+        // "not listed" holds the batch for the superuser instead of blocking the person.
 
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult Intake()
@@ -983,29 +797,18 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.RackRowJson = System.Text.Json.JsonSerializer.Serialize(BuildRackRowMap());
             ViewBag.ActiveTeams = _db.Teams.AsNoTracking().Where(t => t.IsActive).OrderBy(t => t.Name).ToList();
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
-            // Team -> home Line, same map Registration/Ownership already use, so
-            // picking a Team here can suggest a Branch/Line the same way.
+            // Team -> home Line, so picking a Team can suggest a Branch and Line.
             ViewBag.TeamLinesJson = System.Text.Json.JsonSerializer.Serialize(
                 _db.Teams.AsNoTracking().Where(t => t.IsActive && t.Line != null)
                     .ToDictionary(t => t.Name, t => t.Line));
-            // Seed the Branch/Line selects from the signed-in user's own
-            // assignment on page load -- a specific Line wins, else a
-            // whole-Branch assignment (Branch preset, Line left for them to
-            // pick), else neither. Same effective-Branch derivation Index()
-            // uses for ViewBag.MyBranch. JSON-serialized (not a plain ViewBag
-            // string) since these two feed the page's <script> block directly.
+            // Seeds the Branch and Line selects from the user's own assignment. JSON, since the page script reads them.
             ViewBag.MyLineJson = System.Text.Json.JsonSerializer.Serialize(_currentUser.Line ?? "");
             ViewBag.MyBranchJson = System.Text.Json.JsonSerializer.Serialize(
                 !string.IsNullOrWhiteSpace(_currentUser.Line)
                     ? (OrgStructure.BranchFor(_currentUser.Line) ?? "")
                     : (_currentUser.Branch ?? ""));
-            // Existing names + types, for the model autocomplete and the type
-            // datalist -- same idea as the Modify Stock picker: suggest, don't force.
-            // id/quantity feed the "already registered" split (Pass 21): a row
-            // whose typed name exactly matches one of these gets pulled out of
-            // Import into a batch Modify Stock instead. Quantity is a [NotMapped]
-            // pass-through over Variants -- Include() first so it materializes
-            // correctly, never inside the raw LINQ projection itself.
+            // Known names and types, for the autocomplete and the "already registered" split.
+            // Quantity is a [NotMapped] pass-through: Include() first, never inside the LINQ projection.
             ViewBag.KnownItemsJson = System.Text.Json.JsonSerializer.Serialize(
                 _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToList()
                    .Select(i => new { id = i.ItemId, name = i.ItemName, type = i.Type, brand = i.Brand, rpn = i.RheemPartNumber, quantity = i.Quantity })
@@ -1017,9 +820,7 @@ namespace Visual_Inventory_System.Controllers
             return View();
         }
 
-        // The Type vocabulary is whatever real items carry -- there's no Types
-        // table. One definition for both the Intake page's dropdown and
-        // SubmitIntake's gate, so the two can't disagree about what exists.
+        // The Type vocabulary is whatever real items carry. One definition for the dropdown and SubmitIntake's gate.
         private List<string> KnownItemTypes() =>
             _db.InventoryItems.AsNoTracking()
                .Select(i => i.Type).Distinct().Where(t => t != "").OrderBy(t => t).ToList();
@@ -1035,12 +836,8 @@ namespace Visual_Inventory_System.Controllers
             string[]? serial, string[]? typeNew,
             bool preview = false)
         {
-            // Extra serial boxes beyond each row's first (compressor rows with
-            // Qty > 1) and each row's TC count (motor rows) are both posted with
-            // a per-row index baked into the field name -- extraSerial_{row}_{slot}
-            // and thermocoupledQty_{row} -- since a row can carry more than one
-            // of the former and array-parameter binding can't key by row. Same
-            // flat prefix-scan convention LogCompressorUnits already uses.
+            // Extra serials and TC counts carry a row index in the field name
+            // (extraSerial_{row}_{slot}, thermocoupledQty_{row}): array binding cannot key by row.
             var extraSerialsByRow = new Dictionary<int, List<string>>();
             foreach (var key in Request.Form.Keys.Where(k => k.StartsWith("extraSerial_")))
             {
@@ -1058,11 +855,8 @@ namespace Visual_Inventory_System.Controllers
                 if (int.TryParse(Request.Form[key], out int tcVal)) tcByRow[rowIdx] = tcVal;
             }
 
-            // Type gate: an existing type (matched case-insensitively and stored
-            // in its existing spelling) or a new type the row explicitly flagged
-            // via "Add as a new type" (typeNew[i] == "1"). Anything else refuses
-            // the whole batch -- a free-typed miss like "Contro" used to become
-            // its own type and mint its own ItemId prefix.
+            // Type gate: an existing type (stored in its existing spelling), or one the row
+            // flagged as new. Anything else refuses the whole batch.
             var knownTypes = KnownItemTypes();
             var typeErrors = new List<string>();
 
@@ -1111,9 +905,7 @@ namespace Visual_Inventory_System.Controllers
             team = (team ?? "").Trim();
             if (string.Equals(team, "N/A", StringComparison.OrdinalIgnoreCase)) team = "";
 
-            // Pass 15: Line is mandatory here too, same as single-item registration --
-            // checked before the pending-location hold path too, so a batch can never
-            // sit in the approval queue with no owner waiting to be discovered later.
+            // Line is required, and checked before the hold path so no batch waits in the queue with no owner.
             line = (line ?? "").Trim();
             if (line.Length == 0)
             {
@@ -1126,12 +918,8 @@ namespace Visual_Inventory_System.Controllers
                 return RedirectToAction("Intake");
             }
 
-            // ---- location not listed: HOLD the batch, don't lose the work ----
-            // The Parent <select>'s "Not listed..." option posts the literal
-            // sentinel "__NEW__", not blank -- checking only for blank meant
-            // this branch could never actually trigger through the real UI;
-            // "__NEW__" fell straight through to CommitIntake and got stored
-            // as if it were a real location code (see CCR-0255).
+            // Location not listed: hold the batch. The Parent select's "Not listed..." posts
+            // the sentinel "__NEW__", not blank.
             bool parentUnresolved = string.IsNullOrWhiteSpace(parentCode)
                 || string.Equals(parentCode, "__NEW__", StringComparison.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(requestedLocation) && parentUnresolved)
@@ -1159,10 +947,7 @@ namespace Visual_Inventory_System.Controllers
                 return RedirectToAction("Intake");
             }
 
-            // "Not listed..." picked but nothing typed for it -- same sentinel
-            // problem as above, just with no requestedLocation to hold against.
-            // Refuse rather than let "__NEW__" reach CommitIntake as if it were
-            // a real location code.
+            // "Not listed..." with nothing typed: refuse, so "__NEW__" never reaches CommitIntake.
             if (parentUnresolved)
             {
                 TempData["Error"] = "Pick a location, or choose \"Not listed...\" and say what you call it.";
@@ -1179,9 +964,7 @@ namespace Visual_Inventory_System.Controllers
                 TempData["IntakePreview"] = System.Text.Json.JsonSerializer.Serialize(result);
                 if (!result.Ok && !preview)
                 {
-                    // CommitIntake saves per row, so rows without errors DID land --
-                    // only the erroring rows didn't. Resubmitting the whole batch is
-                    // safe: rows already in are skipped, not duplicated.
+                    // CommitIntake saves per row, so good rows did land. Resubmitting skips them.
                     int imported = result.NewItems.Count + result.AddedToExisting.Count;
                     TempData["Error"] = imported == 0
                         ? $"Nothing was imported — {result.Errors.Count} row(s) failed. Fix the problems listed and try again."
@@ -1198,12 +981,8 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Intake");
         }
 
-        // Batch Modify Stock for rows Bulk Intake found already registered
-        // (Pass 21) -- the review modal's "Apply All". Rows are posted with a
-        // per-section index baked into the field name (stockItemId_N,
-        // stockAction_N, stockQty_N, stockTc_N, stockSerial_N_slot), same flat
-        // prefix-scan convention every other multi-row Intake/pickup post in
-        // this app already uses.
+        // Batch Modify Stock for intake rows that were already registered: the review modal's Apply All.
+        // Fields carry a section index: stockItemId_N, stockAction_N, stockQty_N, stockTc_N, stockSerial_N_slot.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -1248,9 +1027,7 @@ namespace Visual_Inventory_System.Controllers
                 return RedirectToAction("Intake");
             }
 
-            // Same sentinel guard as SubmitIntake -- these items already exist,
-            // so "Not listed..." makes no sense here at all: refuse rather than
-            // let "__NEW__" reach CommitIntakeStockBatch as if it were real.
+            // These items already exist, so "Not listed" makes no sense here. Refuse the "__NEW__" sentinel.
             bool parentUnresolved = string.IsNullOrWhiteSpace(parentCode)
                 || string.Equals(parentCode, "__NEW__", StringComparison.OrdinalIgnoreCase);
             if (parentUnresolved)
@@ -1276,9 +1053,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Intake");
         }
 
-        // Self-scoped activity feed: this user's orders, loans, and internal
-        // transfers (renamed 2026-08-26 from "My Orders" once Transfer grew
-        // this page past just orders).
+        // My Activity: this user's orders, loans and internal transfers.
         public IActionResult MyActivity()
         {
             var me = _currentUser.Name;
@@ -1291,8 +1066,7 @@ namespace Visual_Inventory_System.Controllers
             var invLookup = _db.InventoryItems.AsNoTracking().Include(i => i.Variants)
                 .ToDictionary(i => i.ItemId);
 
-            // Friendly per-location label for the return picker (decode codes,
-            // drop "0"/blank levels), mirroring the pickup queue.
+            // Friendly location label for the return picker: codes decoded, "0" and blank levels dropped.
             string VLabel(Visual_Inventory_System.Models.ItemVariant v)
             {
                 bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
@@ -1300,10 +1074,7 @@ namespace Visual_Inventory_System.Controllers
                 if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                 if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                 if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
-                // Pass 7C: Rack and Row were dropped from this label entirely, which
-                // made every Lean-To variant read as plain "Plant Test Cells" -- and
-                // two variants of the same item at different racks indistinguishable
-                // in the picker. They are free text, so they are shown as stored.
+                // Rack and Row are shown as stored, so two stacks at different racks can be told apart.
                 if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
                 if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                 string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
@@ -1316,19 +1087,12 @@ namespace Visual_Inventory_System.Controllers
                 foreach (var it in o.Items.Where(x => x.LoanOutstanding > 0))
                 {
                     invLookup.TryGetValue(it.ItemId, out var inv);
-                    // Per-team quantity ownership: offer only the shelves this line's
-                    // own team owns, the same pool Pickup Queue narrows to and the
-                    // same one ReturnLoan now enforces server-side -- otherwise the
-                    // picker invites a return that hands another team the units.
-                    // "" (unsplit item, or a line that predates the split) still sees
-                    // every location, same fail-open as everywhere else.
+                    // Only the shelves this line's own team owns. "" still sees every location.
                     var activeVars = (inv?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .Where(v => string.IsNullOrEmpty(it.Team) || v.Team == it.Team)
                         .OrderBy(v => v.VariantNumber).ToList();
 
-                    // Pass 6B: the named units still out on THIS line. Usually
-                    // fewer than Outstanding -- serial coverage is partial, and the
-                    // view renders the remainder as plain quantity.
+                    // The named units still out on this line. Usually fewer than Outstanding.
                     var lineUnits = InventoryService.IsCompressorType(inv?.Type)
                         ? _db.CompressorUnits.AsNoTracking()
                               .Where(cu => cu.OrderItemId == it.Id
@@ -1358,13 +1122,7 @@ namespace Visual_Inventory_System.Controllers
                 }
             }
 
-            // ----- Internal Transfer section (Pass 30): MyRequests = this
-            // user's own transfer requests, full history like My Order History
-            // below it (there's nothing further to act on once decided, but the
-            // outcome is still worth seeing). AwaitingApproval = Requested-status
-            // rows against items this user's Line/Team owns -- the queue itself;
-            // once decided a row needs no more action and drops off, same "only
-            // show what needs attention" convention the loan bench above uses.
+            // Internal transfers: my own requests with full history, and Requested rows awaiting my approval.
             TransferLineViewModel ToTransferLine(TransferRequest b)
             {
                 invLookup.TryGetValue(b.ItemId, out var bInv);
@@ -1372,16 +1130,8 @@ namespace Visual_Inventory_System.Controllers
                 bool isComp = InventoryService.IsCompressorType(bInv?.Type);
                 bool isMotor = InventoryService.IsMotorType(bInv?.Type);
 
-                // Blank-serial rows are excluded on purpose. A unit can legitimately
-                // sit On Hand with only a lab number (or nothing) -- but as a
-                // *named* option it renders as a nameless ghost entry, and picking
-                // it posts an empty/garbage serial instead of the real anonymous
-                // unit. Those are exactly what the "No serial" option is for:
-                // AssignOneCompressorUnit's null-serial branch already takes the
-                // oldest anonymous unit at that location, FIFO.
-                // Units named in a live reservation are left out too (2026-11-08):
-                // a transfer requester is never the one holding them, so the
-                // approval would refuse them anyway.
+                // Only units with a serial are named options. Anonymous stock is what "No serial" is for.
+                // Units in a live reservation are left out: the approval would refuse them.
                 var heldIds = isComp ? ReservationService.PinOwners(_db, b.ItemId) : new Dictionary<int, string>();
                 var onHandUnits = isComp
                     ? _db.CompressorUnits.AsNoTracking()
@@ -1400,9 +1150,7 @@ namespace Visual_Inventory_System.Controllers
                     resolvedLabel = rv != null ? VLabel(rv) : "requested location no longer active -- will auto-pull";
                 }
 
-                // Per-unit pull plan, straight from the service that will execute
-                // it -- flattened one slot per physical unit so slot u's serial
-                // dropdown offers the shelf slot u actually comes off.
+                // The pull plan from the service that will execute it, one slot per physical unit.
                 var unitSlots = new List<TransferUnitSlotViewModel>();
                 if (isComp && bInv != null && b.Status == TransferStatus.Requested)
                 {
@@ -1418,8 +1166,7 @@ namespace Visual_Inventory_System.Controllers
                                 VariantId = variantId,
                                 LocationLabel = pv != null ? VLabel(pv) : $"Variant #{variantId}",
                                 OnHandUnits = here,
-                                // Staggered within THIS variant's slots, so two units
-                                // off the same shelf don't both open on unit #1.
+                                // Staggered, so two units off one shelf do not both open on unit #1.
                                 DefaultSerial = u < here.Count ? here[u].SerialNumber : null
                             });
                     }
@@ -1465,9 +1212,7 @@ namespace Visual_Inventory_System.Controllers
                 .Where(b => b.Status == TransferStatus.Requested)
                 .OrderByDescending(b => b.RequestedAt)
                 .ToList()
-                // Per-team quantity ownership (2026-08-26): Line AND, once an item
-                // is split, Team -- otherwise a same-Line Engineer on the wrong
-                // team would see a request here that ApproveTransfer then refuses.
+                // Line, and once an item is split, Team: only requests this user can actually approve.
                 .Where(b => invLookup.TryGetValue(b.ItemId, out var lentInv) && _inventoryService.CanApproveTransfer(lentInv, b.RequestedVariantId))
                 .Select(ToTransferLine).ToList();
 
@@ -1512,9 +1257,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("MyActivity");
         }
 
-        // ============================
-        // REQUEST TRANSFER - INTERNAL (Pass 30)
-        // ============================
+        // Internal transfers
 
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -1538,9 +1281,7 @@ namespace Visual_Inventory_System.Controllers
         {
             try
             {
-                // compLab_{n} / compSerial_{n}, n = 0-based unit index -- same
-                // shape as PickUpOrderConfirmed's compLab_{oi}_{n}, just without
-                // the order-item key since one transfer request is one line.
+                // compLab_{n} / compSerial_{n}, n = 0-based unit index. One transfer request is one line.
                 var pairs = new List<(string? Lab, string? Serial)>();
                 var indices = Request.Form.Keys
                     .Where(k => k.StartsWith("compLab_"))
@@ -1585,20 +1326,15 @@ namespace Visual_Inventory_System.Controllers
                 var canFulfill = true;
                 var blockedByPriority = false;
 
-                // Only lines still awaiting pickup -- the same set PickUpOrder
-                // acts on. A deliberate partial pickup leaves its "Split" line on
-                // an order that stays Pending for another line; listing it offered
-                // units that had already left and judged the order against them.
+                // Only lines still Pending, the same set PickUpOrder acts on. A Split line's units have left.
                 foreach (var it in order.Items.Where(i => i.Status == "Pending"))
                 {
-                    // Measured for whoever placed the order (their holds count as
-                    // theirs), against earlier claims only -- see GetAvailableForOrder.
+                    // Measured for whoever placed the order, against earlier claims only.
                     var availForThis = _inventoryService.GetAvailableForOrder(it.ItemId, order.CreatedAt, it.Team, order.RequestedBy, it.Id);
                     var totalAvailable = _inventoryService.GetAvailableIgnoringPriority(it.ItemId, it.Team, order.RequestedBy, it.Id);
                     var itemEntity = _db.InventoryItems.AsNoTracking().Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
 
-                    // Friendly per-location labels for the pickup person. Decode the
-                    // stored codes; "0"/blank levels are dropped from the breadcrumb.
+                    // Friendly location labels: codes decoded, "0" and blank levels dropped.
                     string VLabel(Visual_Inventory_System.Models.ItemVariant v)
                     {
                         bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
@@ -1606,41 +1342,20 @@ namespace Visual_Inventory_System.Controllers
                         if (Real(v.Parent)) crumbs.Add(LocationCodec.Decode(v.Parent));
                         if (Real(v.Major)) crumbs.Add(LocationCodec.Decode(v.Major));
                         if (Real(v.Sub)) crumbs.Add(LocationCodec.Decode(v.Sub));
-                        // Pass 7C: Rack and Row were dropped from this label entirely, which
-                        // made every Lean-To variant read as plain "Plant Test Cells" -- and
-                        // two variants of the same item at different racks indistinguishable
-                        // in the picker. They are free text, so they are shown as stored.
+                        // Rack and Row are shown as stored, so two stacks at different racks can be told apart.
                         if (Real(v.Rack)) crumbs.Add(v.Rack.Trim());
                         if (Real(v.Row)) crumbs.Add(v.Row.Trim());
                         string path = crumbs.Count > 0 ? string.Join(" › ", crumbs) : v.FdaString;
                         return $"V{v.VariantNumber} — {path} · Qty {v.Quantity}";
                     }
 
-                    // Per-team quantity ownership (2026-08-26): same team scoping
-                    // FulfillOrderItem applies to the real pull -- the picker's
-                    // location/serial choices here must be the identical pool, or
-                    // they could pick a spot the actual pickup then can't honor.
+                    // The same team scoping as the real pull, so every choice offered can be honoured.
                     var activeVars = (itemEntity?.ActiveVariants ?? Enumerable.Empty<Visual_Inventory_System.Models.ItemVariant>())
                         .Where(v => string.IsNullOrEmpty(it.Team) || v.Team == it.Team)
                         .OrderBy(v => v.VariantNumber).ToList();
 
-                    // Real on-hand units per location -- feeds the serial picker
-                    // on Pickup Queue. Fetched once per line, grouped by variant,
-                    // so choosing a location client-side can swap in exactly
-                    // what's actually on that shelf instead of a blind text box.
-                    // Blank-serial rows are excluded deliberately. A unit can sit On
-                    // Hand with no serial (lab-only rows, Pass 29's own FIFO
-                    // fallback), but as a NAMED option the client renders it
-                    // `<option value="null">SN: null</option>` -- String(null) --
-                    // and the staggered default even opens on it, so a picker who
-                    // touches nothing posts the literal serial "null". That misses
-                    // the real anonymous unit and mints a bogus PickedUp row beside
-                    // it: the CCR-0213 orphan mechanism again. Anonymous stock is
-                    // what the "No serial" option is for.
-                    // Reservations (2026-11-08): a serial named in someone else's
-                    // live hold isn't offered at all (the pickup would refuse it),
-                    // and the orderer's own held units come first, so the default
-                    // picks are the ones their hold is for.
+                    // On-hand units per location, for the serial picker. Only rows with a serial are named options.
+                    // A serial held for someone else is not offered. The orderer's own held units come first.
                     var pinOwners = ReservationService.PinOwners(_db, it.ItemId);
                     bool HeldByOther(int? rid) => rid.HasValue && pinOwners.TryGetValue(rid.Value, out var who)
                         && !string.Equals(who, order.RequestedBy ?? "", StringComparison.OrdinalIgnoreCase);
@@ -1699,8 +1414,7 @@ namespace Visual_Inventory_System.Controllers
             return View(new TasksAvailableViewModel { Orders = result, StoreTasks = storeTasks });
         }
 
-        // Pin a lightweight "Go Store These" task. Engineer+ only. Deliberately
-        // no structured item fields -- just a title + optional note.
+        // Pins a "Go Store These" task. Engineer and up. A title and an optional note, nothing structured.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Engineer)]
@@ -1726,8 +1440,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("PickupQueue");
         }
 
-        // Claim an open task. Standard+ (everyone but Viewer). First claim wins --
-        // a task already claimed by someone else is left alone.
+        // Claims an open task. Standard and up. First claim wins.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -1751,8 +1464,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("PickupQueue");
         }
 
-        // Mark a claimed task done -- only the person who claimed it. Done tasks
-        // drop off the board.
+        // Marks a claimed task done. Only the person who claimed it.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -1776,32 +1488,9 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("PickupQueue");
         }
 
-        // Delivery intake board: the shared "Unknown Delivery" bucket (visible to
-        // every Engineer+ user) plus anything routed straight to this person.
-        // Done deliveries drop off, same as the VisTask board above.
-        //
-        // Engineer+, not Management+, as of the Pass 33 follow-up. The Unknown
-        // bucket now notifies EXACTLY L3 (see SubmitDelivery), and a notification
-        // pointing at a page the recipient is bounced off is worse than not sending
-        // it -- so the board, Claim and Complete had to come down to Engineer with
-        // it. They stay open UPWARD on purpose though: Management and Admin no
-        // longer get pinged, but shutting them out of the board entirely would
-        // strand any delivery addressed to a named manager, since that dropdown is
-        // still Management+ (see LogDelivery below). "Anyone Engineer+ can pick up
-        // an unlabelled box" and "who can a box be assigned to by name" are
-        // deliberately two different questions.
-        // ============================
-        // DELIVERY ROUTING -- TWO HALVES OF ONE RULE
-        // ============================
-        // The rule: a named recipient's delivery also reaches the L3 engineers on
-        // their Line; failing that, on their Branch's Lines; failing that, nobody.
-        //
-        // These two helpers are inverses of each other and MUST stay that way.
-        // AudienceLinesFor answers "who does THIS recipient reach" (used when the
-        // delivery is logged); RecipientsReaching answers "whose deliveries reach
-        // ME" (used to build the board). If they disagree, a notification points at
-        // a board that doesn't show the delivery -- the exact failure shape Pass 32
-        // and the L3 follow-up both had to close. Change one, change the other.
+        // Delivery routing. A named recipient's delivery also reaches the Engineers on their Line,
+        // else on their Branch's Lines. AudienceLinesFor and RecipientsReaching are inverses:
+        // change one, change the other.
 
         /// <summary>Lines whose L3s a delivery for this recipient should reach. Empty = nobody but the recipient.</summary>
         private static string[] AudienceLinesFor(string? line, string? branch)
@@ -1809,19 +1498,14 @@ namespace Visual_Inventory_System.Controllers
             var l = (line ?? "").Trim();
             if (l.Length > 0) return new[] { l };
 
-            // Branch fallback: only reachable for someone carrying a Branch and no
-            // Line. Line always wins, so no line-scoped user is affected by this.
+            // Branch fallback: only for someone with a Branch and no Line.
             var b = (branch ?? "").Trim();
             if (b.Length > 0 && OrgStructure.BranchLines.TryGetValue(b, out var lines)) return lines;
 
             return Array.Empty<string>();
         }
 
-        /// <summary>
-        /// UserNames whose deliveries this viewer should see -- the inverse of
-        /// AudienceLinesFor. Someone reaches me when their own Line is mine, or
-        /// when they carry no Line but the Branch that owns my Line.
-        /// </summary>
+        /// <summary>UserNames whose deliveries this viewer should see: the inverse of AudienceLinesFor.</summary>
         private List<string> RecipientsReaching(string? myLine)
         {
             var mine = (myLine ?? "").Trim();
@@ -1838,16 +1522,13 @@ namespace Visual_Inventory_System.Controllers
                 .ToList();
         }
 
+        // The Deliveries board: the Unknown bucket plus anything routed to this person. Engineer and up.
         [RequireLevel(AccessLevels.Engineer)]
         public IActionResult Deliveries()
         {
             string mine = _currentUser.Name;
 
-            // Third clause (delivery routing): an L3 sees deliveries addressed to
-            // anyone whose audience includes their Line. Without it the fan-out
-            // notifies 13 people and lands them on an empty board. Only L3s get it
-            // -- Management and Admin are not part of any Line's audience, so
-            // widening it for them would show them boxes nobody routed to them.
+            // An Engineer also sees deliveries for anyone whose audience includes their Line. Engineers only.
             var reaching = _currentUser.Level == AccessLevels.Engineer
                 ? RecipientsReaching(_currentUser.Line)
                 : new List<string>();
@@ -1889,13 +1570,7 @@ namespace Visual_Inventory_System.Controllers
         [RequireLevel(AccessLevels.Standard)]
         public IActionResult LogDelivery()
         {
-            // Engineer+ now, not Management+. Naming a manager stopped meaning "you
-            // go deal with this" once a named delivery started also reaching that
-            // person's Line -- so the list can widen to everyone who can actually
-            // work a delivery. L1/L2 stay out: they cannot open the board at all,
-            // and addressing someone who can't see it strands the box.
-            // AccessLevel rides along so the view can group the list -- 44 flat
-            // names is a scroll, three labelled sections is a glance.
+            // Engineer and up: everyone who can open the board. AccessLevel rides along so the view can group the list.
             ViewBag.Recipients = _db.Users.AsNoTracking()
                 .Where(u => u.IsActive && u.AccessLevel >= AccessLevels.Engineer)
                 .OrderByDescending(u => u.AccessLevel)
@@ -1932,9 +1607,7 @@ namespace Visual_Inventory_System.Controllers
             }
 
             bool isUnknown = recipientUserName == Delivery.UnknownRecipient;
-            // Matches the dropdown exactly (Engineer+). A direct POST naming an
-            // L1/L2 is refused rather than accepted-and-stranded: they cannot open
-            // the Deliveries board, so the box would have no reachable owner.
+            // Matches the dropdown. A direct POST naming someone who cannot open the board is refused.
             if (!isUnknown && !_db.Users.Any(u => u.UserName == recipientUserName && u.IsActive && u.AccessLevel >= AccessLevels.Engineer))
             {
                 TempData["Error"] = "That recipient isn't valid.";
@@ -1965,13 +1638,7 @@ namespace Visual_Inventory_System.Controllers
             string extra = "";
             if (isUnknown)
             {
-                // EXACTLY L3, not Engineer-and-up -- the maxLevel arg is what that
-                // second parameter is for. Handling an unlabelled box is an Engineer
-                // job, so Management and Admin deliberately stop being pinged for it
-                // (was Management+, which pinged 15 people and no Engineers at all).
-                // They can still open the board and pitch in if one sits; they just
-                // don't get the notification. Deliberately NOT line-aware: an
-                // unlabelled box has no Line to narrow to.
+                // Exactly Engineer, not Engineer and up. Not line-aware: an unlabelled box has no Line.
                 _notifications.CreateForLevel(AccessLevels.Engineer, AccessLevels.Engineer, "DeliveryReceived", message, "/Home/Deliveries", _currentUser.Name);
             }
             else
@@ -1983,10 +1650,7 @@ namespace Visual_Inventory_System.Controllers
                     + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})"),
                     "/Home/Deliveries");
 
-                // ...and so do the engineers on their Line, because a manager being
-                // named is "this is yours" rather than "go collect it" -- the whole
-                // point of the change. Third person on purpose: 13 people reading
-                // "a delivery was logged for you" would each think it was theirs.
+                // The Engineers on their Line hear too, in the third person so nobody thinks it is theirs.
                 var recip = _db.Users.AsNoTracking().FirstOrDefault(u => u.UserName == recipientUserName);
                 if (recip != null)
                 {
@@ -1999,8 +1663,7 @@ namespace Visual_Inventory_System.Controllers
                         + (IsNa(brandOfItem) ? "" : $" — {brandOfItem}")
                         + (IsNa(trackingNumber) ? "" : $" (Tracking {trackingNumber})"),
                         "/Home/Deliveries",
-                        // Both, not one: the logger never notifies themself, and the
-                        // recipient already has their own message above.
+                        // Excludes the logger and the recipient, who already has their own message.
                         _currentUser.Name, recipientUserName);
                     if (reached > 0)
                         extra = $" {who} and {reached} engineer{(reached == 1 ? "" : "s")} on their line were notified.";
@@ -2011,8 +1674,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("LogDelivery");
         }
 
-        // Claim an open delivery. Engineer+ -- the same band it is routed to.
-        // First claim wins, same as ClaimTask.
+        // Claims an open delivery. Engineer and up. First claim wins.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Engineer)]
@@ -2036,7 +1698,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Deliveries");
         }
 
-        // Mark a claimed delivery done -- only the person who claimed it, same as CompleteTask.
+        // Marks a claimed delivery done. Only the person who claimed it.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Engineer)]
@@ -2066,8 +1728,7 @@ namespace Visual_Inventory_System.Controllers
         {
             try
             {
-                // Optional per-item location choices posted from the queue page
-                // as variantChoice_{orderItemId}=variantId. Absent/blank = auto.
+                // variantChoice_{orderItemId} = variantId, optional. Absent or blank = auto.
                 var choices = new Dictionary<int, int>();
                 foreach (var key in Request.Form.Keys)
                 {
@@ -2079,13 +1740,8 @@ namespace Visual_Inventory_System.Controllers
                     }
                 }
 
-                // Compressor mini-variants: compLab_{orderItemId}_{n} / compSerial_{orderItemId}_{n},
-                // n = 0-based unit index on that line. compSerial is the serial picker's
-                // selected value -- a real on-hand serial, "__NONE__" (picker explicitly
-                // said this unit has none), or "__ADD__" (picker is naming a serial the
-                // roster doesn't know about yet, typed into compSerialManual_{oi}_{n}
-                // instead). Both Lab# and the resolved serial are soft -- blank/"__NONE__"
-                // posts through as null.
+                // compLab_{orderItemId}_{n} / compSerial_{orderItemId}_{n}, n = 0-based unit index.
+                // compSerial is a real serial, "__NONE__", or "__ADD__" (typed into compSerialManual_...).
                 var compressorUnits = new Dictionary<int, List<(string? Lab, string? Serial)>>();
                 foreach (var key in Request.Form.Keys)
                 {
@@ -2094,8 +1750,7 @@ namespace Visual_Inventory_System.Controllers
                     var parts = rest.Split('_');
                     if (parts.Length != 2) continue;
                     if (!int.TryParse(parts[0], out int oiId) || !int.TryParse(parts[1], out int unitIdx)) continue;
-                    // The list below is padded out to unitIdx, so an absurd posted
-                    // index would allocate until the process fell over.
+                    // The list is padded out to unitIdx, so cap it.
                     if (unitIdx < 0 || unitIdx >= MaxUnitsPerLine)
                         throw new InvalidOperationException("That pickup form isn't valid -- reload the queue and try again.");
 
@@ -2120,10 +1775,7 @@ namespace Visual_Inventory_System.Controllers
 
                 if (result.HasShortLines)
                 {
-                    // Not enough on the shelf for one or more lines -- stock was
-                    // left untouched for those. Other lines on the order picked
-                    // up normally. Stash the shortfall for PickupQueue to render
-                    // a "what's actually here?" correction form.
+                    // Short lines left stock untouched. Stash them for the queue page's correction form.
                     TempData["ShortPullOrderId"] = orderId;
                     TempData["ShortPullJson"] = System.Text.Json.JsonSerializer.Serialize(result.ShortLines);
                     TempData["Error"] = result.ShortLines.Count == 1
@@ -2137,23 +1789,16 @@ namespace Visual_Inventory_System.Controllers
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
 
-            // SMART REDIRECT: Go back to the exact page you came from (Logs OR Orders)
+            // Back to the page the request came from.
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
         }
 
-        // Ceiling on the per-unit form loops in the two pickup actions below, which
-        // run on posted numbers before the service gets to validate them. Far above
-        // any real order line (the whole Lean-To holds 636 compressors).
+        // Ceiling on the per-unit form loops below, which run before the service validates. Far above any real line.
         private const int MaxUnitsPerLine = 5000;
 
-        // Deliberate partial pickup (see OrderService.PickUpPartialAndSplit) --
-        // the picker saw, before submitting, that the chosen location can't
-        // cover the full line and chose to take what's there and defer the
-        // rest. compLab_{u}/compSerial_{u}/compSerialManual_{u} are posted
-        // per-unit for just the pickupQty units actually leaving (u = 0-based,
-        // no orderItemId prefix needed since this action only ever resolves
-        // one line at a time).
+        // Deliberate partial pickup. compLab_{u} / compSerial_{u} / compSerialManual_{u} are posted
+        // for just the units leaving, u = 0-based.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -2184,11 +1829,8 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
         }
 
-        // Short-pull correction (see OrderService.ReportShortPull). Standard-level
-        // on purpose -- this is the consolidated action that used to take a
-        // runner, an Engineer to cancel, and the requester to re-order.
-        // corrected_{variantId} = the count the picker actually saw at that
-        // location; only fields the picker touched are posted.
+        // Short-pull correction. Standard on purpose.
+        // corrected_{variantId} = the count the picker saw there. Only touched fields are posted.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -2207,9 +1849,7 @@ namespace Visual_Inventory_System.Controllers
                     }
                 }
 
-                // leavingUnit_{variantId} / leavingMotor_{variantId}: the recorded units the
-                // picker ticked as gone from a stack whose count they lowered below them.
-                // One form field per ticked unit, so the same name repeats.
+                // leavingUnit_{variantId} / leavingMotor_{variantId}: recorded units ticked as gone, one field per unit.
                 var leavingUnits = new Dictionary<int, IReadOnlyCollection<int>>();
                 var leavingMotors = new Dictionary<int, IReadOnlyCollection<int>>();
                 foreach (var key in Request.Form.Keys)
@@ -2236,17 +1876,14 @@ namespace Visual_Inventory_System.Controllers
                 }
                 else
                 {
-                    // Since 2026-11-08 "nothing to issue" can also mean what's left is
-                    // reserved for someone else, so say both.
+                    // "Nothing to issue" can also mean what is left is reserved, so say both.
                     TempData["Success"] = "Stock corrected. Nothing on the shelf was free for this order (none left, or what's left is reserved), so no pickup was issued.";
                 }
             }
             catch (Exception ex)
             {
                 TempData["Error"] = ex.Message;
-                // A refused correction (units not ticked, say) rolled everything back, so the
-                // line is still flagged short -- but the form only ever came from TempData,
-                // so without this the order was stranded. Put the same form back.
+                // The refusal rolled everything back and the line is still short. Put the form back.
                 try
                 {
                     var again = _orderService.GetShortPullLine(orderId, orderItemId);
@@ -2263,13 +1900,8 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer) ? RedirectToAction("PickupQueue") : Redirect(referer);
         }
 
-        // Logs/corrects On Hand compressor serials directly from the Compressors
-        // modal roster -- the other entrance besides PickUpOrder's match-or-create.
-        // Standard-level on purpose: anyone passing a shelf who notices an
-        // unrecorded unit (or a typo'd one) should be able to fix it on the spot.
-        // Rows are posted as serial_{n}/lab_{n}, each paired with unitId_{n}
-        // (an existing On Hand unit's id, or 0 for a blank pad row the human
-        // filled in) and variantId_{n} (only meaningful when unitId is 0).
+        // Logs or corrects On Hand compressor serials from the roster. Standard on purpose.
+        // Rows: serial_{n} / lab_{n} with unitId_{n} (0 = a new row) and variantId_{n}.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -2304,9 +1936,7 @@ namespace Visual_Inventory_System.Controllers
             return string.IsNullOrEmpty(referer2) ? RedirectToAction("Index") : Redirect(referer2);
         }
 
-        // TC motor equivalent of LogCompressorUnits. No serial_{n} field --
-        // motors only ever carry a lab_{n}. Rows can target either an On Hand
-        // OR a Picked Up (out on loan) unit; see InventoryService.LogMotorUnits.
+        // The TC motor version: lab_{n} only. Rows may target On Hand or Picked Up units.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -2352,7 +1982,7 @@ namespace Visual_Inventory_System.Controllers
             }
             catch (Exception ex) { TempData["Error"] = ex.Message; }
 
-            // SMART REDIRECT: Go back to the exact page you came from (Logs OR Orders)
+            // Back to the page the request came from.
             string referer = Request.Headers["Referer"].ToString();
             return string.IsNullOrEmpty(referer) ? RedirectToAction("Orders") : Redirect(referer);
         }
@@ -2399,19 +2029,12 @@ namespace Visual_Inventory_System.Controllers
             var order = _db.Orders.Include(o => o.Items).AsNoTracking().FirstOrDefault(o => o.Id == id);
             if (order == null) return NotFound();
             ViewBag.InventoryLookup = _db.InventoryItems.AsNoTracking().Include(i => i.Variants).ToDictionary(i => i.ItemId);
-            // Reverse lineage -- did anything split OFF of this order? (Forward
-            // lineage, "this order split from #N," is just order.SplitFromOrderId
-            // itself, no query needed.)
+            // Reverse lineage: what split off this order. Forward lineage is order.SplitFromOrderId.
             ViewBag.SplitTo = _db.Orders.AsNoTracking()
                 .Where(o => o.SplitFromOrderId == id)
                 .Select(o => o.Id)
                 .ToList();
-            // Which physical units this order actually pulled, per line -- this
-            // view never fetched CompressorUnits at all, so a compressor line's
-            // serials were invisible here even though they're logged at pickup
-            // (visible on My Orders' loan bench and the Compressor Registry, just
-            // never surfaced on the order itself). Grouped by OrderItemId, not
-            // OrderId, so a multi-line order doesn't mix serials across lines.
+            // The units this order pulled, by order line, so a multi-line order does not mix serials.
             ViewBag.UnitsByOrderItem = _db.CompressorUnits.AsNoTracking()
                 .Where(c => c.OrderId == id)
                 .ToList()
@@ -2420,9 +2043,7 @@ namespace Visual_Inventory_System.Controllers
             return View(order);
         }
 
-        // ============================
-        // NAME CAPTURE (lightweight, not authentication)
-        // ============================
+        // Name capture (not authentication)
         [AllowWithoutName]
         [HttpGet]
         public IActionResult Identify(string? returnUrl)
@@ -2449,24 +2070,17 @@ namespace Visual_Inventory_System.Controllers
                 return View();
             }
 
-            // Normalize capitalization to First.Last. This is only a fallback for a
-            // name that ISN'T on the roster -- it flattens interior capitals, and
-            // real names have them (DeCory, McDonald, O'Brien).
+            // First.Last capitalisation. Only a fallback for a name not on the roster: it flattens interior capitals.
             var parts = name.Split('.');
             string normalized = string.Join(".",
                 parts.Select(p => char.ToUpper(p[0]) + p.Substring(1).ToLower()));
 
-            // Case-INSENSITIVE, because SQLite compares TEXT with BINARY collation by
-            // default: "DeCory.Thomas" != "Decory.Thomas", so the flattened form missed
-            // its own roster row and fell through to Viewer on every single sign-in.
-            // ToLower() rather than a StringComparison overload -- EF Core can't
-            // translate the latter (same reason NotificationService says so).
+            // Case-insensitive, because SQLite compares TEXT as binary by default.
+            // ToLower(), not a StringComparison overload: EF cannot translate that.
             string lookup = normalized.ToLower();
             var known = _db.Users.FirstOrDefault(u => u.UserName.ToLower() == lookup && u.IsActive);
 
-            // The roster's spelling wins outright: Notifications, Deliveries and the
-            // UserTeams join all match on this string, so a session name that merely
-            // looks right isn't good enough -- it has to be the stored one.
+            // The roster's spelling wins: notifications, deliveries and team membership all match on this string.
             _currentUser.Set(known?.UserName ?? normalized);
             _currentUser.SetLevel(known?.AccessLevel ?? AccessLevels.Viewer);
             _currentUser.SetTheme(known?.Theme ?? "dark");
@@ -2487,9 +2101,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Identify");
         }
 
-        // Full roster page for the "Total Items" dashboard stat. Deep-linking into
-        // a specific item's Handle Stock panel reuses the existing Omni search
-        // route (/Home/SearchCenter?omniSearch=ID) rather than duplicating that JS here.
+        // The full item list behind the Total Items stat. Deep links reuse /Home/SearchCenter?omniSearch=ID.
         public IActionResult AllItems()
         {
             var items = _inventoryService.GetAll().OrderBy(i => i.ItemId).ToList();

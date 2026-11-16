@@ -1,24 +1,8 @@
 namespace Visual_Inventory_System.Models
 {
     /// <summary>
-    /// A clickable rectangle on the facility map, tied to a PARENT location.
-    ///
-    /// Before Pass 8 these were four hardcoded &lt;area&gt; tags in Index.cshtml --
-    /// the FIFTH copy of the location vocabulary, and the one Pass 7C missed
-    /// because it was an image map rather than a dropdown. A Parent added in
-    /// Settings appeared in every picker and was invisible on the map.
-    ///
-    /// ONE PARENT MAY HAVE SEVERAL ZONES. The same area can occupy more than one
-    /// part of the building, so this is its own table rather than four columns on
-    /// Location.
-    ///
-    /// COORDINATES ARE NORMALISED 0-1, not pixels. The old markup stored pixels
-    /// measured against a 1146x643 image, which welded the data to that exact
-    /// file -- swap the floorplan for a different resolution and every zone
-    /// silently shifts. A fraction means "44% across, 57% down" and survives it.
-    ///
-    /// Only Parents get zones. Majors and Subs are reached through the post-click
-    /// menu, which is already driven by live stock data and needs nothing here.
+    /// A clickable rectangle on the facility map, tied to a Parent location.
+    /// A Parent may have several. Coordinates are fractions 0-1, not pixels.
     /// </summary>
     public class LocationZone
     {

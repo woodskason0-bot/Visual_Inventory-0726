@@ -59,29 +59,17 @@
                         </div>
                     </div>
 
-                    <!-- LOCATION / VARIANT picker: which physical stack this action hits.
-                         Hidden for single-location items on non-Add actions (posts nothing ->
-                         primary variant, old behavior). Add always shows it for the
-                         "New location..." option. -->
+                    @* Location / Variant picker: which stack this action hits. Hidden for single-location items except on Add. *@
                     <div id="stock-variant-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Location / Variant</label>
                         <div class="d-flex gap-2 align-items-start">
-                            @* Per-team quantity ownership: narrows the stack list to one
-                               team's slice. No name attribute -- a pure client-side filter
-                               that must never post (variantTeam below is a different
-                               thing: which team a NEW stack is being created for).
-                               Disabled unless the item is genuinely split, since one team
-                               leaves nothing to choose between. *@
+                            @* Team filter for the stack list. Client-side only: it has no name and must never post. *@
                             <select id="stock-variant-team-filter" class="form-select fw-bold text-warning"
                                     style="max-width:190px;" title="Filter stacks by owning team" disabled></select>
                             <select id="stock-variant-sel" name="targetVariant" class="form-select fw-bold text-info"></select>
                             @if (CurrentUser.Level >= AccessLevels.Admin)
                             {
-                                @* A zero-qty stack on a multi-variant item has no other way to
-                                   go away -- Delete Item needs the item's TOTAL to be 0, which
-                                   this variant alone drained to while siblings still carry
-                                   stock. Shown/hidden by refreshDeleteVariantBtn() based on the
-                                   currently-selected variant's quantity. *@
+                                @* Delete for an empty stack: Delete Item needs the whole item at 0. *@
                                 <button type="button" class="btn btn-outline-danger btn-sm" id="stock-delete-variant-btn"
                                         style="display:none; white-space:nowrap;" title="Delete this empty stack"
                                         onclick="openDeleteVariant()">
@@ -90,17 +78,11 @@
                             }
                         </div>
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-variant-help">Which physical stack this action applies to.</small>
-                        @* Warn, don't refuse. Acting on another team's slice is
-                           sometimes exactly right (a runner correcting a miscount
-                           doesn't belong to the team that owns the shelf), so this
-                           surfaces whose stock it is rather than gating it. *@
+                        @* Warns whose stock it is. Does not refuse: a runner fixing a miscount may not be on that team. *@
                         <small class="text-warning fw-bold" style="display:none; font-size:11px;" id="stock-variant-team-note"></small>
                     </div>
 
-                    <!-- TEAM (per-team quantity ownership, 2026-08-26): only meaningful
-                         for Add's "New location..." branch -- an existing stack keeps
-                         whatever team it already has, same as it keeps its location.
-                         Blank = falls back to the item's own family-level Team. -->
+                    @* Team for a new stack (Add, "New location..." only). Blank = the item's own Team. *@
                     <div id="stock-variant-team-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Team</label>
                         <select name="variantTeam" id="stock-variant-team-sel" class="form-select fw-bold">
@@ -119,9 +101,7 @@
                         <small class="text-light-gray" id="stock-qty-help">Amount to ADD to current inventory.</small>
                     </div>
 
-                    <!-- THERMOCOUPLED subset (motors only). One field for Add/Scrap; a
-                         twin lives in the transfer move-qty row. Whichever is hidden is
-                         DISABLED so exactly one "thermocoupledQty" ever posts. -->
+                    @* Thermocoupled subset (motors only). Its twin is in the transfer row; the hidden one is disabled so only one posts. *@
                     <div id="stock-tc-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold" style="color: var(--vis-amber, #F59E0B);">
                             <i class="bi bi-thermometer-half me-1"></i>Thermocoupled
@@ -132,36 +112,20 @@
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="stock-tc-help">How many of these are thermocoupled?</small>
                     </div>
 
-                    @* Compressor serial capture on Add -- Pass 17 parity for the
-                       jump-in-from-Registry path. Optional, one box per unit being
-                       added; same serial_N convention CreateItem already reads. *@
+                    @* Compressor serials on Add: optional, one box per unit, posted as serial_N. *@
                     <div id="stock-serial-div" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Serial # <span class="text-light-gray">(optional, one per unit)</span></label>
                         <div id="stock-serial-rows"></div>
                     </div>
 
-                    @* Scrap / downward Adjustment: when the new count leaves more recorded units
-                       on this stack than it can hold, say which of them are gone. Built by
-                       refreshLeavingPicker(); emptied (so nothing posts) whenever the rows
-                       still fit, and for a whole-stack scrap, where every recorded unit goes
-                       on its own. The server enforces the same count and refuses a pick
-                       that doesn't match. *@
+                    @* Scrap or downward Adjustment: which recorded units are gone, when the new count can't hold them all. *@
                     <div id="stock-leaving-div" class="p-2 mb-3 border rounded vis-inset-box" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray mb-1">Which recorded units are leaving?</label>
                         <div id="stock-leaving-list"></div>
                     </div>
 
                     <div id="stock-own-div" class="row g-2 mb-3" style="display:none;">
-                        @* Pass 7B: "New Group" is gone. Its options mixed two BRANCHES
-                           (Commercial, Residential) with one LINE (International, which
-                           sits under Commercial Air) as if they were peers -- a flattened,
-                           wrong copy of OrgStructure. Group is also derived from the
-                           registering user's Line and frozen at creation, so letting a
-                           transfer change it would put an item's Group at odds with its
-                           own ItemId prefix.
-                           Ownership now moves the thing that actually governs visibility:
-                           Branch/Line. Same element ids as the old Edit Details cascade,
-                           so populateEditLinePickers() drives this unchanged. *@
+                        @* Ownership moves Branch and Line, which is what governs visibility. Group is frozen at creation. *@
                         <div class="col-6">
                             <label class="form-label small fw-bold text-light-gray">Branch</label>
                             <select id="edit-line-branch" class="form-select" disabled>
@@ -179,9 +143,7 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold text-light-gray">New Team</label>
-                            @* Pass 7A: data-driven from the Teams table, and blank is
-                               allowed -- team is optional now. The project code follows
-                               whichever team is chosen, resolved server-side. *@
+                            @* From the Teams table. Blank is allowed; the project code follows the team. *@
                             <select name="newTeam" id="edit-team" class="form-select" disabled>
                                 <option value="">N/A — no team</option>
                                 @foreach (var t in (List<Visual_Inventory_System.Models.Team>)(ViewBag.ActiveTeams ?? new List<Visual_Inventory_System.Models.Team>()))
@@ -192,11 +154,7 @@
                         </div>
                     </div>
 
-                    <!-- EDIT DETAILS (Engineer+): family-level identity fields. Inputs are
-                         DISABLED unless this pane is active so they never post alongside a
-                         stock action. Rheem PN is unique across items (server rejects a
-                         taken PN); Brand is fill-if-blank only -- an existing brand locks
-                         the field. Prefilled from itemsList when the pane opens. -->
+                    @* Edit Details (Engineer and up): Rheem PN, Description, Brand. Inputs are disabled unless this pane is active. *@
                     <div id="stock-edit-div" class="mb-3" style="display:none;">
                         <div class="mb-2">
                             <label class="form-label small fw-bold text-light-gray">Rheem Part Number</label>
@@ -218,15 +176,9 @@
                             <input type="text" name="newBrand" id="edit-brand" class="form-control" disabled />
                             <small class="text-light-gray d-block mt-1" style="font-size:10px;" id="edit-brand-help">Brand can only be ADDED when the item has none.</small>
                         </div>
-                        @* Pass 7B: Branch/Line moved OUT of here and into Internal -
-                           Transfer, where reassigning ownership belongs. Pass 3 put it
-                           here because Edit Details was the only Engineer+ pane that
-                           existed at the time; that made Internal - Transfer vestigial.
-                           Edit Details is identity only again: PN, Description, Brand. *@
                     </div>
 
-                    <!-- LOCATION TRANSFER: item-first. Fields start disabled, then seed from the
-                         selected item's current location. 0 = unspecified at every level but Parent. -->
+                    @* Location Transfer: fields seed from the selected item's current location. 0 = unspecified. *@
                     <div id="stock-loc-div" class="mb-1" style="display:none;">
                         <div class="py-2 px-3 mb-3 small rounded border vis-inset-box">
                             <i class="bi bi-geo-alt me-1"></i> Current location: <span class="fw-bold text-info" id="loc-current">--</span>
@@ -239,7 +191,7 @@
                                 <label class="form-label small fw-bold text-light-gray">Parent</label>
                                 <select name="newParent" id="loc-parent" class="form-select" disabled>
                                     <option value="">Select Parent...</option>
-                                    @* Pass 7C: from the Locations table, codes derived. *@
+                                    @* From the Locations table. *@
                                     @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
                                     {
                                         <option value="@lp.Code">@lp.Name (@lp.Code)</option>
@@ -273,9 +225,7 @@
                                 <input type="number" name="transferQty" id="loc-moveqty" class="form-control" min="1" />
                                 <small class="text-light-gray d-block mt-1" style="font-size:10px;">Defaults to the whole stack. Less = split off a new variant.</small>
                             </div>
-                            <!-- Transfer-context TC twin (motors only). Disabled unless a
-                                 motor is being transferred, so it never double-posts with
-                                 the Add/Scrap TC field above. -->
+                            @* TC twin for transfers (motors only). Disabled unless a motor is being moved. *@
                             <div class="col-md-4" id="loc-tc-div" style="display:none;">
                                 <label class="form-label small fw-bold" style="color:#F59E0B;">
                                     <i class="bi bi-thermometer-half me-1"></i>Of these, TC
@@ -288,10 +238,7 @@
                                 <small id="loc-merge-note" class="text-warning fw-bold" style="display:none; font-size:11px;"></small>
                             </div>
                         </div>
-                        <!-- Recorded units on a PARTIAL move: which ones are going. Built by
-                             refreshUnitPicker(); emptied (so nothing posts) whenever the move
-                             takes the whole stack, or all of its TC, since then every recorded
-                             unit goes on its own. -->
+                        @* Recorded units on a partial move: which ones are going. Empty when the whole stack moves. *@
                         <div id="loc-units-div" class="p-2 mb-2 border rounded vis-inset-box" style="display:none;">
                             <label class="form-label small fw-bold text-light-gray mb-1">Which recorded units are moving?</label>
                             <div id="loc-units-list"></div>
@@ -315,17 +262,11 @@
 </div>
 
 <script>
-    // Declared HERE, not read from the parent page, because this partial renders
-    // on both Command Center and Search Center and a top-level const in one
-    // <script> tag isn't visible to an earlier one -- the exact break 15822b4
-    // had to fix. Deliberately NOT named myTeams: SearchCenter.cshtml already
-    // declares that at page level, and a duplicate const in shared global scope
-    // is a SyntaxError that kills this whole block.
+    @* Declared here because this partial renders on two pages. Not named myTeams: *@
+    @* Search Center already declares that, and a duplicate const kills the script block. *@
     const msMyTeams = @Html.Raw(ViewBag.MyTeamsJson ?? "[]");
 
-    // The distinct teams with a real claim on this item -- the client-side twin
-    // of InventoryService.ActiveVariantTeams. One (or none) means the item isn't
-    // split and team gates nothing here.
+    @* Teams with a claim on this item, the client twin of ActiveVariantTeams. One or none = not split. *@
     function msItemTeams(item) {
         const seen = [];
         ((item && item.variants) ? item.variants : []).forEach(function (v) {
@@ -334,9 +275,7 @@
         });
         return seen;
     }
-    // Membership is a LIST, not a single team -- someone on Samurai and Ninja
-    // owns both slices of a split item and must not be warned about either.
-    // Blank fails open, same convention as Line everywhere else.
+    @* Membership is a list: someone on both teams owns both slices. Blank fails open. *@
     function msIsMyTeam(t) {
         const s = (t || '').trim();
         if (!s) return true;
@@ -345,9 +284,7 @@
         });
     }
 
-    // Closes whichever preview modal (Low Stock / Out of Stock / Needs PN) is
-    // open, waits for the close transition, then opens Modify Stock for that
-    // item -- avoids two Bootstrap modals stacking backdrops.
+    @* Closes the open preview modal, then opens Modify Stock for the item, so modals never stack. *@
     function jumpToHandleStock(itemId, modalId) {
         const cur = document.getElementById(modalId);
         const inst = cur ? bootstrap.Modal.getInstance(cur) : null;
@@ -361,7 +298,7 @@
             handleStock(itemId);
         }
     }
-    // Opens the Modify Stock panel pre-loaded with a specific item (from a search row).
+    @* Opens the Modify Stock panel pre-loaded with a specific item (from a search row). *@
     function handleStock(itemId) {
         const idField = document.getElementById('stock-item-id');
         const searchField = document.getElementById('stock-search');
@@ -371,15 +308,15 @@
         const el = document.getElementById('modifyStockModal');
         if (el) { new bootstrap.Modal(el).show(); }
     }
-    // ---- Variant helpers -------------------------------------------------
+    @* Variant helpers *@
     function getStockItem() {
         const idEl = document.getElementById('stock-item-id');
         const itemId = idEl ? idEl.value : '';
         if (!itemId) return null;
         return itemsList.find(function (i) { return i.id === itemId; }) || null;
     }
-    // The variant currently chosen in the selector (never "NEW"); falls back
-    // to the item's first (primary) variant.
+    @* The variant currently chosen in the selector (never "NEW"); falls back *@
+    @* to the item's first (primary) variant. *@
     function getSelectedVariant(item) {
         if (!item || !item.variants || !item.variants.length) return null;
         const sel = document.getElementById('stock-variant-sel');
@@ -390,9 +327,7 @@
         }
         return item.variants[0];
     }
-    // (Re)build the Location/Variant selector for the current item + action.
-    // Shown when the item is split across locations, or on Add (for the
-    // "New location..." option). Hidden = posts nothing = primary variant.
+    @* Rebuilds the Location / Variant selector. Shown for split items and on Add. Hidden = primary variant. *@
     function populateVariantSel(action) {
         const div = document.getElementById('stock-variant-div');
         const sel = document.getElementById('stock-variant-sel');
@@ -409,8 +344,8 @@
 
         populateVariantTeamFilter(item);
         const tf = document.getElementById('stock-variant-team-filter');
-        // A disabled filter contributes nothing -- an unsplit item has no team
-        // choice to make, so every stack shows regardless of what's selected.
+        @* A disabled filter contributes nothing -- an unsplit item has no team *@
+        @* choice to make, so every stack shows regardless of what's selected. *@
         const teamFilter = (tf && !tf.disabled) ? tf.value : '';
         const shownVars = vars.filter(function (v) {
             if (!teamFilter) return true;
@@ -441,9 +376,7 @@
         refreshDeleteVariantBtn();
         refreshVariantTeamNote();
     }
-    // (Re)build the owning-team filter for the current item. Grays out entirely
-    // unless the item is genuinely split -- offering "All teams / Samurai" on an
-    // item only Samurai has ever touched is a choice that isn't one.
+    @* Rebuilds the owning-team filter. Disabled unless the item is split across teams. *@
     function populateVariantTeamFilter(item) {
         const tf = document.getElementById('stock-variant-team-filter');
         if (!tf) return;
@@ -451,10 +384,7 @@
         const teams = msItemTeams(item);
         const hasBlank = vars.some(function (v) { return !(v.team || '').trim(); });
         const prev = tf.value;
-        // The auto-default below may only fire when the ITEM changes. Keying it
-        // on `prev` being falsy instead made "All teams" (value "") unreachable:
-        // every rebuild read it as "nothing chosen yet" and re-applied the
-        // default, so the other team's stacks could never be listed again.
+        @* The default below applies only when the item changes, so "All teams" stays reachable. *@
         const seedFor = (item && item.id) ? item.id : '';
         const isNewItem = tf.dataset.seededFor !== seedFor;
         tf.dataset.seededFor = seedFor;
@@ -479,10 +409,7 @@
         tf.disabled = !splitAcrossTeams;
         if (!splitAcrossTeams) { tf.value = ''; return; }
 
-        // Keep an explicit pick across rebuilds; otherwise land a multi-team
-        // person on their OWN slice when exactly one of the item's teams is
-        // theirs. Two of theirs (or none) is a real choice -- open on the full
-        // list rather than guessing which one they meant.
+        @* Keep an explicit pick. Otherwise open on the viewer's own slice when exactly one team is theirs. *@
         const prevStillValid = Array.prototype.some.call(tf.options, function (o) { return o.value === prev; });
         if (!isNewItem && prevStillValid) {
             tf.value = prev;
@@ -491,8 +418,8 @@
             tf.value = (mine.length === 1) ? mine[0] : '';
         }
     }
-    // Says whose stock the chosen stack is when it isn't the viewer's. Never
-    // blocks -- see the markup note; the server has no matching refusal.
+    @* Says whose stock the chosen stack is when it isn't the viewer's. Never *@
+    @* blocks -- see the markup note; the server has no matching refusal. *@
     function refreshVariantTeamNote() {
         const note = document.getElementById('stock-variant-team-note');
         if (!note) return;
@@ -511,13 +438,10 @@
             + escapeHtml(t) + '</strong> — not one of your teams. You can still act on it.';
         note.style.display = 'block';
     }
-    // Admin-only: a zero-qty stack on a multi-variant item has no other way
-    // to go away (Delete Item needs the item's TOTAL to be 0). Shown only
-    // when the variant selector itself is showing a real (non-"NEW")
-    // multi-variant choice and that choice is currently empty.
+    @* Admin only: shows Delete when the selected stack of a multi-variant item is empty. *@
     function refreshDeleteVariantBtn() {
         const btn = document.getElementById('stock-delete-variant-btn');
-        if (!btn) return;   // not rendered at all for non-Admin
+        if (!btn) return;   @* not rendered at all for non-Admin *@
         const div = document.getElementById('stock-variant-div');
         const sel = document.getElementById('stock-variant-sel');
         const item = getStockItem();
@@ -538,8 +462,8 @@
         const el = document.getElementById('deleteVariantModal');
         if (el) { new bootstrap.Modal(el).show(); }
     }
-    // Transfer only: warn when the destination matches a sibling stack, since
-    // executing will MERGE quantities (source retires if fully drained).
+    @* Transfer only: warn when the destination matches a sibling stack, since *@
+    @* executing will MERGE quantities (source retires if fully drained). *@
     function refreshMergeNote() {
         const note = document.getElementById('loc-merge-note');
         if (!note) return;
@@ -566,10 +490,7 @@
                 && norm(v.parent) === dest[0] && norm(v.major) === dest[1] && norm(v.sub) === dest[2]
                 && norm(v.rack) === dest[3] && norm(v.row) === dest[4];
         };
-        // Mirrors ModifyStock's mergeTarget lookup exactly, TEAM INCLUDED. The
-        // server only merges into a same-team stack now; promising a merge here
-        // that it then declines to perform is the same two-halves-disagreeing
-        // shape every Pass 32 bug turned out to be.
+        @* Mirrors ModifyStock's merge lookup, team included: the server only merges into a same-team stack. *@
         const srcTeam = (srcVar.team || '').trim().toLowerCase();
         const hit = (item.variants || []).find(function (v) {
             return sameLoc(v) && (v.team || '').trim().toLowerCase() === srcTeam;
@@ -589,21 +510,15 @@
             note.style.display = 'none';
         }
     }
-    // Prefill "Quantity to move" with the source stack's full amount.
+    @* Prefill "Quantity to move" with the source stack's full amount. *@
     function refreshMoveQty() {
         const input = document.getElementById('loc-moveqty');
         if (!input) return;
         const srcVar = getSelectedVariant(getStockItem());
         if (srcVar) { input.value = srcVar.qty; input.max = srcVar.qty; }
     }
-    // ---- Recorded units on a partial Location Transfer ----------------------
-    // Mirrors ModifyStock / TickedUnitsMoving: a move that takes the whole
-    // stack takes every recorded unit, and one that takes all of a motor
-    // stack's TC takes every TC row -- nothing to ask. Anything short of that
-    // can't tell which units went, so the person ticks them. The server applies
-    // the same minimum and maximum and refuses a pick that doesn't fit; this
-    // only asks the question and keeps count. Rebuilt whenever the source
-    // stack, the quantity or the TC count changes, keeping ticks that still apply.
+    @* Recorded units on a partial Location Transfer. Moving the whole stack (or all of a motor stack's *@
+    @* TC) takes every row; anything less, the person ticks which. The server applies the same bounds. *@
     function refreshUnitPicker() {
         const div = document.getElementById('loc-units-div');
         const list = document.getElementById('loc-units-list');
@@ -611,7 +526,7 @@
 
         const was = {};
         list.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { was[cb.name + ':' + cb.value] = true; });
-        list.innerHTML = '';   // emptied = nothing posts
+        list.innerHTML = '';   @* emptied = nothing posts *@
         div.style.display = 'none';
 
         const action = document.getElementById('stock-action-type').value;
@@ -621,7 +536,7 @@
         const qty = v.qty || 0;
         const tcHave = v.tcqty || 0;
         let moveQty = parseInt((document.getElementById('loc-moveqty') || {}).value, 10);
-        if (isNaN(moveQty) || moveQty <= 0 || moveQty > qty) moveQty = qty;   // same as the server: blank = whole stack
+        if (isNaN(moveQty) || moveQty <= 0 || moveQty > qty) moveQty = qty;   @* same as the server: blank = whole stack *@
         if (moveQty >= qty) return;
 
         const tcInput = document.getElementById('loc-tc-input');
@@ -648,18 +563,15 @@
         });
         div.style.display = 'block';
     }
-    // One checklist of a stack's recorded units, shared by the transfer picker above and
-    // the Scrap / Adjustment "which units are leaving" picker below. g.min / g.max bound
-    // how many may be ticked; once the maximum is ticked the rest grey out, and the help
-    // line turns amber while fewer than the minimum are. describe(ticked, range) is the
-    // sentence. The server applies the same bounds and refuses a pick that doesn't fit.
+    @* One checklist of a stack's recorded units, shared by the transfer and the leaving pickers. *@
+    @* g.min and g.max bound the ticks; describe(ticked, range) is the help sentence. *@
     function renderUnitGroup(list, g, was, describe) {
         const box = document.createElement('div');
         box.className = 'mb-1';
         const min = g.min, max = g.max;
-        if (g.requireExact) box.setAttribute('data-need', String(min));   // read by syncLeavingExecute()
+        if (g.requireExact) box.setAttribute('data-need', String(min));   @* read by syncLeavingExecute() *@
         g.units.forEach(function (u) {
-            // Built with textContent, never innerHTML -- serials and lab #s are typed-in text.
+            @* Built with textContent, never innerHTML -- serials and lab #s are typed-in text. *@
             const lbl = document.createElement('label');
             lbl.className = 'd-block small';
             const cb = document.createElement('input');
@@ -696,9 +608,7 @@
         count();
         list.appendChild(box);
     }
-    // Execute waits until the Scrap / Adjustment checklist has exactly the ticks it asks
-    // for, so a count typed with the units forgotten can't be submitted. The server
-    // enforces the same count and refuses a pick that doesn't match.
+    @* Execute stays disabled until the leaving checklist has exactly the ticks it asks for. *@
     function syncLeavingExecute() {
         const btn = document.querySelector('#modifyStockModal .modal-footer .btn-primary');
         const list = document.getElementById('stock-leaving-list');
@@ -708,15 +618,8 @@
         });
         btn.disabled = unmet;
     }
-    // ---- Recorded units on a Scrap or downward Adjustment ------------------------
-    // Mirrors InventoryService.RetireSurplusUnits: once the action has lowered the
-    // stack's count (its TC count, for motors, whose rows are TC-only), recorded On Hand
-    // units can't outnumber what's left. Taking the whole stack takes every row -- just
-    // said, nothing to tick; a count that still has room for every row asks nothing;
-    // otherwise exactly the surplus is ticked. The arithmetic below is the server's, line
-    // for line (Scrap's forced-TC floor, Adjustment's TC reclassify and clamp), because
-    // the question has to match what the server will compute. Rebuilt whenever the stack,
-    // the quantity or the TC box changes, keeping ticks that still apply.
+    @* Recorded units on a Scrap or downward Adjustment: exactly the surplus is ticked, unless the whole *@
+    @* stack goes. The arithmetic below mirrors InventoryService.RetireSurplusUnits and must match it. *@
     function leavingTargets(action, v) {
         const qty = v.qty || 0, tcHave = v.tcqty || 0;
         const q = parseInt((document.getElementById('stock-qty-input') || {}).value, 10);
@@ -745,16 +648,16 @@
 
         const was = {};
         list.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) { was[cb.name + ':' + cb.value] = true; });
-        list.innerHTML = '';   // emptied = nothing posts
+        list.innerHTML = '';   @* emptied = nothing posts *@
         div.style.display = 'none';
-        syncLeavingExecute();  // an empty list never holds Execute back
+        syncLeavingExecute();  @* an empty list never holds Execute back *@
 
         const action = document.getElementById('stock-action-type').value;
         if (action !== 'Scrap' && action !== 'Adjustment') return;
         const v = getSelectedVariant(getStockItem());
         if (!v) return;
         const t = leavingTargets(action, v);
-        if (!t || !(t.newQty < t.qty || t.newTc < t.tcHave)) return;   // the count didn't drop: nothing leaves
+        if (!t || !(t.newQty < t.qty || t.newTc < t.tcHave)) return;   @* the count didn't drop: nothing leaves *@
 
         const note = function (text) {
             const small = document.createElement('small');
@@ -798,8 +701,7 @@
         const qtyInput = document.getElementById('stock-qty-input');
         const helpText = document.getElementById('stock-qty-help');
 
-        // Pass 7B: transfer-pane inputs are inert unless Internal - Transfer is
-        // the active action (re-enabled below when it is).
+        @* Transfer-pane inputs are inert unless Internal - Transfer is the active action. *@
         ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
             const el = document.getElementById(id);
             if (el) el.disabled = true;
@@ -809,14 +711,11 @@
         const variantSel = document.getElementById('stock-variant-sel');
         const addingNew = (action === 'Add' && variantSel && variantSel.value === 'NEW');
 
-        // Edit Details pane: identity fields only. Inputs stay DISABLED (= never
-        // post) unless this action is active; prefilled fresh from the selected
-        // item each time so the human edits what's actually there.
+        @* Edit Details pane: inputs stay disabled, so they never post, unless this action is active. *@
         const editDiv = document.getElementById('stock-edit-div');
         const editOn = (action === 'Edit Details');
         if (editDiv) {
             editDiv.style.display = editOn ? 'block' : 'none';
-            // Pass 7B: edit-line-branch / edit-line no longer live in this pane.
             ['edit-rpn', 'edit-desc', 'edit-brand', 'edit-rpn-mode-real', 'edit-rpn-mode-na'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = !editOn;
@@ -836,13 +735,8 @@
             if (locDiv) locDiv.style.display = 'none';
             if (moveQtyDiv) moveQtyDiv.style.display = 'none';
             qtyInput.required = false;
-            // Pass 7B: seed Branch/Line from the item's CURRENT line so the pane
-            // opens showing where it is now, not a blank slate. Uses getStockItem()
-            // -- the same lookup prefillEditDetails() uses -- because stock-item-id
-            // is a readonly text input, not a select with options to read.
-            // Disabled inputs don't post. These three stay disabled outside this
-            // action so a hidden pane can never contribute a stray value to an
-            // unrelated submit -- the same guard the Edit Details pane uses.
+            @* Seeded from the item's current Line. The three inputs are enabled only for this action, *@
+            @* so a hidden pane can never post a stray value. *@
             ['edit-line-branch', 'edit-line', 'edit-team'].forEach(function (id) {
                 const el = document.getElementById(id);
                 if (el) el.disabled = false;
@@ -863,8 +757,8 @@
         } else {
             qtyDiv.style.display = 'block';
             ownDiv.style.display = 'none';
-            // Add-to-NEW-location reuses the transfer cascade for the address,
-            // but hides the move-qty row (the main Quantity box is the amount).
+            @* Add-to-NEW-location reuses the transfer cascade for the address, *@
+            @* but hides the move-qty row (the main Quantity box is the amount). *@
             if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
             const teamDiv = document.getElementById('stock-variant-team-div');
             if (teamDiv) teamDiv.style.display = addingNew ? 'block' : 'none';
@@ -888,14 +782,8 @@
         refreshUnitPicker();
         refreshLeavingPicker();
     }
-    // ---- Quantity bounds ----------------------------------------------------
-    // Scrap is capped at the selected stack's quantity -- it acts on ONE
-    // variant, so the item total would still over-promise on a split item.
-    // Add and Scrap floor at 1; Adjustment stays signed but can't take the
-    // stack below 0 (floor = -stack qty).
-    // Clamped live rather than left to min/max validation, because Execute
-    // goes through executeSubmit() -> form.submit(), which skips validation.
-    // The server clamps and rejects independently either way.
+    @* Quantity bounds. Scrap is capped at the selected stack. Add and Scrap floor at 1; Adjustment *@
+    @* cannot take the stack below 0. Clamped live because form.submit() skips validation. *@
     function scrapCap() {
         const v = getSelectedVariant(getStockItem());
         return v ? Math.max(0, v.qty || 0) : 0;
@@ -926,7 +814,7 @@
     function clampQty(action) {
         const q = document.getElementById('stock-qty-input');
         if (!q || (action !== 'Add' && action !== 'Scrap' && action !== 'Adjustment')) return;
-        if (q.value === '' || q.value === '-') return;   // let them clear the box / start a minus
+        if (q.value === '' || q.value === '-') return;   @* let them clear the box / start a minus *@
         let v = parseInt(q.value, 10);
         if (action === 'Adjustment') {
             if (isNaN(v)) return;
@@ -939,10 +827,7 @@
         if (action === 'Scrap') v = Math.min(v, scrapCap());
         if (String(v) !== q.value) q.value = String(v);
     }
-    // ---- Edit Details (identity fields) -----------------------------------
-    // Seed the pane from the selected item. Brand LOCKS when the item already
-    // has a real one (fill-if-blank rule); PN gets a live "taken" warning
-    // against the loaded items list (server re-checks authoritatively).
+    @* Edit Details. Seeds from the selected item; Brand locks when it already has a real one. *@
     function prefillEditDetails() {
         const item = getStockItem();
         const rpn = document.getElementById('edit-rpn');
@@ -954,8 +839,8 @@
         const rpnNa = document.getElementById('edit-rpn-mode-na');
         if (!rpn || !desc || !brand) return;
 
-        // "N/A" and blank are the same state -- both land on the N/A toggle,
-        // readOnly (still posts "N/A"); anything else is a real PN, editable.
+        @* "N/A" and blank are the same state -- both land on the N/A toggle, *@
+        @* readOnly (still posts "N/A"); anything else is a real PN, editable. *@
         const rawRpn = item ? (item.rpn || '') : '';
         const isNa = !rawRpn || rawRpn.trim().toUpperCase() === 'N/A';
         rpn.value = isNa ? 'N/A' : rawRpn;
@@ -967,22 +852,17 @@
         const hasBrand = item && item.brand && item.brand.trim() !== ''
             && item.brand.trim().toLowerCase() !== 'unknown';
         brand.value = item ? (item.brand || '') : '';
-        brand.disabled = !item || hasBrand;   // locked if a real brand exists
+        brand.disabled = !item || hasBrand;   @* locked if a real brand exists *@
         if (brandHelp) brandHelp.textContent = hasBrand
             ? 'This item already has a brand — it can\'t be changed here.'
             : 'Brand can only be ADDED when the item has none.';
-
-        // Pass 7B: the Branch/Line pickers moved to Internal - Transfer, which
-        // seeds them itself. Edit Details no longer touches them.
     }
     function populateEditLinePickers(currentLine) {
         setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), currentLine);
     }
     wireLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'));
-    // Auto-fill: picking a Team in the Ownership pane suggests its home Line
-    // (same convenience-not-lock behavior as registration). The pane seeds
-    // from the item's CURRENT line each time it's opened (populateEditLinePickers
-    // above); this only reacts to the human actually changing Team afterward.
+    @* Picking a Team suggests its home Line, a convenience and not a lock. *@
+    @* Reacts only to a change made after the pane has seeded from the item. *@
     (function bindEditTeamAutoFill() {
         const editTeam = document.getElementById('edit-team');
         if (!editTeam) return;
@@ -992,8 +872,8 @@
             setLineCascade(document.getElementById('edit-line-branch'), document.getElementById('edit-line'), suggested);
         });
     })();
-    // Live duplicate check as the PN is typed: warn if another item owns it.
-    // "N/A" is exempt -- it's the shared sentinel, never a real duplicate.
+    @* Live duplicate check as the PN is typed: warn if another item owns it. *@
+    @* "N/A" is exempt -- it's the shared sentinel, never a real duplicate. *@
     (function bindRpnDupCheck() {
         const rpn = document.getElementById('edit-rpn');
         const warn = document.getElementById('edit-rpn-warn');
@@ -1013,9 +893,7 @@
             }
         });
     })();
-    // N/A <-> Has-a-Part# toggle for Edit Details. N/A makes the field
-    // readOnly (not disabled, so it still posts "N/A"); switching back to
-    // Has-a-Part# clears the sentinel and focuses the box for typing.
+    @* N/A toggle: the box goes readOnly, not disabled, so it still posts "N/A". *@
     (function bindEditRpnMode() {
         const real = document.getElementById('edit-rpn-mode-real');
         const na = document.getElementById('edit-rpn-mode-na');
@@ -1037,21 +915,17 @@
         real.addEventListener('change', apply);
         na.addEventListener('change', apply);
     })();
-    // ---- Thermocoupled (motors only) -------------------------------------
-    // Keep in lockstep with InventoryService.IsMotorType: a type ending in
-    // "Motor" (Motor / ID Motor / OD Motor) is TC-eligible; nothing else is.
+    @* Thermocoupled (motors only). Lockstep with InventoryService.IsMotorType: *@
+    @* a type ending in "Motor" is TC-eligible, nothing else is. *@
     function isMotorType(t) {
         return !!t && String(t).trim().toLowerCase().endsWith('motor');
     }
-    // Keep in lockstep with InventoryService.IsCompressorType: exact match
-    // only, same rule the server enforces.
+    @* Keep in lockstep with InventoryService.IsCompressorType: exact match *@
+    @* only, same rule the server enforces. *@
     function isCompressorType(t) {
         return !!t && String(t).trim().toLowerCase() === 'compressor';
     }
-    // ---- Compressor serial capture (Add only) ------------------------------
-    // Pass 17 parity for the jump-in-from-Registry path: same optional,
-    // one-box-per-unit shape New Item Registry already has (reg-serial-rows),
-    // gated to Add + compressor Type. Rebuilt whenever qty or action changes.
+    @* Compressor serials, Add only: one optional box per unit, the same shape as New Item Registry. *@
     function refreshSerialFields(action) {
         const item = getStockItem();
         const div = document.getElementById('stock-serial-div');
@@ -1076,10 +950,8 @@
             rows.appendChild(input);
         }
     }
-    // Show/enable exactly the right TC input for the action, and cap it so the
-    // human can never enter an impossible number. Disabled inputs don't post,
-    // so the hidden twin stays out of the way. Add/Scrap use #stock-tc-input;
-    // Location Transfer uses #loc-tc-input.
+    @* Exactly one TC input is enabled, capped to what's possible: the stock one for Add, Scrap and *@
+    @* Adjustment, the transfer one for Location Transfer. The disabled twin never posts. *@
     function refreshTcFields(action) {
         const item = getStockItem();
         const motor = item && isMotorType(item.type);
@@ -1091,7 +963,7 @@
         const locInput = document.getElementById('loc-tc-input');
         const locHelp = document.getElementById('loc-tc-help');
 
-        // Default: both off. We turn on only what applies below.
+        @* Default: both off. We turn on only what applies below. *@
         const off = function (div, input) {
             if (div) div.style.display = 'none';
             if (input) { input.disabled = true; input.value = 0; }
@@ -1099,7 +971,7 @@
         off(stockDiv, stockInput);
         off(locDiv, locInput);
 
-        if (!motor) return;   // non-motors never carry TC
+        if (!motor) return;   @* non-motors never carry TC *@
 
         const clampInto = function (input, floor, ceil, help, helpText) {
             let v = parseInt(input.value, 10); if (isNaN(v)) v = 0;
@@ -1113,7 +985,7 @@
         };
 
         if (action === 'Add') {
-            // Of the amount being added, any number can be TC (0..qty added).
+            @* Of the amount being added, any number can be TC (0..qty added). *@
             const qty = parseInt((document.getElementById('stock-qty-input') || {}).value, 10) || 0;
             stockDiv.style.display = 'block';
             stockInput.disabled = false;
@@ -1124,7 +996,7 @@
             const tcHave = v ? (v.tcqty || 0) : 0;
             const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
             const eff = Math.min(scrapQty, v ? (v.qty || 0) : scrapQty);
-            const floor = Math.max(0, eff - nonTc);      // forced TC if not enough non-TC to cover
+            const floor = Math.max(0, eff - nonTc);      @* forced TC if not enough non-TC to cover *@
             const ceil = Math.min(eff, tcHave);
             stockDiv.style.display = 'block';
             stockInput.disabled = false;
@@ -1141,11 +1013,8 @@
             locInput.disabled = false;
             clampInto(locInput, floor, Math.max(floor, ceil), locHelp, 'How many moved are TC?');
         } else if (action === 'Adjustment') {
-            // Reclassifying EXISTING on-hand stock as TC -- independent of
-            // whatever quantity delta this same adjustment also makes ("take
-            // my current N, mark X of those as TC" rather than adding new TC
-            // stock, which Add already covers). Capped by what's not already
-            // TC at this location right now.
+            @* Reclassifies existing stock as TC, apart from any quantity change here (new TC is Add's job). *@
+            @* Capped at what isn't TC on this stack yet. *@
             const v = getSelectedVariant(item);
             const tcHave = v ? (v.tcqty || 0) : 0;
             const nonTc = v ? Math.max(0, (v.qty || 0) - tcHave) : 0;
@@ -1154,8 +1023,8 @@
             clampInto(stockInput, 0, nonTc, stockHelp, 'How many of the existing stock should be marked thermocoupled?');
         }
     }
-    // Recompute TC caps (and, on Add, the serial-box count) live as the
-    // driving quantities change.
+    @* Recompute TC caps (and, on Add, the serial-box count) live as the *@
+    @* driving quantities change. *@
     (function bindTcRecompute() {
         const q = document.getElementById('stock-qty-input');
         if (q) q.addEventListener('input', function () {
@@ -1165,7 +1034,7 @@
             if (a === 'Add') refreshSerialFields(a);
             if (a === 'Scrap' || a === 'Adjustment') refreshLeavingPicker();
         });
-        // How much TC goes (Scrap) or is reclassified (Adjustment) decides whether TC rows need ticking.
+        @* How much TC goes (Scrap) or is reclassified (Adjustment) decides whether TC rows need ticking. *@
         const stc = document.getElementById('stock-tc-input');
         if (stc) stc.addEventListener('input', refreshLeavingPicker);
         const mq = document.getElementById('loc-moveqty');
@@ -1175,18 +1044,18 @@
                 refreshUnitPicker();
             }
         });
-        // How much TC moves decides whether (and how many) TC rows need ticking.
+        @* How much TC moves decides whether (and how many) TC rows need ticking. *@
         const ltc = document.getElementById('loc-tc-input');
         if (ltc) ltc.addEventListener('input', refreshUnitPicker);
     })();
-    // Variant choice changes reshape the panel: re-seed transfer source,
-    // re-prefill move qty, re-check merges, or reveal the new-location cascade.
+    @* Variant choice changes reshape the panel: re-seed transfer source, *@
+    @* re-prefill move qty, re-check merges, or reveal the new-location cascade. *@
     (function bindVariantSel() {
         const sel = document.getElementById('stock-variant-sel');
         if (!sel) return;
 
-        // Narrowing to a team rebuilds the stack list, which changes what's
-        // selected -- so it has to run the same follow-ups a manual pick does.
+        @* Narrowing to a team rebuilds the stack list, which changes what's *@
+        @* selected -- so it has to run the same follow-ups a manual pick does. *@
         const tf = document.getElementById('stock-variant-team-filter');
         if (tf) tf.addEventListener('change', function () {
             const action = document.getElementById('stock-action-type').value;
@@ -1198,9 +1067,9 @@
             const action = document.getElementById('stock-action-type').value;
             refreshDeleteVariantBtn();
             refreshVariantTeamNote();
-            refreshQtyCap(action);   // a different stack is a different Scrap ceiling
+            refreshQtyCap(action);   @* a different stack is a different Scrap ceiling *@
             if (typeof refreshTcFields === 'function') refreshTcFields(action);
-            refreshLeavingPicker();  // ...and a different set of recorded units
+            refreshLeavingPicker();  @* ...and a different set of recorded units *@
             if (action === 'Location Transfer') {
                 if (typeof seedLocationTransfer === 'function') seedLocationTransfer();
                 refreshMoveQty();
@@ -1208,7 +1077,7 @@
                 if (typeof refreshTcFields === 'function') refreshTcFields(action);
                 refreshUnitPicker();
             } else if (action === 'Add') {
-                // Only the loc-div/team-div visibility depends on NEW vs existing.
+                @* Only the loc-div/team-div visibility depends on NEW vs existing. *@
                 const locDiv = document.getElementById('stock-loc-div');
                 const addingNew = (sel.value === 'NEW');
                 if (locDiv) locDiv.style.display = addingNew ? 'block' : 'none';
@@ -1222,17 +1091,10 @@
             }
         });
     })();
-    /* ---- LOCATION TRANSFER cascade ----------------------------------------
-       Item-first: fields seed from the selected item's stored location, then
-       can be edited. Major/Sub options come from the REAL coded hierarchy
-       (locHierarchyData = Parent -> Major -> [Subs]). 0 = "unspecified" and is
-       selectable at every level below Parent; setting a level to 0 leaves the
-       levels under it with only their 0 option (they pin to 0 naturally,
-       because the hierarchy has no children under a 0 segment). */
+    @* Location Transfer cascade: seeds from the stored location. Major and Sub come from the coded
+       hierarchy. 0 = unspecified below Parent, and a level at 0 leaves only 0 under it. *@
     const locHierarchyData = @Html.Raw(ViewBag.LocationHierarchyCodedJson ?? "{}");
-    // Populate a <select> with a leading "0 (Unspecified)", the given values,
-    // and the item's current value if it isn't already present, then preselect
-    // `current` (or 0 when current is blank/0).
+    @* Leads with "0 (Unspecified)" and keeps the current value even when it isn't in the list. *@
     function locFill(selectEl, values, current) {
         if (!selectEl) return;
         const seen = {};
@@ -1269,7 +1131,7 @@
         if (!p) return [];
         return p[majorCode] || [];
     }
-    // Rebuild the FDA preview from the five fields. Blank segment -> "0".
+    @* Rebuild the FDA preview from the five fields. Blank segment -> "0". *@
     function locRefreshFda() {
         const seg = function (id) {
             const el = document.getElementById(id);
@@ -1288,7 +1150,7 @@
         const warn = document.getElementById('loc-needs-item');
         if (warn) warn.style.display = on ? 'none' : 'block';
     }
-    // Seed the cascade from the currently-selected item's stored location.
+    @* Seed the cascade from the currently-selected item's stored location. *@
     function seedLocationTransfer() {
         const idEl = document.getElementById('stock-item-id');
         const itemId = idEl ? idEl.value : '';
@@ -1303,15 +1165,15 @@
         const item = itemsList.find(function (i) { return i.id === itemId; });
         if (!item) { locSetEnabled(false); if (cur) cur.textContent = '--'; return; }
 
-        // Seed from the SELECTED variant (transfer source), not the item-level
-        // primary -- for single-location items these are the same thing.
+        @* Seed from the SELECTED variant (transfer source), not the item-level *@
+        @* primary -- for single-location items these are the same thing. *@
         const srcVar = getSelectedVariant(item) || item;
 
         locSetEnabled(true);
         if (cur) cur.textContent = srcVar.fda || item.fda || '--';
 
-        // Parent (fixed coded select). Add the stored code if it isn't a known
-        // option so we never silently drop a real value.
+        @* Parent (fixed coded select). Add the stored code if it isn't a known *@
+        @* option so we never silently drop a real value. *@
         const parentEl = document.getElementById('loc-parent');
         const pcode = (srcVar.parent == null ? '' : String(srcVar.parent).trim());
         if (parentEl) {
@@ -1337,7 +1199,7 @@
         locRefreshFda();
         refreshMergeNote();
     }
-    // Wire the cascade once on load. Bind-time does no data reads (safe re: const TDZ).
+    @* Wire the cascade once on load. Bind-time does no data reads (safe re: const TDZ). *@
     (function bindLocTransfer() {
         const parentEl = document.getElementById('loc-parent');
         const majorEl = document.getElementById('loc-major');
@@ -1359,9 +1221,7 @@
         if (rackEl) rackEl.addEventListener('input', fdaAndMerge);
         if (rowEl) rowEl.addEventListener('input', fdaAndMerge);
 
-        // Rack/Row suggestions -- loc-parent/major/sub are CODE-valued
-        // selects already (unlike reg-/exp-'s name-valued ones), so no
-        // encodeLoc() needed here.
+        @* Rack/Row suggestions. These selects already hold codes, so no encodeLoc(). *@
         if (rackEl) {
             bindValueAutocomplete(rackEl, document.getElementById('loc-rack-list'), function () {
                 return racksRowsFor(parentEl ? parentEl.value : '', majorEl ? majorEl.value : '', subEl ? subEl.value : '').racks;

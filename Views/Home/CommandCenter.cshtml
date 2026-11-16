@@ -16,11 +16,7 @@
     int pnPct = totalItems > 0 ? (int)System.Math.Round(100.0 * pnBacklogCount / totalItems) : 0;
     int serialPct = compUnitsTotal > 0 ? (int)System.Math.Round(100.0 * compUnitsNeedSerial / compUnitsTotal) : 0;
 
-    // Same zone() closure Index.cshtml uses to build zoneDataMap -- Parent name
-    // -> {TotalRows, HasAlert, Majors:{...}}. The new Location List renders from
-    // the SAME server-side ViewBag.MapZones (Name+Code), reading counts out of
-    // this same JSON object client-side via resizeMap()/syncLocationList(), so
-    // list and pins can never disagree with each other.
+    // Parent name -> {TotalRows, HasAlert, Majors}. The map pins and the Location List both read this one object.
     Func<string, bool> realSeg = s => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
     Func<string, object> zone = code =>
     {
@@ -50,29 +46,21 @@
         mapData[lp.Name] = zone(lp.Code);
     }
     var mapDataJson = System.Text.Json.JsonSerializer.Serialize(mapData);
-    // Code -> friendly name, for the zone-menu's Major/Sub labels (locDecode()
-    // in site.js). Same source/shape as Index.cshtml's own copy.
+    // Code -> friendly name, for the zone menu's Major and Sub labels.
     var locDecodeJson = System.Text.Json.JsonSerializer.Serialize(Visual_Inventory_System.Services.LocationCodec.DecodeMap);
 }
 
 <style>
-    /* Pass 28 (2c): Command Center's own visual language -- unlike Search Center
-       (2b), this page picks up the sidebar's light/shadow-card look now rather
-       than waiting for Phase 4, per Kason's call once he saw the two side by
-       side. Built entirely from the existing --vis-* tokens (same approach the
-       sidebar shell itself uses -- "no new light/dark override rules needed,
-       adapts to both themes for free"), not a one-off. */
+    @* Command Center's styles, built from the --vis-* tokens so both themes work without overrides. *@
     .cc-page {
         padding: 28px 32px 48px;
         max-width: 1440px;
         margin: 0 auto;
     }
 
-    /* .cc-section-title and .cc-card moved to site.css -- Search Center
-       reuses both for its Actions row, and two copies of a shared visual
-       language is how they drift. */
+    @* .cc-section-title and .cc-card live in site.css: Search Center uses them too. *@
 
-    /* KPI strip */
+    @* KPI strip *@
     .cc-kpi-row {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
@@ -110,7 +98,7 @@
         letter-spacing: .04em;
     }
 
-    /* Map + Location List row */
+    @* Map + Location List row *@
     .cc-main-row {
         display: grid;
         grid-template-columns: 2fr 1fr;
@@ -168,7 +156,7 @@
         color: var(--vis-red);
     }
 
-    /* Donuts */
+    @* Donuts *@
     .cc-donut-row {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -217,7 +205,7 @@
         color: var(--vis-text-muted);
     }
 
-    /* Quick Actions */
+    @* Quick Actions *@
     .cc-quick-row {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -225,10 +213,9 @@
         margin-bottom: 28px;
     }
 
-    /* .cc-quick-btn moved to site.css alongside .cc-card -- Search Center's
-       Actions row uses it too. */
+    @* .cc-quick-btn lives in site.css. *@
 
-    /* Bottom row */
+    @* Bottom row *@
     .cc-bottom-row {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -249,8 +236,7 @@
             border-color: var(--vis-red);
         }
 
-    /* Sits above the card's own stretched-link so it opens Alert Rules
-       instead of following the card through to Search Center. */
+    @* Above the card's stretched link, so it opens Alert Rules instead of following the card. *@
     .cc-bottom-gear {
         position: absolute;
         top: 10px;
@@ -302,9 +288,7 @@
         }
     }
 
-    /* ---- Map: pins + popover menus, ported from Index.cshtml, retheme'd onto
-       --vis-* tokens (the original copy hardcoded dark literals -- #14151A etc
-       -- so it never actually adapted to the light theme toggle; this one does). */
+    @* Map pins and popover menus, on the --vis-* tokens. *@
     .map-container {
         position: relative;
         min-height: 460px;
@@ -494,8 +478,7 @@
             transform: rotate(180deg);
         }
 
-    /* Activity Feed timeline, ported verbatim from Index.cshtml (already
-       --vis-* token driven). */
+    @* Activity Feed timeline. *@
     .activity-feed {
         border-left: 2px solid var(--vis-card-border);
         margin-left: 10px;
@@ -520,7 +503,7 @@
 
 <div class="cc-page">
 
-    <!-- KPI strip -->
+    @* KPI strip *@
     <div class="cc-kpi-row">
         <a href="/Home/AllItems" class="cc-card cc-kpi" title="View all items in inventory">
             <span class="cc-kpi-value">@totalItems</span>
@@ -544,7 +527,7 @@
         </a>
     </div>
 
-    <!-- Map + Location list -->
+    @* Map + Location list *@
     <div class="cc-main-row">
         <div class="cc-card cc-map-card">
             <div class="map-container">
@@ -580,7 +563,7 @@
         </div>
     </div>
 
-    <!-- Donuts -->
+    @* Donuts *@
     <div class="cc-donut-row">
         <div class="cc-card cc-donut-card">
             <div class="cc-donut" style="--pct:@pnPct"><div class="cc-donut-hole">@pnPct%</div></div>
@@ -598,7 +581,7 @@
         </div>
     </div>
 
-    <!-- Quick Actions -->
+    @* Quick Actions *@
     <div class="cc-section-title">Quick Actions</div>
     <div class="cc-quick-row">
         @if (CurrentUser.Level >= AccessLevels.Standard)
@@ -641,7 +624,7 @@
         }
     </div>
 
-    <!-- Bottom row -->
+    @* Bottom row *@
     <div class="cc-bottom-row">
         <div class="cc-card cc-bottom-card">
             <a href="/Home/SearchCenter?stockView=LowStock" class="stretched-link text-decoration-none">
@@ -662,7 +645,7 @@
         </a>
     </div>
 
-    <!-- Activity Feed -->
+    @* Activity Feed *@
     <div class="cc-section-title">Activity Feed</div>
     <div class="cc-card cc-activity-card">
         @if (recentActivity.Any())
@@ -683,12 +666,7 @@
                         log.ActionType == "Order Picked Up" ? "Order Picked Up" :
                         log.ActionType == "Item Deleted" ? "Item Deleted" :
                         log.ActionType == "Adjustment" ? "Stock Adjusted" :
-                        // Falls back to the action's own name, the same way the
-                        // non-item branch above already does (Pass 14) -- a new
-                        // item ActionType reads correctly here with nothing to
-                        // update. "Stock Adjusted" used to be this default, which
-                        // silently mislabelled Edit Details, Unit Logged, Stack
-                        // Deleted and Loan Scrap as stock changes they aren't.
+                        // Anything else shows the action's own name.
                         log.ActionType;
 
                     var localTs = log.Timestamp.ToLocalTime();
@@ -741,9 +719,7 @@
     </div>
 </div>
 
-@* Same const-before-partial ordering the Traps section documents (Pass 28 2a/2b):
-   these must render before New Item Registry / Modify Stock, since both
-   partials reference them at their own script's top level. *@
+@* These constants must render before the two partials below: both read them at their script's top level. *@
 <script>
     const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
@@ -755,11 +731,7 @@
 
 @await Html.PartialAsync("_ModifyStockPartial")
 @await Html.PartialAsync("_NewItemRegistryPartial")
-@* Found missing during the 2d.1 legibility pass: nothing triggered
-   #modifyAlertsModal anywhere after Index.cshtml was retired in 2d -- this
-   partial was never actually wired into either new page. Per-item and bulk
-   (Management+) alert thresholds were unreachable in the live app until now.
-   The trigger is the gear icon on the Stock Alerts card above. *@
+@* Alert Rules is opened from the gear on the Stock Alerts card. *@
 @await Html.PartialAsync("_AlertRulesPartial")
 
 <script>
@@ -917,7 +889,7 @@
                 zoneDiv.onclick = () => window.location.href = a.href;
             }
 
-            // Hover cross-highlight with the matching Location List row.
+            @* Hover cross-highlight with the matching Location List row. *@
             zoneDiv.addEventListener('mouseenter', () => setLocHover(title, true));
             zoneDiv.addEventListener('mouseleave', () => setLocHover(title, false));
 
@@ -927,8 +899,7 @@
         syncLocationList();
     }
 
-    // Fills each Location List row's count/alert badge from the SAME
-    // zoneDataMap object the pins read, so list and map can never disagree.
+    @* Fills each Location List row from the same zoneDataMap the pins read. *@
     function syncLocationList() {
         document.querySelectorAll('#cc-location-list .cc-loc-row').forEach(row => {
             const title = row.dataset.zoneTitle;

@@ -2,14 +2,7 @@
 @using Visual_Inventory_System.Models
 @model Visual_Inventory_System.Models.ViewModels.ItemCardViewModel
 @inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
-@*
-    Pass 40 -- the Item Card. Rendered by HomeController.ItemCard and injected
-    into #itemCardModal's .modal-content (SearchCenter.cshtml). Every action
-    button is a data-card-action the page's own script routes to the existing
-    Add to Cart / Modify Stock / Request Transfer / Delete Item modals, after
-    this one has finished hiding -- same hidden.bs.modal chaining as every other
-    modal-to-modal hop, so two Bootstrap modals never stack.
-*@
+@* The Item Card. Loaded into #itemCardModal. Buttons carry data-card-action; the page routes them once this modal has hidden. *@
 @{
     var it = Model.Item;
     var vars = it.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
@@ -23,17 +16,14 @@
     int tcOnHand = vars.Sum(v => v.ThermocoupledQty);
     string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s!;
 
-    // Threshold status reads the same way Stock Alerts does: at or under the
-    // threshold is low, zero is out.
+    // Same reading as Stock Alerts: at or under the threshold is low, zero is out.
     string thrLabel, thrClass;
     if (it.AlertThreshold <= 0) { thrLabel = "No alert threshold set"; thrClass = "text-light-gray"; }
     else if (Model.OnHand == 0) { thrLabel = $"Out of stock (threshold {it.AlertThreshold})"; thrClass = "text-danger fw-bold"; }
     else if (Model.OnHand <= it.AlertThreshold) { thrLabel = $"Low — {Model.OnHand} on hand, threshold {it.AlertThreshold}"; thrClass = "text-warning fw-bold"; }
     else { thrLabel = $"OK — {Model.OnHand} on hand, threshold {it.AlertThreshold}"; thrClass = "text-success"; }
 
-    // For a compressor, LoanOutstanding means "picked up, Done Using not
-    // pressed yet" -- compressors are consumed, not returned (see
-    // InventoryService.LoanableQuantity). Label it for what it is.
+    // For a compressor, LoanOutstanding means picked up and Done Using not pressed yet.
     string loanLabel = Model.IsCompressor ? "Awaiting Done Using" : "Out on loan";
     bool showLoan = Model.IsLoanable || Model.IsCompressor || Model.OutOnLoan > 0;
 
@@ -47,7 +37,7 @@
         return v == null ? "—" : $"V{v.VariantNumber} · {LocationCodec.FriendlyPath(v.Parent, v.Major, v.Sub, v.Rack, v.Row, v.FdaString)}";
     }
 
-    // Reservations (2026-11-08): live holds, per stack and per named unit.
+    // Live holds, per stack and per named unit.
     var res = Model.Reservations;
     var resById = res.ToDictionary(r => r.Id);
     var heldByVariant = res.SelectMany(r => r.Lines).GroupBy(l => l.ItemVariantId)
@@ -84,7 +74,7 @@
 </div>
 
 <div class="modal-body text-white">
-    @* ---- Quantity, as it stands right now ---- *@
+    @* Quantity right now *@
     <div class="ic-stats mb-2">
         <div class="ic-stat"><div class="ic-stat-val">@Model.OnHand</div><div class="ic-stat-lbl">On hand</div></div>
         @if (Model.IsOwnLine && isStandard)
@@ -121,7 +111,7 @@
         </div>
     }
 
-    @* ---- Reserved (2026-11-08): Kason's sentence, one block per live hold ---- *@
+    @* Reserved: one block per live hold *@
     @if (res.Any())
     {
         <div class="ic-section-title">Reserved <span class="ic-held-n">(@res.Count)</span></div>
@@ -175,7 +165,7 @@
         </div>
     }
 
-    @* ---- What VIS stores about it ---- *@
+    @* What VIS stores about it *@
     <div class="ic-section-title">Details</div>
     <dl class="ic-details mb-3">
         <dt>Description</dt><dd class="text-break">@Dash(it.Description)</dd>
@@ -187,7 +177,7 @@
         <dt>Last updated</dt><dd>@(it.LastUpdated.HasValue ? it.LastUpdated.Value.ToLocalTime().ToString("MMM d, yyyy h:mm tt") : "—")@(string.IsNullOrWhiteSpace(it.UpdatedBy) ? "" : $" by {it.UpdatedBy.Replace('.', ' ')}")</dd>
     </dl>
 
-    @* ---- Where it physically is ---- *@
+    @* Where it is *@
     <div class="ic-section-title">Stacks (@vars.Count)</div>
     @if (!vars.Any())
     {
@@ -219,7 +209,7 @@
         </div>
     }
 
-    @* ---- Individual units (compressors / TC motors) -- view only ---- *@
+    @* Individual units (compressors and TC motors), view only *@
     @if (Model.IsCompressor)
     {
         int withSerial = compOnHand.Count(u => !string.IsNullOrWhiteSpace(u.SerialNumber));
@@ -300,7 +290,7 @@
         </div>
     }
 
-    @* ---- Recent activity (Line-scoped, same as View Logs) ---- *@
+    @* Recent activity, Line-scoped like View Logs *@
     <div class="ic-section-title">Recent activity</div>
     @if (!Model.RecentLogs.Any())
     {

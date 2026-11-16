@@ -3,9 +3,7 @@ using Visual_Inventory_System.Models;
 
 namespace Visual_Inventory_System.Models.ViewModels
 {
-    // Backs the two-section "Tasks Available" page:
-    //   Orders     -> "Go Get These" (the pending-order pickup queue)
-    //   StoreTasks -> "Go Store These" (claimable sticky-note tasks)
+    // Tasks Available page. Orders = "Go Get These", StoreTasks = "Go Store These".
     public class TasksAvailableViewModel
     {
         public List<PendingOrderViewModel> Orders { get; set; } = new();

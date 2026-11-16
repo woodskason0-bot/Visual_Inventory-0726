@@ -41,8 +41,7 @@
     .queue-card .item-list { font-size: 12px; color: #94A3B8; margin: 6px 0 0; padding-left: 18px; }
     .text-dim { color: #94A3B8 !important; }
 
-    /* "Go Store These" corkboard -- sticky notes as theme-aware cards with an
-       amber edge (avoids a full-yellow card that would fail dark-mode contrast). */
+    @* "Go Store These" corkboard: theme-following cards with an amber edge. *@
     .board { display: flex; flex-wrap: wrap; gap: 1rem; }
     .sticky {
         flex: 0 1 260px;
@@ -93,10 +92,7 @@
     }
     @if (shortOrderId.HasValue && shortLines.Any())
     {
-        <!-- Short-pull correction: not enough on the shelf to honor the line as
-             ordered. Stock was left untouched -- report what's actually there,
-             per location, and a corrected order gets issued and picked up in the
-             same action. See OrderService.ReportShortPull. -->
+        @* Short-pull correction: report what is on the shelf per location, then a corrected order is issued and picked up. *@
         <div class="queue-card p-3 mb-4" style="border-left: 4px solid var(--vis-red);">
             <h6 class="fw-bold mb-2"><i class="bi bi-exclamation-triangle-fill me-1" style="color: var(--vis-red);"></i>Short on Order #@shortOrderId</h6>
             <p class="text-dim small mb-3">
@@ -125,9 +121,7 @@
                             <button type="submit" class="btn btn-sm btn-outline-danger">Correct &amp; Pick Up</button>
                         </div>
                     </div>
-                    @* The recorded units on each shelf. If the picker lowers a count below the
-                       units recorded there, this asks which are gone (see InventoryService.
-                       RetireSurplusUnits); empty and hidden otherwise, so nothing posts. *@
+                    @* Recorded units per shelf. Shown only when a count is lowered below them. *@
                     @foreach (var loc in line.Locations.Where(l => l.CompressorUnits.Any() || l.MotorUnits.Any()))
                     {
                         <div class="short-units mt-2 p-2 border rounded vis-inset-box d-none" data-variant="@loc.VariantId">
@@ -147,11 +141,7 @@
         </div>
     }
 
-    <!-- Deliberate partial pickup (see OrderService.PickUpPartialAndSplit) -- hidden
-         until "Take these, short-pull the rest" is clicked on a shortfall banner
-         below. JS fills in the hidden fields, item description, and serial rows,
-         then reveals this card. Same shape as the Short-pull correction card
-         above: one shared form, populated per-click rather than one per line. -->
+    @* Deliberate partial pickup: one shared form, filled in by script when a shortfall banner is used. *@
     <div class="queue-card p-3 mb-4 d-none" id="partial-pickup-card" style="border-left: 4px solid var(--vis-red);">
         <h6 class="fw-bold mb-2"><i class="bi bi-box-seam me-1" style="color: var(--vis-red);"></i>Take Partial Pickup</h6>
         <p class="text-dim small mb-2" id="partial-pickup-desc"></p>
@@ -167,7 +157,7 @@
         </form>
     </div>
 
-    <!-- ============ GO GET THESE (pending-order pickup queue) ============ -->
+    @* Go Get These: the pending-order pickup queue *@
     <h4 class="section-h mb-2"><i class="bi bi-box-seam me-2 text-success"></i>Go Get These</h4>
     <div class="mb-2 d-flex gap-3">
         <span class="badge bg-success fs-6">Ready: @ready.Count</span>
@@ -353,7 +343,7 @@
         </div>
     </div>
 
-    <!-- ============ GO STORE THESE (new claimable sticky-note tasks) ============ -->
+    @* Go Store These: claimable sticky-note tasks *@
     <h4 class="section-h mb-2"><i class="bi bi-sticky me-2" style="color:#F59E0B;"></i>Go Store These</h4>
     <div class="text-dim mb-3">Hand-posted put-away tasks. Claim one to lock your name to it; finish it and it drops off the board.</div>
 
@@ -441,19 +431,12 @@
 (function () {
     "use strict";
 
-    // Only units with a REAL serial can be offered as named options. A
-    // serial-less On Hand row (lab-only, or Pass 29's FIFO fallback) rendered
-    // as an option becomes `value="null"` via String(null) -- selectable, and
-    // the stagger below would even default to it -- so a picker who touches
-    // nothing posts the literal serial "null". The server filters these out of
-    // the payload too; this keeps the client honest if that ever changes.
+    @* Only units with a real serial are named options. A serial-less row would post the literal "null". *@
     function namedUnits(units) {
         return (units || []).filter(function (u) { return u.serial; });
     }
 
-    // Real <option> nodes, never an HTML string: serial and lab # are typed by
-    // Standard-level users (Log Units, Modify Stock Add) and land in every
-    // picker's session.
+    @* Real option nodes, never an HTML string: serials and lab numbers are user-typed. *@
     function fillOptions(sel, units) {
         sel.options.length = 0;
         namedUnits(units).forEach(function (u) {
@@ -464,11 +447,7 @@
         sel.add(new Option("Serial not in list -- add serial", "__ADD__"));
     }
 
-    // A picker choosing the same on-hand serial for two different units on the
-    // same line is caught server-side now (see AssignOneCompressorUnit), but
-    // catching it before Confirm is friendlier -- disable a known serial in
-    // every sibling select on the same line once another select has claimed
-    // it, and free it back up the moment that select moves off it.
+    @* A known serial claimed by one select is disabled in its siblings on the same line. *@
     function enforceSerialExclusivity(container) {
         if (!container) return;
         var selects = Array.prototype.slice.call(container.querySelectorAll(".comp-serial-select"));
@@ -503,10 +482,7 @@
             }
             sel.disabled = false;
             fillOptions(sel, units);
-            // Stagger the default across units so a multi-unit line doesn't
-            // open with every dropdown already aimed at the same physical
-            // serial -- one real serial per unit while they last, "No serial"
-            // once they run out, rather than everyone defaulting to option 0.
+            @* Stagger the defaults: one real serial per unit while they last, then "No serial". *@
             var named = namedUnits(units);
             sel.value = (idx < named.length) ? named[idx].serial : "__NONE__";
             if (manual) manual.classList.add("d-none");
@@ -606,8 +582,7 @@
                     '</div>';
             }
             rows.innerHTML = html;
-            // Same stagger as populate() -- one real serial per unit while
-            // they last, instead of every row opening on the same default.
+            @* Same stagger as populate(). *@
             var namedHere = namedUnits(units);
             rows.querySelectorAll(".comp-serial-select").forEach(function (sel, idx) {
                 fillOptions(sel, units);
@@ -626,12 +601,8 @@
         }
     });
 
-    // ---- Short-pull correction: which recorded units are gone ----------------
-    // Mirrors OrderService.ReportShortPull / InventoryService.RetireSurplusUnits. A count
-    // typed below the units recorded On Hand on that shelf has to say which of them are
-    // gone (exactly the surplus); a count of 0 takes every one with no question; a count
-    // that is unchanged or higher asks nothing. Motors' rows are TC-only, so their surplus
-    // is rows minus the TC that still fits. The server refuses a pick that doesn't match.
+    @* Short-pull correction: which recorded units are gone. A count below the recorded units asks for *@
+    @* exactly the surplus, a count of 0 takes all, anything else asks nothing. The server checks the same. *@
     document.querySelectorAll(".short-units").forEach(function (box) {
         var variant = box.getAttribute("data-variant");
         var form = box.closest("form");
@@ -642,9 +613,7 @@
         var data = {};
         try { data = JSON.parse(dataEl.textContent || "{}"); } catch (e) { return; }
 
-        // The submit button waits until every asked-for tick count is met, so the common
-        // mistake (a count typed, the units forgotten) can't be submitted at all. The
-        // server enforces the same count and puts the form back if it refuses.
+        @* Submit stays disabled until every tick count is met. *@
         function syncSubmit() {
             var btn = form.querySelector("button[type=submit]");
             if (!btn) return;
@@ -708,7 +677,7 @@
             var after = parseInt(input.value, 10);
             if (isNaN(after) || after < 0) after = isNaN(after) ? data.qty : 0;
             var newTc = Math.min(data.tc || 0, after);
-            if (!(after < data.qty || newTc < (data.tc || 0))) { syncSubmit(); return; }   // unchanged or higher: nothing leaves
+            if (!(after < data.qty || newTc < (data.tc || 0))) { syncSubmit(); return; }   @* unchanged or higher: nothing leaves *@
 
             var cunits = data.cunits || [], munits = data.munits || [];
             var cSurplus = cunits.length - after;

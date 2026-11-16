@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;   // AsNoTracking on the map-zone queries (Pass 8)
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using Visual_Inventory_System.Data;
@@ -9,11 +9,8 @@ using Visual_Inventory_System.Services;
 namespace Visual_Inventory_System.Controllers
 {
     /// <summary>
-    /// App Settings: the one screen that replaces "open the SQLite file and
-    /// edit a row by hand." Gated by [RequireSuperuser] -- session name must
-    /// match Superuser:UserName AND the session must have entered the
-    /// Superuser:Passcode from appsettings.json. Every change here writes a
-    /// TransactionLog row, same convention as Edit Details.
+    /// App Settings: the screen that replaces editing the SQLite file by hand.
+    /// Superuser name and passcode required. Every change writes a TransactionLog row.
     /// </summary>
     [RequireSuperuser]
     public class SettingsController : Controller
@@ -21,8 +18,7 @@ namespace Visual_Inventory_System.Controllers
         private readonly AppDbContext _db;
         private readonly SuperuserGateService _gate;
         private readonly CurrentUserService _currentUser;
-        // Pass 9: approving a held intake runs the SAME commit path the Intake
-        // screen uses, rather than a second copy of the logic living in here.
+        // Approving a held intake runs the same commit path the Intake screen uses.
         private readonly InventoryService _inventoryService;
 
         public SettingsController(AppDbContext db, SuperuserGateService gate,
@@ -66,8 +62,7 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult Index(string? manageTeam)
         {
             ViewBag.Teams = _db.Teams.OrderByDescending(t => t.IsActive).ThenBy(t => t.Name).ToList();
-            // Team-centric membership picker: pick a team, see/edit who's on it.
-            // Shown on the Users table as a joined list ("Samurai, Ninja").
+            // Team membership picker: pick a team, see and edit who is on it.
             ViewBag.UserTeamNames = _db.UserTeams
                 .GroupBy(ut => ut.UserId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.TeamName).OrderBy(n => n).ToList());
@@ -76,23 +71,20 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.TeamMemberIds = manageTeam.Length > 0
                 ? _db.UserTeams.Where(ut => ut.TeamName == manageTeam).Select(ut => ut.UserId).ToHashSet()
                 : new HashSet<int>();
-            // Pass 9: intakes held because their location wasn't recognised.
+            // Intakes held because their location was not recognised.
             ViewBag.PendingIntakes = _db.IntakeBatches.Include(b => b.Rows)
                 .Where(b => b.Status == IntakeStatus.Pending)
                 .OrderBy(b => b.SubmittedAt).ToList();
             ViewBag.Locations = _db.Locations.OrderBy(l => l.Level).ThenBy(l => l.Name).ToList();
-            // Pass 8: existing map rectangles, so the editor can draw what's already
-            // placed and you can see coverage before adding more.
+            // Existing map rectangles, so the editor shows current coverage.
             ViewBag.MapZones = _db.LocationZones.AsNoTracking()
                 .Join(_db.Locations, z => z.LocationId, l => l.Id,
                       (z, l) => new { z.Id, z.LocationId, l.Name, z.X, z.Y, z.W, z.H, z.Label })
                 .OrderBy(z => z.Name).ToList();
-            // Codes shown next to each name are DERIVED, never stored -- so what the
-            // panel displays is exactly what Encode() will produce.
+            // Codes are derived, never stored: this is exactly what Encode() produces.
             ViewBag.LocationCodes = _db.Locations.ToList()
                 .ToDictionary(l => l.Id, l => LocationCodec.Encode(l.Name));
-            // How many items still point at each team name -- shown next to Hide so
-            // nobody hides a team without seeing what references it.
+            // Items per team name, shown next to Hide.
             ViewBag.TeamUsage = _db.InventoryItems
                 .Where(i => i.Team != null && i.Team != "")
                 .GroupBy(i => i.Team)
@@ -104,14 +96,11 @@ namespace Visual_Inventory_System.Controllers
                 .ToDictionary(s => s.UserId, s => s.Enabled);
             ViewBag.OrgStructureJson = System.Text.Json.JsonSerializer.Serialize(OrgStructure.BranchLines);
 
-            // Branches/Lines management (Pass 13). Shown regardless of IsActive,
-            // same as Teams/Locations above -- Settings needs to see hidden ones
-            // to bring them back.
+            // Hidden branches and lines are listed too, so they can be brought back.
             ViewBag.Branches = _db.Branches.OrderByDescending(b => b.IsActive).ThenBy(b => b.Name).ToList();
             ViewBag.OrgLinesAll = _db.OrgLines.Include(l => l.Branch)
                 .OrderByDescending(l => l.IsActive).ThenBy(l => l.Branch!.Name).ThenBy(l => l.Name).ToList();
-            // How many items/users still carry each Line string -- shown next to
-            // Hide so nobody hides a Line without seeing what references it.
+            // Items per Line, shown next to Hide.
             ViewBag.LineUsage = _db.InventoryItems
                 .Where(i => i.Line != null && i.Line != "")
                 .GroupBy(i => i.Line)
@@ -204,8 +193,7 @@ namespace Visual_Inventory_System.Controllers
             line = (line ?? "").Trim();
             string oldDescription = DescribeAssignment(user.Line, user.Branch);
 
-            // "— Entire Branch —" sentinel: assign the whole Branch instead of one
-            // Line. Mutually exclusive with Line, same as the model doc says.
+            // "__WHOLE_BRANCH__" assigns the whole Branch instead of one Line. Never both.
             if (line == "__WHOLE_BRANCH__")
             {
                 var branchName = (branch ?? "").Trim();
@@ -272,8 +260,7 @@ namespace Visual_Inventory_System.Controllers
 
             line = (line ?? "").Trim();
 
-            // "— Entire Branch —" sentinel: same convention as UpdateLine. Mutually
-            // exclusive with Line.
+            // Same whole-Branch sentinel as UpdateLine.
             string? assignedLine;
             string? assignedBranch;
             if (line == "__WHOLE_BRANCH__")
@@ -322,8 +309,7 @@ namespace Visual_Inventory_System.Controllers
             _db.Users.Add(newUser);
             _db.SaveChanges(); // need newUser.Id before adding a subscription row
 
-            // Matches today's implicit behavior: Standard tier used to mean pickup
-            // alerts came along for free. Keep that true for anyone added at Standard.
+            // Anyone added at Standard gets pickup alerts switched on.
             if (accessLevel == AccessLevels.Standard)
             {
                 _db.NotificationSubscriptions.Add(new NotificationSubscription
@@ -369,9 +355,7 @@ namespace Visual_Inventory_System.Controllers
             string display = user.DisplayName;
             string login = user.UserName;
 
-            // Hard delete. Safe: TransactionLog/Order/VisTask snapshot the actor's
-            // name as plain text (not a foreign key), so history is unaffected.
-            // NotificationSubscriptions for this user cascade-delete with the row.
+            // Hard delete. History is safe: logs, orders and tasks store the name as text. Subscriptions cascade.
             _db.Users.Remove(user);
 
             _db.TransactionLogs.Add(new TransactionLog
@@ -390,30 +374,9 @@ namespace Visual_Inventory_System.Controllers
         }
 
 
-        // ==========================================================
-        // TEAMS (Pass 7A)
-        // ==========================================================
-        // Replaces four hardcoded <option> lists and the ternary
-        //   ProjectCode = newTeam == "ninja" ? "7165" : "7166"
-        // which quietly gave every team that wasn't Ninja Samurai's code.
-        //
-        // RENAME IS DELIBERATELY NOT OFFERED. Items store the team NAME as a
-        // plain string (same as Line), so a rename would orphan every item
-        // pointing at the old value unless it cascaded -- and a cascading
-        // rename is hard to undo. Add a new team and hide the old one instead;
-        // that leaves the history readable either way.
 
 
-        // ==========================================================
-        // LOCATIONS (Pass 7C)
-        // ==========================================================
-        // The vocabulary used to live in four hand-kept copies -- the codec's const
-        // array, the JS cascade map, and two hardcoded <option> lists. They drifted:
-        // 34 variant rows carried Sub codes no copy knew, so breadcrumbs showed raw
-        // codes. One table now feeds all four.
-        //
-        // Codes are NEVER stored. LocationCodec.Encode() derives them from the name
-        // by the same 1st/3rd/5th/last rule, so nothing here can contradict it.
+        // Reload the static caches after a Settings edit.
 
         private void RefreshLocationCodec()
         {
@@ -428,13 +391,8 @@ namespace Visual_Inventory_System.Controllers
 
 
 
-        // ==========================================================
-        // PENDING INTAKES (Pass 9)
-        // ==========================================================
-        // A batch lands here only because the location it named isn't recognised.
-        // Approving takes one of two shapes -- MAP it onto somewhere that already
-        // exists under a different name, or CREATE the location -- and then runs
-        // the identical commit path a known-location batch would have taken.
+        // Pending intakes: batches whose location was not recognised. Approve by mapping to an
+        // existing location or creating one, then the normal intake commit runs.
 
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -450,11 +408,7 @@ namespace Visual_Inventory_System.Controllers
 
             Location? target;
             string how;
-            // Only a newly-created Parent needs a nudge -- Majors/Subs are
-            // reached through their Parent's post-click menu, not their own
-            // map zone (see Locations -- Map), and mapping onto something that
-            // already exists means whatever zone it has (or doesn't) predates
-            // this approval and isn't this action's business to remind about.
+            // Only a newly created Parent gets the "draw a map zone" reminder.
             bool remindDrawZone = false;
 
             if (mapToLocationId.HasValue && mapToLocationId.Value > 0)
@@ -493,10 +447,7 @@ namespace Visual_Inventory_System.Controllers
                 remindDrawZone = newLevel == LocationLevel.Parent;
             }
 
-            // Walk up from the resolved location so the batch lands at the right
-            // depth whichever level was chosen -- mapping a request onto a Sub has
-            // to fill in its Major and Parent too, or the item files itself at the
-            // wrong level and nobody notices until someone goes looking for it.
+            // Walk up from the resolved location so Parent, Major and Sub are all filled in.
             string pCode = "", mCode = "", sCode = "";
             var chain = new List<Location>();
             var cur = target;
@@ -523,9 +474,7 @@ namespace Visual_Inventory_System.Controllers
                 ThermocoupledQty = r.ThermocoupledQty
             }).ToList();
 
-            // The ItemId prefix follows the batch's Line -- the item's Line, same as
-            // New Item Registry and a direct Intake -- not the submitter's own Line
-            // (blank for a whole-Branch user) and not the approver's.
+            // The ItemId prefix follows the batch's Line, not the submitter's or the approver's.
             var result = _inventoryService.CommitIntake(
                 lines, batch.Line, batch.Team,
                 pCode, mCode, sCode,
@@ -535,9 +484,7 @@ namespace Visual_Inventory_System.Controllers
 
             if (!result.Ok)
             {
-                // CommitIntake saves per row, so the non-erroring rows DID import
-                // even though the batch stays Pending here. Approving again only
-                // re-imports the failed rows -- rows already in are skipped.
+                // CommitIntake saves per row, so good rows did import. Approving again skips them.
                 int imported = result.NewItems.Count + result.AddedToExisting.Count;
                 TempData["Error"] = (imported == 0
                         ? $"Approved the location, but none of the rows imported ({result.Errors.Count} failed): "
@@ -571,36 +518,24 @@ namespace Visual_Inventory_System.Controllers
         {
             var batch = _db.IntakeBatches.FirstOrDefault(b => b.Id == batchId);
             if (batch == null) { TempData["Error"] = "That batch no longer exists."; return RedirectToAction("Index"); }
-            // Same guard ApproveIntake has: a stale Settings page could otherwise flip
-            // an already-Approved batch to Rejected after its stock went in.
+            // Same Pending guard as ApproveIntake, against a stale Settings page.
             if (batch.Status != IntakeStatus.Pending) { TempData["Error"] = "That batch is no longer pending."; return RedirectToAction("Index"); }
             batch.Status = IntakeStatus.Rejected;
             batch.ResolvedBy = _currentUser.Name;
             batch.ResolvedAt = DateTime.UtcNow;
             batch.Note = (note ?? "").Trim();
-            // Rows are KEPT. A rejected batch is still a record of what somebody
-            // counted, and deleting it means they have to type it all again if the
-            // rejection turns out to be a misunderstanding.
+            // Rows are kept: a rejected batch is still a record of what somebody counted.
             _db.SaveChanges();
             TempData["Success"] = $"Batch #{batch.Id} rejected. The rows are kept in case it needs revisiting.";
             return RedirectToAction("Index");
         }
 
-        // ==========================================================
-        // MAP ZONES (Pass 8)
-        // ==========================================================
-        // Coordinates arrive as FRACTIONS of the image (0-1) from the drag editor,
-        // never pixels. That is what lets the same rectangle survive the floorplan
-        // being re-exported at a different size.
-        //
-        // Only Parent locations get zones: Majors and Subs are reached through the
-        // post-click menu, which is already driven by live stock data.
+        // Map zones and locations. Coordinates arrive as fractions of the image (0-1), never pixels.
+        // Only Parent locations get zones.
 
 
-        // A name whose derived code collides with an existing one makes Decode()
-        // ambiguous -- first writer wins and the second becomes invisible on every
-        // breadcrumb. Shared by AddLocation and the inline new-Parent path in
-        // AddZone so both refuse it the same way.
+        // A name whose code collides with an existing one makes Decode() ambiguous: the second
+        // becomes invisible on every breadcrumb. Shared by AddLocation and AddZone's new-Parent path.
         private string? CodeClashMessage(string name)
         {
             string code = LocationCodec.Encode(name);
@@ -615,8 +550,7 @@ namespace Visual_Inventory_System.Controllers
         [ValidateAntiForgeryToken]
         public IActionResult AddZone(int locationId, double x, double y, double w, double h, string? label, string? newParentName)
         {
-            // Geometry is checked BEFORE anything is created, so a bad drag can't
-            // leave a brand-new Parent behind with no zone attached to it.
+            // Geometry is checked first, so a bad drag cannot leave a new Parent with no zone.
             if (w <= 0.001 || h <= 0.001)
             {
                 TempData["Error"] = "That box is too small to click. Drag a larger area.";
@@ -633,9 +567,7 @@ namespace Visual_Inventory_System.Controllers
 
             if (newParentName.Length > 0)
             {
-                // Inline creation: drawing a box round an area you haven't registered
-                // yet is the normal case when a new team turns up, and bouncing to the
-                // Locations panel and back for it is friction with no purpose.
+                // Inline creation: a new area can be drawn and registered in one step.
                 if (_db.Locations.Any(l => l.Level == LocationLevel.Parent && l.Name.ToLower() == newParentName.ToLower()))
                 {
                     TempData["Error"] = $"A Parent called '{newParentName}' already exists — pick it from the list instead.";
@@ -669,10 +601,7 @@ namespace Visual_Inventory_System.Controllers
                 return RedirectToAction("Index");
             }
 
-            // Overlap is WARNED, not blocked -- a small shared edge between two
-            // neighbouring areas is normal. HTML image maps resolve a click to
-            // whichever <area> comes first, so a real overlap makes one of them
-            // unreachable and you want to know without being stopped.
+            // Overlap is warned, not blocked: the first <area> wins a click, so a real overlap hides one.
             var overlaps = _db.LocationZones.AsNoTracking()
                 .Join(_db.Locations, z => z.LocationId, l => l.Id, (z, l) => new { z, l.Name })
                 .ToList()
@@ -792,8 +721,7 @@ namespace Visual_Inventory_System.Controllers
             _db.SaveChanges();
             RefreshLocationCodec();
 
-            // Hiding also drops the name from the decode map, so anything still
-            // stored at that code goes back to rendering raw. Say so plainly.
+            // Hiding drops the name from the decode map, so stock still stored there shows the raw code.
             TempData["Success"] = loc.IsActive
                 ? $"'{loc.Name}' is selectable again."
                 : $"'{loc.Name}' hidden. {inUse} variant(s) still stored there will show as '{code}' until moved.";
@@ -856,8 +784,7 @@ namespace Visual_Inventory_System.Controllers
             if (old == now) return RedirectToAction("Index");
 
             team.ProjectCode = now;
-            // Project code is display/reporting only -- nothing keys off it, so
-            // this does NOT touch the items already carrying the old value.
+            // Display and reporting only. Items already carrying the old code are not touched.
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = DateTime.UtcNow,
@@ -872,10 +799,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index");
         }
 
-        // A team's home Branch/Line. Pure metadata -- does not gate visibility
-        // (that's still Line on the item/user, untouched here). Feeds the
-        // registration/ownership auto-fill and the compressor filter's Team
-        // suggestion. Same validation pattern as UpdateLine (Users).
+        // A team's home Line. Metadata only: feeds auto-fill suggestions, never gates visibility.
         [HttpPost]
         [ValidateAntiForgeryToken]
         public IActionResult UpdateTeamLine(int teamId, string? line)
@@ -924,10 +848,7 @@ namespace Visual_Inventory_System.Controllers
             }
             team.IsActive = !team.IsActive;
 
-            // Per-team quantity ownership (2026-08-26): a team can own a SLICE of
-            // an item without being its family-level Team, so counting
-            // InventoryItems alone reported "0 item(s) still reference it" for a
-            // team that in fact holds real stock. Count either kind of claim.
+            // Counts the family-level Team and variant slices: a team can own stock without being the item's Team.
             int inUse = _db.InventoryItems.Count(i => i.Team == team.Name
                 || i.Variants.Any(v => !v.IsRetired && v.Team == team.Name));
             _db.TransactionLogs.Add(new TransactionLog
@@ -946,10 +867,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index");
         }
 
-        // Team-centric membership: pick a team (the dropdown above the checkbox
-        // list), check/uncheck who belongs to it, Save replaces the full
-        // membership set for that team in one diff. Team is still a label, not a
-        // visibility gate -- this only changes what shows in the Users table.
+        // Team membership: Save replaces the whole member set for one team. A label, not a visibility gate.
         [HttpPost]
         [ValidateAntiForgeryToken]
         public IActionResult UpdateTeamMembers(string teamName, List<int>? userIds)
@@ -1000,12 +918,7 @@ namespace Visual_Inventory_System.Controllers
             return RedirectToAction("Index", new { manageTeam = teamName });
         }
 
-        // ============================
-        // BRANCHES & LINES (Pass 13) -- replaces the hardcoded OrgStructure.
-        // Same vocabulary-table / soft-hide convention as Teams above. Every
-        // write here ends with RefreshOrgStructure() so the change is live
-        // immediately, not just after the next process restart.
-        // ============================
+        // Branches and Lines. Every write ends with RefreshOrgStructure() so the change is live at once.
 
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -1051,9 +964,7 @@ namespace Visual_Inventory_System.Controllers
             }
             branch.IsActive = !branch.IsActive;
 
-            // A hidden Branch takes its Lines out of the picker too (OrgStructure.
-            // Refresh only loads lines whose Branch is also active), even though
-            // the OrgLine rows themselves keep IsActive = true underneath it.
+            // A hidden Branch takes its Lines out of the pickers too, though the OrgLine rows stay active.
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = DateTime.UtcNow,
@@ -1087,8 +998,7 @@ namespace Visual_Inventory_System.Controllers
                 TempData["Error"] = "Pick a branch for this line.";
                 return RedirectToAction("Index");
             }
-            // Global uniqueness -- User/InventoryItem/Team.Line are flat strings
-            // with no branch qualifier, so two branches can't share a Line name.
+            // Unique across all branches: Line strings carry no branch.
             if (_db.OrgLines.Any(l => l.Name.ToLower() == name.ToLower()))
             {
                 TempData["Error"] = $"A line called '{name}' already exists.";

@@ -1,8 +1,7 @@
 @using Visual_Inventory_System.Services
 @inject Visual_Inventory_System.Services.CurrentUserService CurrentUser
 @functions {
-    // Same three helpers Index.cshtml's holo-viewer uses -- kept in sync by hand
-    // until Pass 28 (2d) retires Index's own copy of this content.
+    // Helpers for the results viewer.
     string GetHoloTitle(Visual_Inventory_System.Models.SearchResult result)
     {
         if (result.Mode == "Omni") return $"Omni Search: \"{ViewBag.OmniSearch}\"";
@@ -41,10 +40,7 @@
     var invSvc = ViewBag.InventoryService as Visual_Inventory_System.Services.InventoryService;
     var allItems = invSvc?.GetAll() ?? new List<Visual_Inventory_System.Models.InventoryItem>();
 
-    // Compressor/Motor Registry modal data (Pass 28 2b: these moved here per the
-    // scope doc's own JS dependency map -- compApplyFilter/motorApplyFilter are
-    // "Search Center only"). Same blocks Index.cshtml still carries for its own
-    // unstyled copy of this content.
+    // Compressor and Motor Registry modal data.
     var compressorItems = allItems.Where(i => Visual_Inventory_System.Services.InventoryService.IsCompressorType(i.Type))
         .OrderBy(i => i.ItemName).ToList();
     var compressorBrands = compressorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
@@ -64,13 +60,11 @@
     var motorBrands = motorItems.Select(i => i.Brand).Where(b => !string.IsNullOrWhiteSpace(b))
         .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(b => b).ToList();
 
-    // Declared page-level, not inside the Advanced Filters form: the Export
-    // Wizard modal further down renders the same three location levels, and a
-    // Razor block's locals aren't visible outside it.
+    // Page-level, not inside the filter form: the Export Wizard further down uses the same rows.
     var locRows = (List<(string PCode, string PName, string MCode, string MName, string SCode, string SName)>)
                   (ViewBag.LocationFilterRows ?? new List<(string, string, string, string, string, string)>());
 
-    // Branch quick-filter graying -- same rule Index.cshtml uses.
+    // Branch quick-filter greying.
     string myBranch = ViewBag.MyBranch as string ?? "";
     bool isAdmin = CurrentUser.Level >= AccessLevels.Admin;
     Func<string, string> branchBtnClass = branchName =>
@@ -80,12 +74,7 @@
 }
 
 <style>
-    /* Pass 28 (2b): left dark-themed/unstyled on purpose -- the visual match to
-       the sidebar shell's new look is Phase 4, not this pass. Only the CSS this
-       page's own layout needs (the fixed dashboard's .overlay-grid/.selection-grid
-       system is Command Center-only and stays out of this file). Everything else
-       (.grid-card, .holo-viewer, .holo-row, .filter-grid, etc.) already comes
-       from site.css. */
+    @* Only the CSS this page's own layout needs. The rest comes from site.css. *@
 
     .holo-overlay {
         position: fixed;
@@ -101,8 +90,8 @@
         z-index: 2000;
     }
 
-    /* Bootstrap modals must sit ABOVE the holo overlay (z-index 2000),
-       otherwise modals opened from inside the cart view are hidden behind it. */
+    @* Bootstrap modals must sit ABOVE the holo overlay (z-index 2000),
+       otherwise modals opened from inside the cart view are hidden behind it. *@
     .modal {
         z-index: 2200 !important;
     }
@@ -151,9 +140,7 @@
         display: flex;
         flex-direction: column;
     }
-    /* Three across, unlike Command Center's four -- .cc-quick-row is left at
-       repeat(4,1fr) so changing it here can't reflow that page. Collapses to
-       one column below the same 992px breakpoint the sidebar uses. */
+    @* Three across. .cc-quick-row stays at four so Command Center does not reflow. One column below 992px. *@
     .sc-action-row {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -164,9 +151,7 @@
         .sc-action-row { grid-template-columns: 1fr; }
     }
 
-    /* The action cards carry a second line of explanatory text, which Command
-       Center's four do not -- so the muted style is scoped here, not added to
-       the shared .cc-quick-btn. */
+    @* The action cards carry a second line of text, so its muted style is scoped here. *@
     .sc-action-row .cc-quick-btn small {
         font-size: 11px;
         font-weight: 500;
@@ -176,17 +161,7 @@
         letter-spacing: 0;
     }
 
-    /* Six filter boxes on ONE row -- the three attribute filters, then the three
-       location levels beside them -- instead of two stacked rows of three. Two
-       effects, both wanted: each box is a third of its group rather than half
-       (site.css's shared .filter-grid is 1fr 1fr, so three children wrapped 2+1
-       and every box ran long), and the card drops from three rows tall to two.
-       That second one is what closes the dead space under Omni Search: .grid-card
-       is h-100, so the Omni card stretches to whatever THIS card's height is --
-       the gap was never Omni's own layout, it was this card being tall.
-       Overridden here rather than in site.css because Search Center is the only
-       consumer of .filter-grid; a page that adopts it later still gets the
-       shared 2-up default. */
+    @* Six filter boxes on one row. Overridden here, not in site.css: this page is the only user of .filter-grid. *@
     .sc-filter-cols {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -198,8 +173,8 @@
         margin-bottom: 0;
     }
 
-    /* Six across needs real width. Below ~1200 the two groups stack (back to two
-       rows of three), and on a phone each group goes single-column. */
+    @* Six across needs real width. Below ~1200 the two groups stack (back to two
+       rows of three), and on a phone each group goes single-column. *@
     @@media (max-width: 1199.98px) {
         .sc-filter-cols { grid-template-columns: 1fr; }
     }
@@ -213,7 +188,7 @@
     <h4 class="text-bright-white fw-bold mb-3">Search Center</h4>
 
     <div class="row g-3 mb-3">
-        <!-- Advanced Filters -->
+        @* Advanced Filters *@
         <div class="col-lg-8">
             <div class="grid-card h-100">
                 <label class="text-bright-white fw-bold mb-2">Advanced Filters</label>
@@ -226,8 +201,7 @@
                     <div class="sc-filter-cols mb-2">
                     <div class="filter-grid">
                         <input name="filterRheem" placeholder="Rheem Part #" class="form-control" value="@ViewBag.FilterRheem" />
-                        @* Type and Brand were free-text boxes you had to spell right.
-                           Both are closed sets in practice, so offer what exists. *@
+                        @* Type and Brand are closed sets in practice, so the filter offers what exists. *@
                         <select name="filterType" class="form-select">
                             <option value="">Any type</option>
                             @foreach (var t in (List<string>)(ViewBag.FilterTypeOptions ?? new List<string>()))
@@ -243,11 +217,7 @@
                             }
                         </select>
                     </div>
-                    @* Replaces the old free-text "FDA Term". That box asked people to
-                       type a machine string ("ETRD.CNEA.CNE6") and matched it as
-                       loose text, so a rack called "2" pulled back 305 items instead
-                       of 43. These post the stored Parent/Major/Sub CODES while
-                       showing the real names, and the server matches the columns. *@
+                    @* Location filter: posts the stored Parent/Major/Sub codes, shows the names. The server matches the columns. *@
                     <div class="filter-grid" id="loc-filter-grid">
                         <select name="filterLocParent" id="flt-loc-parent" class="form-select">
                             <option value="">Any location</option>
@@ -280,15 +250,8 @@
                     </div>
                 </form>
                 <script>
-                    /* Self-contained on purpose: every option is already rendered
-                       server-side with data-parent/data-major, so narrowing is just
-                       show/hide. No use of locHierarchyData (declared in the Modify
-                       Stock partial -- redeclaring it here would be a duplicate
-                       const in shared global scope) and no locDecode (which reads a
-                       free variable resolved in site.js's own scope). Deferred to
-                       DOMContentLoaded so it never queries markup that hasn't
-                       parsed yet -- the failure that silently killed site.js's
-                       sidebar wiring for three commits. */
+                    @* Self-contained: every option is rendered with data-parent/data-major, so narrowing is
+                       show and hide. Runs at DOMContentLoaded so the markup has parsed. *@
                     document.addEventListener('DOMContentLoaded', function () {
                         var p = document.getElementById('flt-loc-parent');
                         var m = document.getElementById('flt-loc-major');
@@ -298,7 +261,7 @@
                         function narrow(sel, attr, want, dependentReset) {
                             var keptSelected = false;
                             Array.prototype.forEach.call(sel.options, function (o) {
-                                if (!o.value) return;                    // the "Any ..." row always stays
+                                if (!o.value) return;                    @* the "Any ..." row always stays *@
                                 var show = !want || o.getAttribute(attr) === want;
                                 o.hidden = !show;
                                 o.disabled = !show;
@@ -311,9 +274,7 @@
 
                         function refresh() {
                             narrow(m, 'data-parent', p.value, true);
-                            // Sub narrows on BOTH levels: a Sub only means something
-                            // under its own Major, and two Majors can hold Subs with
-                            // the same display name.
+                            @* Sub narrows on both levels: two Majors can hold Subs with the same name. *@
                             Array.prototype.forEach.call(s.options, function (o) {
                                 if (!o.value) return;
                                 var show = (!p.value || o.getAttribute('data-parent') === p.value)
@@ -326,13 +287,13 @@
 
                         p.addEventListener('change', function () { m.value = ''; s.value = ''; refresh(); });
                         m.addEventListener('change', function () { s.value = ''; refresh(); });
-                        refresh();   // honour whatever came back on the query string
+                        refresh();   @* honour whatever came back on the query string *@
                     });
                 </script>
             </div>
         </div>
 
-        <!-- Omni Search -->
+        @* Omni Search *@
         <div class="col-lg-4">
             <div class="grid-card h-100">
                 <label class="text-bright-white fw-bold mb-2">Omni Search</label>
@@ -345,10 +306,7 @@
         </div>
     </div>
 
-    @* Export, Modify Stock and View Cart are ACTIONS -- things you do -- so they
-       read as Command Center's Quick Actions rather than as filter cards. View
-       Cart moved here off the Quick Filters strip for the same reason: opening a
-       cart isn't a way of narrowing the list. *@
+    @* Export, Modify Stock and View Cart are actions, so they sit in an Actions row like Command Center's. *@
     <div class="cc-section-title">Actions</div>
     <div class="sc-action-row mb-3">
         @if (CurrentUser.Level >= AccessLevels.Standard)
@@ -382,10 +340,7 @@
         }
     </div>
 
-    @* Two boxes, not one strip: these are two different axes, not six variations
-       of one thing. Type answers "what kind of part", Branch answers "whose
-       stock" -- and the Branch three gray out for branches you're not on, which
-       the Type three never do. *@
+    @* Two boxes: Type answers "what kind of part", Branch answers "whose stock". Only the Branch buttons grey out. *@
     <div class="row g-3 mb-3">
         <div class="col-lg-6">
             <div class="grid-card h-100">
@@ -410,7 +365,7 @@
     </div>
 </div>
 
-<!-- HOLOVIEWER (results / cart) -->
+@* HOLOVIEWER (results / cart) *@
 @if (showHolo)
 {
     <div class="holo-overlay">
@@ -441,9 +396,7 @@
                                             <span class="fw-bold ms-2" style="color:#F59E0B;">TC Ct: @entry.ThermocoupledCount</span>
                                         }
                                         <br />
-                                        @* All three fields together identify THIS line --
-                                           the same key AddItem stacks on. Posting itemId
-                                           alone removed every line for the item. *@
+                                        @* All three fields identify this cart line, the same key AddItem stacks on. *@
                                         <form asp-action="RemoveFromLedger" method="post" class="mt-2">
                                             @Html.AntiForgeryToken()
                                             <input type="hidden" name="itemId" value="@entry.ItemId" />
@@ -467,10 +420,7 @@
                     {
                         bool inDraft = headerDraftIds != null && headerDraftIds.Contains(item.ItemId);
                         var actVars = item.ActiveVariants.OrderBy(v => v.VariantNumber).ToList();
-                        // Pass 30 (Request Transfer - Internal): Search stopped filtering
-                        // to the viewer's own Line, so another Line's item shows up here
-                        // too -- it just gets a Request Transfer button instead of the
-                        // normal order/handle actions.
+                        // Another Line's item shows here too, with Request Transfer instead of the normal actions.
                         bool isOwnLine = invSvc == null || invSvc.IsOwnLine(item.Line);
                         Func<string, bool> needsRheemPn = pn => string.IsNullOrWhiteSpace(pn) || pn.Trim().Equals("N/A", StringComparison.OrdinalIgnoreCase);
                         <div class="holo-row" data-item-id="@item.ItemId" tabindex="0">
@@ -489,10 +439,7 @@
                                     <strong class="text-white fs-5">@item.ItemName</strong> <span class="text-light-gray ms-2">(ID: @item.ItemId)</span><br />
                                     @{
                                         bool itemIsMotor = Visual_Inventory_System.Services.InventoryService.IsMotorType(item.Type);
-                                        // Per-team quantity ownership (2026-08-26): distinct teams
-                                        // across this item's active variants. >1 means it's actually
-                                        // split -- that's when the per-variant tags below earn their
-                                        // keep; otherwise one team (or none) covers the whole stack.
+                                        // Teams across the active variants. More than one means the item is split.
                                         var itemTeams = actVars.Select(v => v.Team).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
                                         string teamSummary = itemTeams.Count == 0 ? "No team" : string.Join(", ", itemTeams);
                                     }
@@ -501,16 +448,9 @@
                                         <i class="bi bi-signpost-2 me-1"></i>Line: @(string.IsNullOrWhiteSpace(item.Line) ? "Unassigned" : item.Line)
                                         &nbsp;·&nbsp; Team: @teamSummary
                                     </small>
-                                    @* Team-scoped for THIS viewer, resolved the same way
-                                       Submit() will resolve it (InventoryService.
-                                       ResolveOrderingTeam) -- the item-wide figure
-                                       promised a split item's whole stack to whichever
-                                       team was looking, then Submit refused at the
-                                       team's real ceiling. Falls back to the item total
-                                       whenever no single team applies, which is exactly
-                                       what Submit would allow too. *@
+                                    @* Scoped to this viewer's team, resolved the same way Submit resolves it. *@
                                     <span class="text-success fw-bold d-block mt-1">Available: @(invSvc != null ? invSvc.GetAvailableForViewer(item) : item.Quantity)
-                                        @* Reservations (2026-11-08): only when something is held. *@
+                                        @* Only when something is held. *@
                                         @if (ViewBag.HeldPerItem is Dictionary<string, int> heldMap && heldMap.TryGetValue(item.ItemId, out var heldN))
                                         {
                                             <span class="res-pill ms-2"><i class="bi bi-lock-fill"></i>@heldN reserved</span>
@@ -530,11 +470,7 @@
                                         <small class="d-block" style="font-size: 10px; color: var(--vis-text-muted); opacity: 0.75;">No variants of item</small>
                                     }
                                 </div>
-                                @* Pass 40: one entry point per row. Add to Cart, Handle
-                                   Stock, Request Transfer and Delete Item all live in the
-                                   Item Card now, which also shows everything else VIS
-                                   stores about the item. Clicking anywhere on the row
-                                   opens it too. *@
+                                @* One entry point per row: the Item Card holds every action. Clicking the row opens it too. *@
                                 <div class="d-flex flex-column align-items-end gap-2">
                                     <button type="button" class="btn btn-primary px-3 py-2 fw-bold" onclick="openItemCard('@item.ItemId')">
                                         <i class="bi bi-card-text me-1"></i> Open
@@ -584,23 +520,21 @@
     </div>
 }
 
-<!-- ITEM CARD (Pass 40) -- the content is fetched from /Home/ItemCard and
-     injected on open, so it's always current (cart, pending orders). -->
+@* Item Card: fetched from /Home/ItemCard on open, so it is always current. *@
 <div class="modal fade" id="itemCardModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
         <div class="modal-content" id="itemCardContent"></div>
     </div>
 </div>
 
-<!-- RESERVE (2026-11-08) -- body fetched from /Reservations/Form on open, same
-     always-fresh pattern as the Item Card; its handlers are delegated below. -->
+@* Reserve dialog: fetched from /Reservations/Form on open. Its handlers are delegated below. *@
 <div class="modal fade" id="reserveModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
         <div class="modal-content" id="reserveContent"></div>
     </div>
 </div>
 
-<!-- DELETE ITEM -->
+@* DELETE ITEM *@
 <div class="modal fade" id="deleteItemModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -621,7 +555,7 @@
     </div>
 </div>
 
-<!-- SUBMIT ORDER -->
+@* SUBMIT ORDER *@
 <div class="modal fade" id="confirmSubmitModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -638,7 +572,7 @@
     </div>
 </div>
 
-<!-- START ORDER (first add) -->
+@* START ORDER (first add) *@
 <div class="modal fade" id="startOrderModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
@@ -657,7 +591,7 @@
     </div>
 </div>
 
-<!-- COMPRESSOR REGISTRY (Pass 28 2b: moved here, see comment above) -->
+@* Compressor registry *@
 <div class="modal fade" id="compressorRegistryModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
@@ -724,10 +658,7 @@
                         }
 
                         <div class="comp-row mb-2 p-2" data-branch="@itBranch" data-line="@(it.Line ?? "")" data-team="@(it.Team ?? "")" data-brand="@(it.Brand ?? "")" data-unclaimed="@(isUnclaimed ? "1" : "0")" style="background:#14151A; border:1px solid #3D4351; border-radius:6px;">
-                            @* Open sits OUTSIDE the collapse toggler: Bootstrap 5 binds
-                               its delegated data-api handlers in the capture phase, so
-                               a stopPropagation() on a button inside the toggler runs
-                               too late and the row expands anyway. *@
+                            @* Open sits outside the collapse toggler: Bootstrap's handler runs first, so stopPropagation is too late. *@
                             <div class="d-flex align-items-center gap-2">
                             <div class="d-flex justify-content-between align-items-center flex-grow-1" style="cursor:pointer;"
                                  data-bs-toggle="collapse" data-bs-target="#@collapseId">
@@ -827,7 +758,7 @@
     </div>
 </div>
 
-<!-- MOTORS (TC only) -->
+@* MOTORS (TC only) *@
 <div class="modal fade" id="motorRegistryModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content" style="background-color: var(--vis-card); border: 1px solid var(--vis-card-border);">
@@ -965,28 +896,15 @@
     </div>
 </div>
 
-@* Pass 28 (2a)'s trap: a top-level const in a LATER script tag isn't visible to
-   code that runs in an earlier one, even though both share the page's global
-   scope -- the browser executes tags in document order. These five MUST render
-   before the Modify Stock partial include below, since its own script
-   references orgStructure/itemsList at top level (wireLineCascade()).
-   locMap specifically also can't live inside a function/IIFE (as Index.cshtml's
-   copy of this content still does, below the compressor/motor filter block) --
-   site.js's bindCascadingLocation() reads it as a free variable from ITS OWN
-   lexical scope (where it's defined, in site.js), not the caller's, so an
-   IIFE-local locMap is invisible to it: ReferenceError on the first Parent
-   pick, confirmed live against the actual running Export Wizard on both this
-   page and Index.cshtml (pre-existing there too, not introduced by this pass). *@
+@* These constants must render before the Modify Stock partial below: its script reads them at top level.
+   locMap must stay a top-level const: site.js reads it as a free variable, so an IIFE-local one is invisible. *@
 <script>
     const itemsList = @Html.Raw(ViewBag.AutocompleteJson ?? "[]");
-    // Pass 30: NOT itemsList -- see the comment on ViewBag.TransferItemsJson in
-    // SearchCenter() for why Request Transfer needs its own, wider-than-Line
-    // data source.
+    @* Not itemsList: Request Transfer needs items outside the viewer's Line. *@
     const transferItemsList = @Html.Raw(ViewBag.TransferItemsJson ?? "[]");
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
     const teamLines = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
-    // This signed-in user's own team memberships (per-team quantity ownership,
-    // 2026-08-26) -- drives whether Add to Cart's team picker shows at all.
+    @* The signed-in user's teams. Decides whether Add to Cart's team picker shows. *@
     const myTeams = @Html.Raw(ViewBag.MyTeamsJson ?? "[]");
     const rackRowMap = @Html.Raw(ViewBag.RackRowJson ?? "{}");
     const locMap = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
@@ -994,7 +912,7 @@
 
 @await Html.PartialAsync("_ModifyStockPartial")
 
-<!-- ADD TO CART subprocess modal -->
+@* ADD TO CART subprocess modal *@
 <div class="modal fade" id="addToCartModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1019,9 +937,7 @@
                         <small class="text-light-gray d-block mt-1" style="font-size:10px;">Which location the runner pulls from — or Either.</small>
                     </div>
 
-                    <!-- TEAM (per-team quantity ownership, 2026-08-26): only shown when
-                         it's genuinely ambiguous -- this item is split across more than
-                         one of YOUR OWN teams. Everyone else never sees this field. -->
+                    @* Team: shown only when the item is split across more than one of your own teams. *@
                     <div class="mb-3" id="atc-team-div" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Ordering for which team?</label>
                         <select name="requestedTeam" id="atc-team-sel" class="form-select fw-bold text-warning"
@@ -1054,13 +970,7 @@
     </div>
 </div>
 
-<!-- REQUEST TRANSFER - INTERNAL modal (Pass 30) -- offered instead of Add to
-     Cart when the item belongs to another Line/Team. One-way: once approved,
-     the stock is simply gone from this item's shelf, same as a normal
-     compressor pickup already stays "Picked Up" forever with no return
-     expected -- no due date, no return flow. Serial selection for compressors
-     happens later, at the owning Line's approval step, not here -- mirrors how
-     a normal order never asks the requester to pick serials either. -->
+@* Request Transfer: offered instead of Add to Cart for another Line's item. One-way. Serials are picked at approval. *@
 <div class="modal fade" id="transferModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -1075,8 +985,7 @@
                     <div class="mb-3">
                         <div class="fw-bold fs-5 text-white" id="trf-item-name">--</div>
                         <small class="text-light-gray" id="trf-item-sub">ID: --</small>
-                        <!-- Per-team quantity ownership (2026-08-26): who actually
-                             owns this, so the requester isn't guessing before they ask. -->
+                        @* Who owns it, so the requester is not guessing. *@
                         <small class="text-warning d-block mt-1 fw-bold" id="trf-owner-div">--</small>
                     </div>
 
@@ -1129,11 +1038,7 @@
                     <div class="row g-2 mb-3">
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-light-gray">Group</label>
-                            @* Sourced from real data, not a hardcoded three. The old
-                               list offered "International", which is a LINE under
-                               Commercial Air, never a Group -- Group is derived by
-                               stripping " Air" off the Branch, so that option could
-                               never match and always returned an empty CSV. *@
+                            @* Groups come from real data, not a fixed list. *@
                             <select name="exportGroup" class="form-select form-select-sm">
                                 <option value="">-- Any Group --</option>
                                 @foreach (var g in allItems.Select(i => i.Group).Where(g => !string.IsNullOrWhiteSpace(g))
@@ -1169,14 +1074,7 @@
                     <hr class="border-secondary" />
                     <h6 class="text-info fw-bold small mb-2">Location Filter (Cascading)</h6>
 
-                    @* Server-rendered with the stored CODES as values, narrowed
-                       client-side by data-parent/data-major -- the same shape
-                       Advanced Filters uses, and these post real names the server
-                       matches against the Parent/Major/Sub COLUMNS. They used to
-                       be name-valued, nameless, and folded into a hidden dot-joined
-                       "exportFda" that the server prefix-matched against FdaString;
-                       skipping any level produced a string that matched nothing and
-                       returned an empty CSV with no error. *@
+                    @* Server-rendered with the stored codes as values, narrowed client-side, the same as Advanced Filters. *@
                     <div class="row g-2 mb-3">
                         <div class="col-md-4">
                             <select name="exportLocParent" id="exp-parent" class="form-select form-select-sm">
@@ -1264,10 +1162,8 @@
 </div>
 
 <script>
-    // ---- Item Card (Pass 40) ------------------------------------------------
-    // Runs fn once `modalId` has finished hiding (or right away if it isn't
-    // open) -- the same hidden.bs.modal chaining every modal-to-modal hop in
-    // this app uses, so two Bootstrap modals and their backdrops never stack.
+    @* Item Card. Runs fn once `modalId` has finished hiding, or right away if it is not open, *@
+    @* so two Bootstrap modals never stack. *@
     function afterModalHides(modalId, fn) {
         const el = modalId ? document.getElementById(modalId) : null;
         const inst = el ? bootstrap.Modal.getInstance(el) : null;
@@ -1279,9 +1175,7 @@
         }
     }
 
-    // fromModalId: the modal the click came from (a Compressor/Motor registry
-    // row), closed first. The card body is fetched fresh every time, so cart
-    // state and pending-order counts are never a stale page-load snapshot.
+    @* fromModalId: the modal the click came from, closed first. The card body is fetched fresh every time. *@
     function openItemCard(itemId, fromModalId) {
         afterModalHides(fromModalId, function () {
             const content = document.getElementById('itemCardContent');
@@ -1298,8 +1192,8 @@
         });
     }
 
-    // Card buttons hand off to the existing modals -- the card never duplicates
-    // Add to Cart / Modify Stock / Transfer / Delete logic, it just routes.
+    @* Card buttons hand off to the existing modals -- the card never duplicates *@
+    @* Add to Cart / Modify Stock / Transfer / Delete logic, it just routes. *@
     document.addEventListener('click', function (e) {
         const btn = e.target.closest('#itemCardModal [data-card-action]');
         if (!btn || btn.disabled) return;
@@ -1315,9 +1209,7 @@
         if (next) afterModalHides('itemCardModal', next);
     });
 
-    // ---------- Reservations (2026-11-08) ----------
-    // The dialog body comes from /Reservations/Form, fresh each time (holdable
-    // counts move with every order and hold). A refusal comes back as text.
+    @* Reserve dialog: the body comes fresh from /Reservations/Form each time. A refusal comes back as text. *@
     function openReserve(itemId, reservationId) {
         const content = document.getElementById('reserveContent');
         content.innerHTML = '<div class="modal-body text-center py-5 text-light-gray">'
@@ -1344,8 +1236,8 @@
         return p.length === 3 ? p[1] + '-' + p[2] + '-' + p[0] : '__-__-____';
     }
 
-    // Keeps the live preview, the counter, the date toggle and the button label
-    // in step with what's typed and ticked.
+    @* Keeps the live preview, the counter, the date toggle and the button label *@
+    @* in step with what's typed and ticked. *@
     function rvUpdate() {
         const form = document.getElementById('rv-form');
         if (!form) return;
@@ -1375,7 +1267,7 @@
     document.addEventListener('change', function (e) {
         const form = e.target.closest('#rv-form');
         if (!form) return;
-        // Naming a unit holds it: the stack's count can't sit below what's named.
+        @* Naming a unit holds it: the stack's count can't sit below what's named. *@
         if (e.target.classList.contains('rv-pin') && e.target.checked) rvBumpQty(e.target.closest('.rv-stack'));
         rvUpdate();
     });
@@ -1389,7 +1281,7 @@
         const named = rvNamedCount(stack);
         const qty = stack.querySelector('.rv-qty-input');
         if (qty && (parseInt(qty.value, 10) || 0) < named) qty.value = named;
-        // Motors: a named unit is a TC unit.
+        @* Motors: a named unit is a TC unit. *@
         const tc = stack.querySelector('.rv-tc-input');
         if (tc && (parseInt(tc.value, 10) || 0) < named) tc.value = named;
     }
@@ -1449,8 +1341,8 @@
         }
     });
 
-    // Reserved Items links here with ?openCard=ITEM (row click) or
-    // ?openCard=ITEM&reserve=ID (Edit); Save/Release come back with ?openCard=.
+    @* Reserved Items links here with ?openCard=ITEM (row click) or *@
+    @* ?openCard=ITEM&reserve=ID (Edit); Save/Release come back with ?openCard=. *@
     document.addEventListener('DOMContentLoaded', function () {
         const qs = new URLSearchParams(window.location.search);
         const card = qs.get('openCard');
@@ -1470,8 +1362,8 @@
         if (el) { new bootstrap.Modal(el).show(); }
     }
 
-    // Variants of the item currently shown in the Add to Cart modal (with tcqty),
-    // so the TC cap can react to the chosen pull-location.
+    @* Variants of the item currently shown in the Add to Cart modal (with tcqty), *@
+    @* so the TC cap can react to the chosen pull-location. *@
     let atcCurrentVariants = [];
 
     function openAddToCart(itemId) {
@@ -1513,9 +1405,7 @@
         }
         locSel.onchange = atcRecomputeTcCap;
 
-        // TEAM (per-team quantity ownership, 2026-08-26): only asked when this
-        // item's variants span more than one team AND this user belongs to
-        // more than one of those specific teams -- everyone else never sees it.
+        @* Team is asked only when the item is split across more than one of this user's own teams. *@
         const teamDiv = document.getElementById('atc-team-div');
         const teamSel = document.getElementById('atc-team-sel');
         const itemTeams = Array.from(new Set(vars.map(function (v) { return v.team; }).filter(Boolean)));
@@ -1550,9 +1440,7 @@
         if (el) { new bootstrap.Modal(el).show(); }
     }
 
-    // Pass 30: same shape as openAddToCart above, for the other Line's item
-    // Search stopped hiding -- location list and TC gate both read the same
-    // transferItemsList data, just posted to RequestTransfer instead of AddToCart.
+    @* The same shape as openAddToCart, for another Line's item. Reads transferItemsList, posts to RequestTransfer. *@
     function openTransfer(itemId) {
         const item = transferItemsList.find(function (i) { return i.id === itemId; });
         if (!item) return;
@@ -1573,11 +1461,7 @@
             vars.forEach(function (v) {
                 const o = document.createElement('option');
                 o.value = String(v.vid);
-                // Per-team quantity ownership (2026-08-26): this dropdown was
-                // already effectively required whenever it's shown (no "Either"
-                // option here, unlike Add to Cart) -- once a variant carries a
-                // Team, that same required pick doubles as which team's slice
-                // is being requested, so it needs to actually be visible here.
+                @* There is no "Either" here, so this pick also says which team's slice is requested. *@
                 const teamTag = v.team ? ' [' + v.team + ']' : '';
                 o.textContent = 'V' + v.num + ' — ' + (v.fda || '--') + teamTag + ' (Qty ' + v.qty + ')';
                 locSel.appendChild(o);
@@ -1632,7 +1516,7 @@
         tc.value = v;
     }
 
-    // Order Mode is "active" once the cart holds at least one item.
+    @* Order Mode is "active" once the cart holds at least one item. *@
     let orderActive = @(hasDraft ? "true" : "false");
     let pendingAddForm = null;
 
@@ -1702,14 +1586,12 @@
         const b = document.getElementById('holo-add-submit');
         const i = document.getElementById('holo-add-itemId');
         if (b && i) { b.disabled = false; i.value = row.dataset.itemId; }
-        // Pass 40: a search-result row opens its Item Card on click. Not in the
-        // cart view (those rows carry their own Remove form), and not when the
-        // click was on a control inside the row -- the Open button handles itself.
+        @* A result row opens its Item Card on click. Not in the cart view, and not when a control in the row was clicked. *@
         const viewer = row.closest('.holo-viewer');
         if (viewer && viewer.dataset.mode !== 'Ledger' && !e.target.closest('button, a, form, input, select'))
             openItemCard(row.dataset.itemId);
     });
-    // Rows are already tabindex="0" -- Enter opens the card from the keyboard too.
+    @* Rows are already tabindex="0" -- Enter opens the card from the keyboard too. *@
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter' || !e.target.classList || !e.target.classList.contains('holo-row')) return;
         const viewer = e.target.closest('.holo-viewer');
@@ -1727,7 +1609,7 @@
             });
         }
 
-        // ---- Compressor filter (Unclaimed / Branch / Line / Team / Brand) ----
+        @* Compressor filter: Unclaimed, Branch, Line, Team, Brand *@
         function compApplyFilter() {
             const unclaimedOnly = document.getElementById('compFilterUnclaimed')?.checked;
             const branch = document.getElementById('compFilterBranch')?.value || '';
@@ -1767,7 +1649,7 @@
         const compressorRegistryModal = document.getElementById('compressorRegistryModal');
         if (compressorRegistryModal) compressorRegistryModal.addEventListener('shown.bs.modal', compApplyFilter);
 
-        // ---- Motor filter (same shape as compressor filter above) ----
+        @* Motor filter, same shape *@
         function motorApplyFilter() {
             const unclaimedOnly = document.getElementById('motorFilterUnclaimed')?.checked;
             const branch = document.getElementById('motorFilterBranch')?.value || '';
@@ -1807,16 +1689,8 @@
         const motorRegistryModal = document.getElementById('motorRegistryModal');
         if (motorRegistryModal) motorRegistryModal.addEventListener('shown.bs.modal', motorApplyFilter);
 
-        /* Export Wizard location filter. No longer bindCascadingLocation() --
-           that helper's whole job was building the dot-joined "exportFda" this
-           form no longer posts, and it was the source of the empty-CSV bug:
-           it dropped blank levels before joining, so Parent + Rack became
-           "RLB.RACK 8" and prefix-matched nothing. These selects now post real
-           codes the server matches against columns, so each level is
-           independently optional. Narrowing is pure show/hide over options
-           already rendered with data-parent/data-major -- the same self-contained
-           approach Advanced Filters uses, deliberately not sharing locMap
-           (name-keyed) or locDecode (a site.js free variable). */
+        @* Export Wizard location filter. The selects post codes the server matches against columns,
+           so each level is optional. Narrowing is show and hide, as in Advanced Filters. *@
         (function () {
             var p = document.getElementById('exp-parent');
             var m = document.getElementById('exp-major');
@@ -1832,8 +1706,8 @@
                     o.hidden = !show; o.disabled = !show;
                     if (o.selected && !show) { o.selected = false; m.value = ''; }
                 });
-                // Sub narrows on BOTH levels: a Sub only means something under
-                // its own Major, and two Majors can hold Subs with the same name.
+                @* Sub narrows on BOTH levels: a Sub only means something under *@
+                @* its own Major, and two Majors can hold Subs with the same name. *@
                 Array.prototype.forEach.call(s.options, function (o) {
                     if (!o.value) return;
                     var show = (!p.value || o.getAttribute('data-parent') === p.value)
@@ -1847,15 +1721,8 @@
             m.addEventListener('change', function () { s.value = ''; refresh(); });
             refresh();
 
-            /* Rack/Row suggestions keyed off the picked CODES. Two differences
-               from site.js's racksRowsFor: no encodeLoc (these selects already
-               hold codes, so encoding again would build a key matching nothing),
-               and a UNION across every rackRowMap entry consistent with the
-               levels actually chosen. racksRowsFor needs the full
-               (Parent, Major, Sub) tuple, which was fine while a partial pick
-               couldn't be queried anyway -- now that Rack alone is a valid
-               filter, an exact-tuple lookup would leave the box with no
-               suggestions in exactly the states that newly work. */
+            @* Rack/Row suggestions from the picked codes: no encodeLoc, and a union across every
+               entry consistent with the levels chosen, since Rack alone is a valid filter. *@
             function suggest(which) {
                 var out = [];
                 Object.keys(rackRowMap).forEach(function (key) {

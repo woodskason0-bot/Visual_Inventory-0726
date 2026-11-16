@@ -19,11 +19,7 @@
                         <div class="col-md-7 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Item Name</label>
                             <input type="text" name="ItemName" id="reg-name" class="form-control" required autocomplete="off" />
-                            @* Live matches -- registering something new is the whole point of this
-                               form, so typing never gets gated the way Modify Stock's search does;
-                               free text always submits. But clicking a match means "this already
-                               exists" -- it jumps straight into Modify Stock for that item instead
-                               of continuing the registration (bindAutocomplete's jumpToStock). *@
+                            @* Live matches. Typing is never gated; clicking a match jumps to Modify Stock for that item. *@
                             <div id="reg-name-autocomplete-list" class="list-group position-absolute w-100 shadow" style="z-index: 2000; display: none; max-height: 200px; overflow-y: auto;"></div>
                         </div>
                         <div class="col-md-2">
@@ -33,16 +29,7 @@
                     </div>
 
                     <div class="row g-3 mb-3">
-                        @* Group removed in Pass 7A -- derived server-side from the
-                           registering user's Line (OrgStructure.GroupFor). It only
-                           feeds the ItemId prefix, and pinning it to the creator means
-                           a later Line change can't make an existing id wrong. *@
-@* Pass 7A: Team is OPTIONAL and data-driven from the Teams table.
-                           N/A is the default -- a team is a reporting label, not a
-                           permission; visibility belongs to Line. Group is no longer
-                           asked for at all: it's derived server-side from the Line of
-                           whoever is signed in, and only exists to mint the ItemId
-                           prefix. *@
+                        @* Team is optional and comes from the Teams table. Group is not asked for: the server derives it from the Line. *@
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Team / Project <span class="text-light-gray">(optional)</span></label>
                             <select name="Team" id="reg-team" class="form-select">
@@ -79,9 +66,7 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
                             <label class="form-label small fw-bold" style="color: var(--vis-yellow, #F59E0B);">Rheem Part # <span class="text-danger">*</span></label>
-                            @* REQUIRED (leadership): every new item carries the PN off the
-                               physical Rheem label. Server rejects blanks and duplicates;
-                               reg-rpn-warn gives the live "already exists" heads-up. *@
+                            @* Required. The server rejects blanks and duplicates; reg-rpn-warn is the live heads-up. *@
                             <div class="btn-group btn-group-sm mb-2 d-flex" role="group" aria-label="Rheem PN mode">
                                 <input type="radio" class="btn-check" name="regRpnMode" id="reg-rpn-mode-real" autocomplete="off" checked>
                                 <label class="btn btn-outline-light" for="reg-rpn-mode-real">Has a Part #</label>
@@ -106,10 +91,7 @@
                         </div>
                     </div>
 
-                    @* Serial (compressors) / thermocoupled count (motors) capture at
-                       registration -- neither is required, both are optional
-                       opportunities the form surfaces automatically based on Type.
-                       See InventoryService.CreateItem for what these feed into. *@
+                    @* Optional at registration: serials for compressors, a thermocoupled count for motors. Shown by Type. *@
                     <div id="reg-compressor-serials" class="mb-3" style="display:none;">
                         <label class="form-label small fw-bold text-light-gray">Serial # <span class="text-light-gray">(optional, one per unit)</span></label>
                         <div id="reg-serial-rows"></div>
@@ -131,11 +113,7 @@
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
                             <label class="form-label small fw-bold text-light-gray">Parent</label>
-                                @* Pass 9 fix: from the Locations table. NOTE the value is the
-                                   NAME, not the code -- bindCascadingLocation() runs encodeLoc()
-                                   on whatever is selected. That difference is why the 7C sweep
-                                   missed this one and the export filter below: they were greppable
-                                   as value="RD Lab", not value="RLB". *@
+                                @* The option value is the name, not the code: bindCascadingLocation() encodes it. *@
                             <select name="Parent" id="reg-parent" class="form-select">
                                 <option value="">Select Parent...</option>
                                 @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
@@ -159,9 +137,7 @@
                     </div>
 
                     <div class="row g-3 mb-3">
-                        @* Suggests from Rack/Row values already stored under whatever
-                           Parent/Major/Sub is picked above -- never a gate, typing a
-                           brand new value always works (Rack/Row stay free-form). *@
+                        @* Suggestions from Rack/Row values already stored at this location. Never a gate. *@
                         <div class="col-md-6 position-relative">
                             <label class="form-label small fw-bold text-light-gray">Rack</label>
                             <input type="text" name="Rack" id="reg-rack" class="form-control" placeholder="e.g. FLOOR, A" autocomplete="off" />
@@ -190,17 +166,13 @@
 
 <script>
     bindAutocomplete('reg-name', 'reg-name-autocomplete-list', null, false, false, true);
-    // Registry's Type field: same distinct-Types source as everywhere else
-    // that suggests one (derived from itemsList -- no server round trip
-    // needed, this page already has the full item list loaded).
+    @* Type suggestions come from the items already loaded on the page. *@
     bindValueAutocomplete(
         document.getElementById('reg-type'),
         document.getElementById('reg-type-autocomplete-list'),
         [...new Set(itemsList.map(function (i) { return i.type; }).filter(Boolean))].sort()
     );
-    // Registration dup-check: warn live if the typed Rheem PN already belongs
-    // to an existing item ("add stock to that item instead of a twin").
-    // Server still enforces authoritatively on submit.
+    @* Warns live if the typed Rheem PN already belongs to an item. The server enforces it on submit. *@
     (function () {
         const rpn = document.getElementById('reg-rpn');
         const warn = document.getElementById('reg-rpn-warn');
@@ -219,8 +191,8 @@
             }
         });
     })();
-    // N/A <-> Has-a-Part# toggle for new registrations. Defaults to Has-a-Part#
-    // since a PN is normally expected; N/A is the deliberate opt-out.
+    @* N/A <-> Has-a-Part# toggle for new registrations. Defaults to Has-a-Part# *@
+    @* since a PN is normally expected; N/A is the deliberate opt-out. *@
     (function bindRegRpnMode() {
         const real = document.getElementById('reg-rpn-mode-real');
         const na = document.getElementById('reg-rpn-mode-na');
@@ -252,18 +224,13 @@
             });
         }
 
-        // ---- Registration: Branch/Line cascade -----------------------------
+        @* Branch and Line cascade *@
         const regLineBranch = document.getElementById('reg-line-branch');
         const regLine = document.getElementById('reg-line');
-        // Line is required to register (Pass 15) -- placeholder reads as a
-        // prompt to pick one, not a valid "leave it blank" choice.
+        @* Line is required, so the placeholder reads as a prompt, not a choice. *@
         wireLineCascade(regLineBranch, regLine, null, undefined, '-- Select a Line --');
 
-        // Auto-fill: picking a Team suggests its home Line, but doesn't lock
-        // it -- a team with no assigned Line does nothing, and a manual
-        // Branch/Line change after this stands until a DIFFERENT team is
-        // picked (which re-suggests, on the read that re-picking a team on
-        // purpose is more common than wanting to keep an unrelated override).
+        @* Picking a Team suggests its home Line without locking it. A different Team suggests again. *@
         if (teamSel) {
             teamSel.addEventListener('change', function () {
                 const suggested = teamLines[teamSel.value];
@@ -273,22 +240,12 @@
             });
         }
 
-        // ---- Live Item ID preview -----------------------------------------
-        // Shows the predicted ID (<GroupInitial><Type first+last>-NNNN) as the
-        // user picks Branch/Line / types Type. The number is read from the
-        // items already on the page. This is ONLY a preview: HomeController.
-        // CreateItem recomputes and assigns the real ID at save (from the
-        // item's own posted Line, same source used here), so a stale number
-        // or stale group here can never cause a clash. The success toast
-        // shows the actual ID.
+        @* Live Item ID preview: <GroupInitial><Type first+last>-NNNN, numbered from the items on the page. *@
+        @* Preview only. The server assigns the real id at save. *@
         const regType = document.getElementById('reg-type');
         const regIdOut = document.getElementById('reg-itemid');
 
-        // Mirrors OrgStructure.BranchFor/GroupFor: find which Branch a Line
-        // belongs to, then reduce "Residential Air" -> "Residential". Falls
-        // back to the Branch dropdown alone if no specific Line is picked
-        // yet, so the preview updates the moment a Branch is chosen instead
-        // of waiting on a Line selection underneath it.
+        @* Mirrors OrgStructure.GroupFor: the Line's Branch, minus " Air". Falls back to the Branch dropdown. *@
         function regGroupWord() {
             const lineVal = (regLine && regLine.value) ? regLine.value.trim() : '';
             let branch = lineVal ? branchForLine(lineVal) : '';
@@ -325,14 +282,11 @@
         if (regLineBranch) regLineBranch.addEventListener('change', regPreviewId);
         if (regLine) regLine.addEventListener('change', regPreviewId);
         if (regType) regType.addEventListener('input', regPreviewId);
-        // Refresh the preview each time the registry modal opens.
+        @* Refresh the preview each time the registry modal opens. *@
         const newItemModal = document.getElementById('newItemModal');
         if (newItemModal) newItemModal.addEventListener('shown.bs.modal', regPreviewId);
         bindCascadingLocation('reg-parent', 'reg-major', 'reg-sub', 'reg-rack', 'reg-row', 'reg-fda', 'reg-rack-list', 'reg-row-list');
-    // New Item Registry: serial capture for compressors, TC-count declaration
-    // for motors. Neither is required -- both are opportunities the form
-    // surfaces automatically based on Type, mirroring the roster's own Serial/
-    // Lab shape for compressors. See InventoryService.CreateItem.
+    @* Serial rows for compressors and a TC count for motors, both optional, shown by Type. *@
     (function bindRegUnitCapture() {
         const typeEl = document.getElementById('reg-type');
         const qtyEl = document.getElementById('reg-qty');
@@ -344,8 +298,8 @@
         const tcQty = document.getElementById('reg-tc-qty');
         if (!typeEl || !qtyEl || !compWrap || !motorWrap) return;
 
-        // Keep in lockstep with InventoryService.IsCompressorType -- exact
-        // match only, same rule the server enforces.
+        @* Keep in lockstep with InventoryService.IsCompressorType -- exact *@
+        @* match only, same rule the server enforces. *@
         function isCompressorTypeLocal(t) {
             return !!t && String(t).trim().toLowerCase() === 'compressor';
         }
@@ -403,8 +357,7 @@
             }
         });
 
-        // Reset every time the modal opens, same as the ID preview does --
-        // otherwise a prior registration's leftover rows/checked state lingers.
+        @* Reset each time the modal opens, so a prior registration's rows do not linger. *@
         const newItemModal = document.getElementById('newItemModal');
         if (newItemModal) newItemModal.addEventListener('shown.bs.modal', function () {
             tcCheck.checked = false;

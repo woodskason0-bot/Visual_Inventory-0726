@@ -18,30 +18,22 @@ namespace Visual_Inventory_System.Services
             _currentUser = currentUser;
         }
 
-        // ============================
-        // LINE-BASED VISIBILITY
-        // ============================
-        // Applied to browsing/search surfaces only (GetAll, Search, ExportToCsv)
-        // -- NOT to GetById, FindByRheemPart, or the quantity-math helpers,
-        // which need to see the true, whole-org picture so lookups, duplicate
-        // checks, and Engineer+ cross-Line reassignment keep working.
+        // Line visibility. Browsing only (GetAll, ExportToCsv).
+        // GetById, FindByRheemPart and the quantity math see the whole org.
         private IQueryable<InventoryItem> ApplyLineVisibility(IQueryable<InventoryItem> query)
         {
-            // Level 5 sees everything, regardless of Line.
+            // Admin sees everything.
             if (_currentUser.Level >= AccessLevels.Admin) return query;
 
             var myLine = (_currentUser.Line ?? "").Trim();
             if (myLine.Length > 0)
             {
                 var myLineLower = myLine.ToLower();
-                // Blank item Line -- also fails open (not yet assigned to any Line).
+                // A blank item Line fails open.
                 return query.Where(i => i.Line == "" || i.Line.ToLower() == myLineLower);
             }
 
-            // No specific Line -- a whole-Branch assignment sees every Line under
-            // that Branch (plus still-unassigned items), without going all the
-            // way to Admin's full-org bypass. Line above always wins if somehow
-            // both are set; the Settings UI keeps them mutually exclusive.
+            // No Line but a Branch: every Line under it, plus unassigned items.
             var myBranch = (_currentUser.Branch ?? "").Trim();
             if (myBranch.Length > 0 && OrgStructure.BranchLines.TryGetValue(myBranch, out var branchLines))
             {
@@ -49,24 +41,11 @@ namespace Visual_Inventory_System.Services
                 return query.Where(i => i.Line == "" || branchLinesLower.Contains(i.Line.ToLower()));
             }
 
-            // Not yet assigned a Line or a Branch -- fail OPEN, not closed, so
-            // nobody's dashboard looks broken while rollout is still in progress.
+            // No Line and no Branch: fail open.
             return query;
         }
 
-        /// <summary>
-        /// Same rule as ApplyLineVisibility, evaluated in memory against one
-        /// already-materialized item instead of as a SQL predicate. Search Center
-        /// needs this: since Search() below stopped filtering results to the
-        /// viewer's own Line (Request Transfer feature -- other Lines' items now
-        /// show up too), the card rendering loop needs to know per item whether
-        /// to offer the normal Order/Handle Stock buttons or just Request
-        /// Transfer. Deliberately NOT shared code with ApplyLineVisibility --
-        /// that one has to stay a
-        /// SQL-translatable expression tree, this one only ever runs against
-        /// plain C# objects, so folding them into one method would either break
-        /// EF's translator or force an extra round-trip.
-        /// </summary>
+        /// <summary>ApplyLineVisibility's rule for one loaded item. Kept separate: that one must stay SQL-translatable.</summary>
         public bool IsOwnLine(string? itemLine)
         {
             if (_currentUser.Level >= AccessLevels.Admin) return true;
@@ -80,17 +59,11 @@ namespace Visual_Inventory_System.Services
             if (myBranch.Length > 0 && OrgStructure.BranchLines.TryGetValue(myBranch, out var branchLines))
                 return line.Length == 0 || branchLines.Any(l => string.Equals(l, line, System.StringComparison.OrdinalIgnoreCase));
 
-            // Not yet assigned a Line or a Branch -- fails open, same as ApplyLineVisibility.
+            // No Line and no Branch: fail open.
             return true;
         }
 
-        /// <summary>
-        /// This user's team memberships (per-team quantity ownership, scoped
-        /// 2026-08-26) -- consolidates what used to be a copy-pasted inline
-        /// join (HomeController.SetDefaultThreshold had its own). Used by
-        /// OrderService's team-ordering resolution and Transfer approval
-        /// routing, both of which need "which teams is this person actually on."
-        /// </summary>
+        /// <summary>The teams this user is on.</summary>
         public List<string> GetUserTeamNames(string userName)
         {
             if (string.IsNullOrWhiteSpace(userName)) return new List<string>();
@@ -100,11 +73,7 @@ namespace Visual_Inventory_System.Services
                     select ut.TeamName).ToList();
         }
 
-        /// <summary>
-        /// The distinct teams with a real claim on this item -- non-blank
-        /// ItemVariant.Team across its ACTIVE variants. One entry (or none)
-        /// means the item isn't actually split and Team gates nothing.
-        /// </summary>
+        /// <summary>Teams with a claim on this item: non-blank Team across its active variants. One or none = not split.</summary>
         private static List<string> ActiveVariantTeams(InventoryItem item) =>
             item.ActiveVariants
                 .Select(v => (v.Team ?? "").Trim())
@@ -113,18 +82,8 @@ namespace Visual_Inventory_System.Services
                 .ToList();
 
         /// <summary>
-        /// Which team's slice a Transfer request is actually aimed at, or "" for
-        /// "no team boundary applies here." Blank covers three cases that all
-        /// behave identically: the item isn't split across teams, no pull
-        /// location was named, or the named variant carries no team -- all fail
-        /// OPEN, the same convention Line uses everywhere else.
-        ///
-        /// This is the SINGLE definition of that boundary. CanApproveTransfer
-        /// gates on it, ApproveTransfer scopes its pull loop to it, and the
-        /// approval UI builds its per-unit serial picklists from it. Those three
-        /// disagreeing is exactly what let a Ninja-only Engineer approve a
-        /// 1-unit Ninja slice and have 4 of the units come out of Samurai's
-        /// stack -- see the Pass 32 entry in the handoff.
+        /// The team a transfer request is aimed at, or "" = no team boundary (fails open).
+        /// The single definition: approval rights, the pull loop and the serial picklists all use it.
         /// </summary>
         public string ResolveTransferTeam(InventoryItem item, int? requestedVariantId)
         {
@@ -136,15 +95,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Can THIS user approve/deny a Transfer request against this item
-        /// (per-team quantity ownership, scoped 2026-08-26)? Two gates, not one:
-        /// Line (unchanged -- IsOwnLine, same as every other Transfer check) AND,
-        /// only once the item is actually split across more than one team, Team
-        /// membership too -- an Engineer on the right Line but the wrong team
-        /// can't approve away a slice that isn't theirs. Used both to build the
-        /// "Awaiting My Approval" queue (so a non-matching Engineer never even
-        /// sees a request they can't act on) and to enforce it server-side in
-        /// ApproveTransfer/DenyTransfer.
+        /// Can this user approve or deny a transfer against this item? Own Line, and
+        /// once the item is split across teams, membership of the target team too.
         /// </summary>
         public bool CanApproveTransfer(InventoryItem item, int? requestedVariantId)
         {
@@ -159,17 +111,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Which team an order line resolves against, WITHOUT deciding what to
-        /// do about an unanswered ambiguity -- OrderService.ResolveOrderingTeam
-        /// wraps this and throws (the order can't proceed without an answer),
-        /// while Search Center's card just wants a number to display and treats
-        /// ambiguous as "no scope yet." Extracted so those two can't drift:
-        /// a card promising "Available: 15" while Submit refuses at 12 is the
-        /// same class of disagreement as the Transfer one above.
-        ///
-        /// Ambiguous means specifically: more than one of the REQUESTER'S OWN
-        /// teams has a real claim on this item and nothing has been picked --
-        /// not merely "this person is on several teams somewhere."
+        /// The team an order line resolves against. Ambiguous = more than one of the requester's
+        /// own teams has a claim and none was picked. Does not decide what to do about it.
         /// </summary>
         public (string Team, bool Ambiguous, List<string> Applicable) ResolveOrderingTeam(
             InventoryItem item, string? requestedTeam)
@@ -193,13 +136,7 @@ namespace Visual_Inventory_System.Services
             return ("", true, applicable);
         }
 
-        /// <summary>
-        /// What THIS viewer could actually order of this item right now --
-        /// GetAvailableQuantity narrowed to whichever team's claim applies to
-        /// them. Falls back to the item total whenever no single team applies
-        /// (unsplit item, no membership overlap, or an unanswered ambiguity),
-        /// which is exactly what Submit() would then allow too.
-        /// </summary>
+        /// <summary>What this viewer could order now. Falls back to the item total when no single team applies.</summary>
         public int GetAvailableForViewer(InventoryItem item)
         {
             var (team, _, _) = ResolveOrderingTeam(item, null);
@@ -207,15 +144,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Same visibility rule as browsing (Pass 15), applied to TransactionLogs --
-        /// View Logs and the Activity Feed used to show every action for every item
-        /// regardless of the viewer's Line, which is a wider audience than can even
-        /// see those items in Search. Built on top of ApplyLineVisibility rather than
-        /// duplicating the Line/Branch logic: a log row is visible if it isn't about
-        /// an item at all (blank ItemId -- Settings/admin actions), if the item it
-        /// names has since been deleted (nothing left to check a Line against, same
-        /// "keeps reading sensibly" treatment Delete Item already gives these), or if
-        /// the item it names is one this viewer can currently see.
+        /// Line visibility for logs. A row shows if it names no item, a deleted item,
+        /// or an item this viewer can see.
         /// </summary>
         public IQueryable<TransactionLog> ApplyLogVisibility(IQueryable<TransactionLog> query)
         {
@@ -230,9 +160,7 @@ namespace Visual_Inventory_System.Services
                 visibleItemIds.Contains(log.ItemId));
         }
 
-        // ============================
-        // NEW ITEM REGISTRY LOGIC
-        // ============================
+        // New item registry
         public string GetNextItemId()
         {
             var allIds = _db.InventoryItems.AsNoTracking().Select(i => i.ItemId).ToList();
@@ -248,23 +176,9 @@ namespace Visual_Inventory_System.Services
             return (maxId + 1).ToString();
         }
 
-        // ----------------------------------------------------------------------
-        // ITEM ID GENERATOR  (format: <GroupInitial><Type first+last>-NNNN)
-        //   e.g. Commercial + Valve -> "CVE-0001", Residential + Coil -> "RCL-0001"
-        // The 4-digit number is sequenced PER PREFIX: the highest number ever
-        // used for that exact prefix + 1, zero-padded to 4 (spills to 5+ past
-        // 9999). Legacy IDs that don't match the "<PREFIX>-<digits>" shape are
-        // ignored, so old-style codes (e.g. CNEA) can't poison the count. The
-        // result is re-checked for collisions before returning.
-        //
-        // "Ever used", not "on a live item": Delete Item removes the item row but
-        // leaves its TransactionLogs, Returned/Scrapped unit rows, completed order
-        // lines and decided transfers under the old ItemId, and the Item Card,
-        // View Logs, My Activity and the rosters all read those back by that
-        // string. Counting live items only handed a deleted top-numbered ID --
-        // and its whole history -- to the next registration with that prefix
-        // (CCO-0001, deleted 2026-09-10, was next in line).
-        // ----------------------------------------------------------------------
+        // Item id: <GroupInitial><Type first+last>-NNNN, e.g. Commercial + Valve -> "CVE-0001".
+        // Numbered per prefix from the highest ever used, not the highest on a live item:
+        // a deleted item's id still owns its logs, orders and unit rows.
         public string GenerateItemId(string? group, string? type)
         {
             string prefix = BuildPrefix(group, type);   // includes trailing '-'
@@ -303,8 +217,7 @@ namespace Visual_Inventory_System.Services
             return candidate;
         }
 
-        // Group initial + type's first & last letter, uppercased, with trailing '-'.
-        // Blank group/type fall back to the same defaults the controller applies.
+        // Group initial + the type's first and last letter, uppercased, plus '-'.
         private static string BuildPrefix(string? group, string? type)
         {
             string g = string.IsNullOrWhiteSpace(group) ? "Commercial" : group.Trim();
@@ -316,38 +229,28 @@ namespace Visual_Inventory_System.Services
             return $"{gi}{tFirst}{tLast}-";
         }
 
-        // serials: compressors only, one CompressorUnit per non-blank entry.
-        // thermocoupledQty: motors only, clamped to Quantity -- sets
-        // ItemVariant.ThermocoupledQty and mints that many blank (no lab yet)
-        // MotorUnit rows, same shared entrance Intake uses (LogIntakeSerials/
-        // LogIntakeThermocoupled) so both forms feed the roster identically.
+        // serials: compressors only, one CompressorUnit each.
+        // thermocoupledQty: motors only, clamped to Quantity, one blank MotorUnit each.
         public void CreateItem(InventoryItem newItem, List<string>? serials = null, int thermocoupledQty = 0)
         {
-            // The caller model-binds a whole InventoryItem, so a crafted post could
-            // arrive with its own Variants/Id/RegisteredAt/AlertThreshold -- and
-            // Quantity reads a posted variant ahead of the staged value. The
-            // registry form posts none of these; the variant is built below.
+            // The whole item is model-bound, so reset what the form never posts.
             newItem.Id = 0;
             newItem.Variants = new List<ItemVariant>();
             newItem.RegisteredAt = null;
             newItem.AlertThreshold = 0;
 
-            // The form's min="0" is skipped by form.submit(), and this was the only
-            // thing that could have caught it.
+            // form.submit() skips the form's min="0", so this is the only check.
             if (newItem.Quantity < 0)
                 throw new System.InvalidOperationException(
                     "Quantity can't be negative -- nothing was registered.");
 
             newItem.LastUpdated = System.DateTime.UtcNow;
             newItem.UpdatedBy = _currentUser.Name;
-            // First-registered timestamp. Set once here and never touched again
-            // (unlike LastUpdated, which moves on every edit).
+            // Set once, never changed.
             if (newItem.RegisteredAt == null)
                 newItem.RegisteredAt = System.DateTime.UtcNow;
 
-            // Capture the STAGED values (posted by the form into the pass-through
-            // setters) BEFORE adding the variant -- once a variant exists, the
-            // getters read from it instead of the staging fields.
+            // Read the staged values before adding the variant: afterwards the getters read the variant.
             int qty = newItem.Quantity;
             int tcQty = System.Math.Max(0, System.Math.Min(thermocoupledQty, qty));
             var variantOne = new ItemVariant
@@ -355,11 +258,7 @@ namespace Visual_Inventory_System.Services
                 VariantNumber = 1,
                 Quantity = qty,
                 ThermocoupledQty = tcQty,
-                // Per-team quantity ownership: a variant inherits the family's
-                // Team at creation (ItemVariant.Team's documented default, and
-                // what the AddPerTeamQuantityOwnership backfill did to every
-                // pre-existing row). Left blank, this stack is invisible to
-                // team-scoped ordering -- its own team can't order it.
+                // Inherits the family's Team. Left blank, the stack is invisible to team-scoped ordering.
                 Team = newItem.Team ?? "",
                 Parent = newItem.Parent,
                 Major = newItem.Major,
@@ -374,7 +273,6 @@ namespace Visual_Inventory_System.Services
 
             _db.InventoryItems.Add(newItem);
 
-            // LOG THE CREATION
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = System.DateTime.UtcNow,
@@ -399,46 +297,17 @@ namespace Visual_Inventory_System.Services
                     System.DateTime.UtcNow, new IntakeResult());
         }
 
-        // ============================
-        // SEARCH AND CORE LOGIC
-        // ============================
-        // NOTE: the old "name" filter slot is now the Rheem Part # filter
-        // (leadership: PN is a primary identifier). Item NAME is still
-        // reachable through omni-search.
+        // Search
         /// <summary>
-        /// The `notes` parameter this used to take (Description OR FdaString, both
-        /// Contains) is gone as of Pass 35, fully superseded: Description joined
-        /// the omni sweep below, and the FdaString half became the real
-        /// locParent/locMajor/locSub filter -- which reads the Parent/Major/Sub
-        /// COLUMNS, not the FdaString.
-        ///
-        /// That column choice is load-bearing. FdaString is not a consistent
-        /// shape in real data: it comes in 0-, 1-, 2- and 4-dot forms
-        /// ("NWES", "PATS.LEAN-TO", "ETRD.CNEA.CNE6",
-        /// "RLB.MTOE.SMRI.RACK 8.Row 1") because older rows compressed out the
-        /// empty levels instead of padding them with "0", and it carries a case
-        /// split too ("PATS.LEAN-TO" x185 vs "PATS.Lean-To" x1). Prefix-matching
-        /// that string would silently miss rows and mis-level others -- in
-        /// "PATS.LEAN-TO" the second segment is a RACK, not a Major. The columns
-        /// have none of those problems: 4 Parents, 3 Majors, zero rows where a
-        /// Sub is set without its Major.
+        /// Search Center's query. Filters win over omni text. Location filters read the
+        /// Parent/Major/Sub columns, never FdaString: its shape is not consistent in real data.
         /// </summary>
         public List<InventoryItem> Search(string? omni, string? rheemPart, string? type, string? brand,
                                           string? branch = null,
                                           string? locParent = null, string? locMajor = null, string? locSub = null)
         {
-            // Include variants: results feed the holoviewer, which reads the
-            // Quantity/location pass-throughs -- without variants loaded those
-            // silently read 0/blank.
-            //
-            // Deliberately NOT ApplyLineVisibility here (Request Transfer feature,
-            // scoped 2026-08-26): Search is the one surface where another Line's
-            // items are meant to show up, so someone can find and request a
-            // transfer. GetAll and ExportToCsv keep the Line-scoped filter
-            // untouched -- this is a Search-only carve-out, not a change to
-            // visibility generally. The card rendering loop uses IsOwnLine() per
-            // item to decide whether to offer the normal action buttons or just
-            // Request Transfer.
+            // Variants are loaded because the Quantity and location pass-throughs read them.
+            // No Line filter, on purpose: Search is where another Line's items show up for a transfer request.
             var query = _db.InventoryItems.AsNoTracking()
                 .Include(i => i.Variants)
                 .AsQueryable();
@@ -462,10 +331,7 @@ namespace Visual_Inventory_System.Services
             }
             if (!string.IsNullOrWhiteSpace(locParent))
             {
-                // ONE Any() carrying all three levels, deliberately -- three
-                // chained Any() calls would let an item qualify by matching the
-                // Parent on one variant and the Major on a different one, which
-                // is not "stock at this location" in any sense a human means.
+                // One Any() for all three levels, so Parent and Major must match on the same variant.
                 string p = locParent.Trim().ToLower();
                 string m = (locMajor ?? "").Trim().ToLower();
                 string s2 = (locSub ?? "").Trim().ToLower();
@@ -477,9 +343,7 @@ namespace Visual_Inventory_System.Services
             }
             if (!string.IsNullOrWhiteSpace(branch) && OrgStructure.BranchLines.TryGetValue(branch, out var branchLines))
             {
-                // Branch isn't a column on InventoryItem -- only Line is -- so
-                // resolve the Branch's member Lines here and match on those
-                // (translates to a SQL IN, same as any other array.Contains).
+                // Branch is not a column. Match on the branch's Lines.
                 query = query.Where(i => branchLines.Contains(i.Line));
                 isFilterActive = true;
             }
@@ -493,10 +357,6 @@ namespace Visual_Inventory_System.Services
                     i.ItemName.ToLower().Contains(s) ||
                     i.Brand.ToLower().Contains(s) ||
                     i.Type.ToLower().Contains(s) ||
-                    // Description was the one identity field omni never swept --
-                    // only the old `notes` filter reached it, and that field is
-                    // gone now. Case-insensitive by construction (both sides
-                    // ToLower'd), same as every other clause here.
                     i.Description.ToLower().Contains(s) ||
                     i.Variants.Any(v => !v.IsRetired && v.FdaString.ToLower().Contains(s)) ||
                     i.Team.ToLower().Contains(s) ||
@@ -513,21 +373,7 @@ namespace Visual_Inventory_System.Services
             return query.ToList();
         }
 
-        /// <summary>
-        /// Location filtering here matches the Parent/Major/Sub/Rack/Row COLUMNS,
-        /// not FdaString. It used to take a single dot-joined prefix and run
-        /// FdaString.StartsWith on it, which was wrong for the same reasons
-        /// Search() documents: FdaString comes in 0-, 1-, 2- and 4-dot forms
-        /// (older rows compressed empty levels out, newer ones pad with "0") and
-        /// in "PATS.LEAN-TO" the second segment is a Rack, not a Major. The
-        /// wizard's own cascade made it worse by dropping blank levels before
-        /// joining, so picking a Parent and a Rack posted "RLB.RACK 8" -- which
-        /// prefix-matched nothing, and silently returned an EMPTY CSV while 29
-        /// variants really sat on that rack. The Pass 35 note claiming this
-        /// survived "because its input is a free-text term the human typed"
-        /// stopped being true in Pass 23, when Rack/Row cascade suggestions were
-        /// added to this modal.
-        /// </summary>
+        /// <summary>The Export wizard's CSV. Location filters match the Parent/Major/Sub/Rack/Row columns, not FdaString.</summary>
         public byte[] ExportToCsv(string? group, string? team, string? type, string? brand,
                                   string? locParent, string? locMajor, string? locSub,
                                   string? rack, string? row,
@@ -537,27 +383,16 @@ namespace Visual_Inventory_System.Services
                 .Include(i => i.Variants)
                 .AsQueryable());
 
-            // 1. STRICT AND LOGIC (The Top Half of the Wizard)
+            // Top half of the wizard: every filter must match.
             if (!string.IsNullOrWhiteSpace(group)) query = query.Where(i => i.Group.ToLower() == group.ToLower());
-            // Per-team quantity ownership (2026-08-26): a team filter has to
-            // catch a team that only owns a SLICE of the item too, not just an
-            // item whose family-level Team field happens to match -- otherwise
-            // filtering by "Ninja" would silently miss an item family-tagged
-            // "Samurai" that Ninja was later given a variant-level claim on.
+            // Team matches the family's Team or any active variant's Team, so a slice owner is found too.
             if (!string.IsNullOrWhiteSpace(team))
                 query = query.Where(i => i.Team.ToLower() == team.ToLower()
                     || i.Variants.Any(v => !v.IsRetired && v.Team.ToLower() == team.ToLower()));
             if (!string.IsNullOrWhiteSpace(type)) query = query.Where(i => i.Type.ToLower().Contains(type.ToLower()));
             if (!string.IsNullOrWhiteSpace(brand)) query = query.Where(i => i.Brand.ToLower().Contains(brand.ToLower()));
 
-            // ONE Any() carrying every level, deliberately -- the same rule
-            // Search() uses. Chained Any() calls would let an item qualify by
-            // matching the Parent on one variant and the Rack on a different
-            // one, which is not "stock at this location" in any sense a human
-            // means. Each level is independently optional, so skipping Major or
-            // Sub now narrows correctly instead of matching nothing.
-            // .ToLower() rather than string.Equals(.., StringComparison), per the
-            // Pass 29 EF-translation trap.
+            // One Any() for every level, as in Search. Each level is optional.
             string lp = (locParent ?? "").Trim().ToLower();
             string lm = (locMajor ?? "").Trim().ToLower();
             string ls = (locSub ?? "").Trim().ToLower();
@@ -576,7 +411,7 @@ namespace Visual_Inventory_System.Services
             var items = query.ToList();
             var itemIds = items.Select(i => i.ItemId).ToList();
 
-            // 2. FETCH TRANSACTION HISTORY (If a timeframe is requested)
+            // History, inside the time frame if one was picked.
             DateTime? since = null;
             if (expTimeFrame == "7") since = DateTime.UtcNow.AddDays(-7);
             else if (expTimeFrame == "30") since = DateTime.UtcNow.AddDays(-30);
@@ -589,36 +424,29 @@ namespace Visual_Inventory_System.Services
 
             var builder = new StringBuilder();
 
-            // CSV HEADER: Added Status, Scrapped, and Ownership columns. Line
-            // added 2026-08-26 (per-team quantity ownership) -- it never had a
-            // column here before, despite gating visibility everywhere else.
             builder.AppendLine("ItemID,RheemPartNumber,ItemName,Type,Brand,Location,CurrentQuantity,Group,Line,Team,ProjectCode,StatusTags,ScrappedQty,OwnershipChanges");
 
             foreach (var i in items)
             {
                 var myLogs = allLogs.Where(t => t.ItemId == i.ItemId).ToList();
 
-                // Calculate historical data based on the selected time frame
                 int scrapQty = myLogs.Where(t => t.ActionType == "Scrap").Sum(t => System.Math.Abs(t.QuantityChange));
                 int ownCount = myLogs.Count(t => t.ActionType == "Ownership");
 
-                // Determine the true/false status for the 4 checkboxes
                 bool isAvailable = i.Quantity > 0;
                 bool isAlert = i.AlertThreshold > 0 && i.Quantity <= i.AlertThreshold;
                 bool isScrap = scrapQty > 0;
                 bool isOwn = ownCount > 0;
 
-                // 3. THE "OR" LOGIC (Bottom Half of the Wizard)
+                // Bottom half of the wizard: any ticked box qualifies.
                 bool include = false;
                 if (expAvailable && isAvailable) include = true;
                 if (expAlerts && isAlert) include = true;
                 if (expScrap && isScrap) include = true;
                 if (expOwnership && isOwn) include = true;
 
-                // If it didn't meet ANY of the checked boxes, skip this item entirely
                 if (!include) continue;
 
-                // Build a nice readable Status Tag string for the Excel file
                 var tags = new List<string>();
                 if (isAvailable) tags.Add("Available");
                 if (isAlert) tags.Add("Low Stock Alert");
@@ -626,18 +454,13 @@ namespace Visual_Inventory_System.Services
                 if (isOwn) tags.Add("Ownership Changed");
                 string tagString = string.Join(" | ", tags);
 
-                // Escape commas to protect the CSV structure
+                // Commas would break the CSV.
                 string safeName = i.ItemName?.Replace(",", ";") ?? "";
                 string safeBrand = i.Brand?.Replace(",", ";") ?? "";
                 string safeRpn = i.RheemPartNumber?.Replace(",", ";") ?? "";
                 string safeLine = string.IsNullOrWhiteSpace(i.Line) ? "" : i.Line.Replace(",", ";");
 
-                // Per-team quantity ownership (2026-08-26): distinct teams across
-                // this item's active variants, semicolon-joined -- a split item
-                // shows every team with a real claim, not just the family-level
-                // default. Unsplit items (the overwhelming majority) fall back to
-                // that same family-level Team, identical to what this column
-                // always showed before today.
+                // Every team with a claim on an active variant. Unsplit items fall back to the family's Team.
                 var activeTeams = i.ActiveVariants.Select(v => v.Team).Where(t => !string.IsNullOrWhiteSpace(t))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 string safeTeam = (activeTeams.Count > 0 ? string.Join("; ", activeTeams) : (i.Team ?? "")).Replace(",", ";");
@@ -649,33 +472,23 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// What the signed-in person could order of this item now, across every
-        /// team's stock. Every count here goes through StockClaims (2026-11-08): live
-        /// holds and Pending lines on Pending orders are claims, and a person's own
-        /// holds are available to them. The LINE has to be Pending as well as its
-        /// order -- a deliberate partial pickup marks its line "Split" (the units
-        /// already left the shelf) while the order stays Pending for another line.
+        /// What the signed-in person could order of this item now, across every team's stock.
+        /// All counts go through StockClaims.
         /// </summary>
         public int GetAvailableQuantity(string itemId) => GetAvailableQuantity(itemId, null);
 
-        /// <summary>
-        /// Team-scoped (per-team quantity ownership, 2026-08-26): what the signed-in
-        /// person could order on a line resolved to `team` ("" = unscoped). BC-01
-        /// (2026-11-08): this used to subtract only lines of the same team, so an
-        /// unscoped order that had already claimed the stock was invisible here and
-        /// the same units were promised twice.
-        /// </summary>
+        /// <summary>The same, for a line resolved to `team` ("" = unscoped).</summary>
         public int GetAvailableQuantity(string itemId, string? team) =>
             GetAvailableQuantity(itemId, team, _currentUser.Name);
 
-        /// <summary>Same, for a named person -- a transfer is measured for its requester, not the approver.</summary>
+        /// <summary>The same, for a named person. A transfer is measured for its requester, not the approver.</summary>
         public int GetAvailableQuantity(string itemId, string? team, string? forUser)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
             return StockClaims.Load(_db, itemId).AvailableQty(forUser ?? "", (team ?? "").Trim());
         }
 
-        /// <summary>The thermocoupled part of the same question (BC-07: TC is counted across orders now).</summary>
+        /// <summary>The thermocoupled part of the same question.</summary>
         public int GetAvailableTc(string itemId, string? team, string? forUser = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return 0;
@@ -683,9 +496,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Pickup Queue's "can this line be filled": the same count, but only the holds
-        /// made and orders placed BEFORE this order compete with it -- a later order
-        /// never blocks an earlier one.
+        /// Pickup Queue's "can this line be filled". Only holds and orders made before
+        /// this order compete with it.
         /// </summary>
         public int GetAvailableForOrder(string itemId, System.DateTime orderCreatedAt, string? team, string? requestedBy, int excludeOrderItemId)
         {
@@ -718,12 +530,8 @@ namespace Visual_Inventory_System.Services
         public int GetTotalDbCount() => _db.InventoryItems.Count();
 
         /// <summary>
-        /// Hard-deletes an item's catalog row once nothing about it is still live.
-        /// TransactionLogs (and any already-Returned/Scrapped CompressorUnit/MotorUnit
-        /// history rows) are deliberately NOT touched -- same pattern as the soft-hide
-        /// on Team/User, they keep reading sensibly under the now-defunct ItemId
-        /// string. Re-registering the same model later mints a fresh ItemId; numbers
-        /// are never reused.
+        /// Hard-deletes an item once nothing about it is live. Logs and old unit rows stay
+        /// under the old ItemId. Numbers are never reused.
         /// </summary>
         public (bool ok, string message) DeleteItem(string itemId)
         {
@@ -734,10 +542,7 @@ namespace Visual_Inventory_System.Services
             if (totalQty != 0)
                 return (false, $"Can't delete -- {itemId} still has {totalQty} unit(s) on hand.");
 
-            // The loan itself is counted on the order line. Controls never get unit
-            // rows, so the unit-row check below can't see them -- deleting a Control
-            // with units out left a loan nobody could return ("That item no longer
-            // exists"). LoanOutstanding is the authority; unit rows never drive counts.
+            // LoanOutstanding is the authority. Controls have no unit rows, so the next check cannot see them.
             bool loanOutstanding = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.LoanOutstanding > 0);
             if (loanOutstanding)
                 return (false, $"Can't delete -- {itemId} still has a loan out. Return or scrap it first.");
@@ -747,20 +552,17 @@ namespace Visual_Inventory_System.Services
             if (outOnLoan)
                 return (false, $"Can't delete -- {itemId} has unit(s) still out on loan. Return or scrap them first.");
 
-            // Line status too, same as the reservation queries: a Split line
-            // already pulled its units even while its order waits on another line.
+            // Line status too: a Split line has already pulled its units.
             bool onPendingOrder = _db.OrderItems.Any(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending");
             if (onPendingOrder)
                 return (false, $"Can't delete -- {itemId} is on a pending order.");
 
-            // An undecided Transfer request is outstanding work against this item
-            // exactly like a Pending order is -- deleting out from under it strands
-            // the request with nothing to approve.
+            // An undecided transfer request is open work against the item, like a Pending order.
             bool onOpenTransfer = _db.TransferRequests.Any(t => t.ItemId == itemId && t.Status == TransferStatus.Requested);
             if (onOpenTransfer)
                 return (false, $"Can't delete -- {itemId} has an open transfer request. Approve or deny it first.");
 
-            // A live hold is outstanding the same way (2026-11-08).
+            // So is a live hold.
             bool reserved = ReservationService.Live(_db.Reservations.AsNoTracking(), System.DateTime.Today).Any(r => r.ItemId == itemId);
             if (reserved)
                 return (false, $"Can't delete -- {itemId} has a live reservation. Release it first (Reserved Items).");
@@ -770,10 +572,7 @@ namespace Visual_Inventory_System.Services
             _db.ItemVariants.RemoveRange(item.Variants);
             _db.InventoryItems.Remove(item);
 
-            // Logged AFTER the item's gone, same as every other action -- this is
-            // itself the last entry the audit log will ever see for this ItemId,
-            // so the ItemName snapshot above is what makes it (and everything
-            // before it) still readable in the feed.
+            // The last log this ItemId will ever get. The ItemName snapshot keeps it readable.
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = System.DateTime.UtcNow,
@@ -791,14 +590,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Hard-deletes ONE empty stack (ItemVariant) without touching the rest
-        /// of the item -- the gap Delete Item doesn't cover, since Delete Item
-        /// requires the item's TOTAL quantity to be 0, not just one variant's.
-        /// Surfaces after a variant drains to 0 (a Scrap, a Location Transfer
-        /// that fully merges elsewhere, etc.) but the item still carries stock
-        /// at other locations. Same hard-delete philosophy as Delete Item --
-        /// TransactionLogs referencing this variant's old FdaString keep
-        /// reading sensibly, nothing here touches them.
+        /// Hard-deletes one empty stack and leaves the rest of the item alone.
+        /// Delete Item cannot do this: it needs the item's total to be 0.
         /// </summary>
         public (bool ok, string message) DeleteVariant(string itemId, int variantId)
         {
@@ -824,8 +617,7 @@ namespace Visual_Inventory_System.Services
             if (onPendingOrder)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} is requested on a pending order.");
 
-            // A live hold names this stack (2026-11-08) -- with quantity 0 it holds
-            // nothing, but deleting the stack would leave the hold pointing nowhere.
+            // At quantity 0 a live hold here holds nothing, but it would be left pointing nowhere.
             bool held = (from l in _db.ReservationLines.AsNoTracking()
                          join r in ReservationService.Live(_db.Reservations.AsNoTracking(), System.DateTime.Today) on l.ReservationId equals r.Id
                          where l.ItemVariantId == variant.Id && l.Quantity > 0
@@ -833,12 +625,8 @@ namespace Visual_Inventory_System.Services
             if (held)
                 return (false, $"Can't delete -- Variant {variant.VariantNumber} has a live reservation on it. Release it first (Reserved Items).");
 
-            // Sharper than the DeleteItem case above: ResolveTransferTeam reads the
-            // requested variant to decide WHOSE slice a transfer is aimed at, and a
-            // variant it can no longer find resolves to "" -- which fails open. So
-            // deleting the stack a live request names doesn't just orphan it, it
-            // silently converts a team-gated request into an ungated one that any
-            // Engineer on the Line can approve out of any team's stock.
+            // Trap: ResolveTransferTeam reads the requested variant. Delete it and an open
+            // team-gated request resolves to "", which any Engineer on the Line can approve.
             bool onOpenTransfer = _db.TransferRequests.Any(t => t.ItemId == itemId
                 && t.RequestedVariantId == variant.Id && t.Status == TransferStatus.Requested);
             if (onOpenTransfer)
@@ -871,9 +659,7 @@ namespace Visual_Inventory_System.Services
         public InventoryItem? GetById(string itemId) =>
             _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
 
-        // Case-insensitive lookup by Rheem PN. Used for the registration
-        // duplicate check ("this part already exists as CVE-0042") and the
-        // Edit Details uniqueness gate.
+        // Case-insensitive lookup by Rheem PN, for the duplicate checks. "N/A" never matches.
         public InventoryItem? FindByRheemPart(string? rheemPartNumber)
         {
             if (string.IsNullOrWhiteSpace(rheemPartNumber)) return null;
@@ -883,23 +669,11 @@ namespace Visual_Inventory_System.Services
                 .FirstOrDefault(i => i.RheemPartNumber.ToLower() == pn);
         }
 
-        // ============================
-        // IDENTITY EDITS (Edit Details)
-        // ============================
-        // Family-level identity fields, editable from the Modify Stock modal:
-        //   Rheem PN  -- set or change, REJECTED if another item already owns it
-        //                ("taken"): PN is a business identifier like ItemId.
-        //   Description -- free edit.
-        //   Brand     -- fill-if-blank ONLY: an existing brand is never
-        //                overwritten from here (matches "add a brand if there
-        //                is not one already").
-        // Variants are untouched -- identity lives on the family record.
-        // Returns (ok, message); logs an "Edit Details" transaction on success.
+        // Edit Details: family-level identity. Rheem PN is rejected if another item owns it.
+        // Brand is fill-if-blank only. Description is a free edit. Variants are untouched.
         public (bool ok, string message) UpdateItemDetails(string itemId, string? rheemPartNumber, string? description, string? brand, string? line = null)
         {
-            // Deliberately NOT Line-filtered: an Engineer+ reassigning ownership
-            // has to be able to find and act on an item outside their own Line --
-            // that's the entire point of reassignment.
+            // Not Line-filtered: reassigning ownership means acting on an item outside your own Line.
             var item = _db.InventoryItems.FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return (false, $"Item {itemId} not found.");
 
@@ -991,10 +765,7 @@ namespace Visual_Inventory_System.Services
                 int oldThreshold = item.AlertThreshold;
                 item.AlertThreshold = threshold;
 
-                // Logged only on a real change: the Alert Rules modal is opened to
-                // READ a threshold as often as to set one, and Save fires either
-                // way -- same reason UpdateAccessLevel returns early on a no-op
-                // rather than recording "Engineer -> Engineer".
+                // Logged only on a real change: Save fires even when the modal was opened just to read.
                 if (oldThreshold != threshold)
                 {
                     _db.TransactionLogs.Add(new TransactionLog
@@ -1013,11 +784,7 @@ namespace Visual_Inventory_System.Services
             }
         }
 
-        // Bulk-set the alert threshold across many items at once. When `team` is
-        // a real team name, only that team's items are touched; when it's null/
-        // blank (e.g. Kevin / Admin with no team), every item is set. Returns the
-        // number of items affected. All downstream alert displays and the manager
-        // low-stock summary read AlertThreshold, so they pick this up immediately.
+        // Bulk-set the alert threshold. With teams, only their items; without, every item. Returns the count.
         public int SetDefaultThreshold(List<string>? teams, int threshold)
         {
             var q = _db.InventoryItems.AsQueryable();
@@ -1029,13 +796,8 @@ namespace Visual_Inventory_System.Services
             foreach (var it in items)
                 it.AlertThreshold = threshold;
 
-            // ItemId = "" because this isn't about one item -- the Activity Feed
-            // reads a blank ItemId as the discriminator for a non-item action
-            // (Pass 14) and renders ActionType/Details instead of looking one up.
-            // Unlike the per-item path above this logs even when nothing changed:
-            // "Apply to all" is a confirmed overwrite of every threshold in scope,
-            // so the click is the event worth recording, and "0 changed" is a real
-            // answer rather than noise.
+            // Blank ItemId = not about one item. Logged even when nothing changed:
+            // "Apply to all" is a confirmed overwrite, so the click is the event.
             string scope = (teams != null && teams.Count > 0) ? string.Join("/", teams) : "all teams";
             _db.TransactionLogs.Add(new TransactionLog
             {
@@ -1051,8 +813,7 @@ namespace Visual_Inventory_System.Services
             return items.Count;
         }
 
-        // Smallest positive number not used by an ACTIVE variant. Retired rows
-        // keep their number for history, but the number itself is reusable.
+        // Smallest positive number no active variant uses. A retired row's number is reusable.
         private static int NextFreeVariantNumber(InventoryItem item)
         {
             var used = item.ActiveVariants.Select(v => v.VariantNumber).ToHashSet();
@@ -1061,41 +822,25 @@ namespace Visual_Inventory_System.Services
             return n;
         }
 
-        // TC-eligible = the type ends with "Motor": Motor / ID Motor / OD Motor.
-        // Every other type (Compressor, Coil, EEV, ...) stays TC-free (qty 0).
-        // Keep this in lockstep with the client-side isMotorType() in Index.cshtml.
+        // TC-eligible = the type ends with "Motor" (Motor, ID Motor, OD Motor).
+        // Keep in step with the client-side isMotorType().
         public static bool IsMotorType(string? type) =>
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().ToLowerInvariant().EndsWith("motor");
 
-        // Loanable "controls" = types that end with "Control" (e.g. "Control",
-        // "Fan Control").
-        //
-        // CORRECTED Pass 7B: this comment used to claim no item was typed this way
-        // and that the rule therefore matched nothing. That is FALSE -- 9 items are
-        // Type = "Control" as of the 7/28 audit, so the Control loan path is live
-        // and those items loan their full quantity.
-        //
-        // Still true: other control-ish stock (EEV, VFD, Valve, TXV) is NOT matched,
-        // because Type is free text and those aren't spelled "...Control". Widen it
-        // here if that changes -- this is the single place the rule lives.
+        // Loanable controls = the type ends with "Control". EEV, VFD, Valve and TXV are not matched.
+        // The one place the rule lives.
         public static bool IsControlType(string? type) =>
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().ToLowerInvariant().EndsWith("control");
 
-        // Compressor mini-variant tracking is exact-match, not suffix-match --
-        // "Compressor" is the one literal Type value the existing sidebar quick
-        // filter already uses (filterType=Compressor), so this stays in lockstep
-        // with that rather than inventing a second convention.
+        // Exact match, not a suffix: "Compressor" is the literal Type the sidebar filter uses.
         public static bool IsCompressorType(string? type) =>
             !string.IsNullOrWhiteSpace(type)
             && type.Trim().Equals("Compressor", System.StringComparison.OrdinalIgnoreCase);
 
-        // All CompressorUnit rows, grouped by ItemId, newest first.
-        // As of Pass 6A this is a ROSTER, not a pickup log: it holds On Hand
-        // stock as well as units that have left. Ordered by RecordedAt because
-        // PickedUpAt is now NULL for anything still on a shelf -- ordering by
-        // that would sort every on-hand unit into one indistinguishable clump.
+        // All CompressorUnit rows by ItemId, newest first. A roster: on-hand units too.
+        // Ordered by RecordedAt because PickedUpAt is null for anything still on a shelf.
         public Dictionary<string, List<CompressorUnit>> GetCompressorUnitsGrouped()
         {
             return _db.CompressorUnits
@@ -1106,10 +851,7 @@ namespace Visual_Inventory_System.Services
                 .ToDictionary(g => g.Key, g => g.ToList());
         }
 
-        // On-hand units for one family, oldest first -- the pool a pickup draws
-        // from and what 6B's Done Using / Return list will render. Serial-less
-        // stock has no row here, which is expected: units are a partial overlay
-        // over ItemVariant.Quantity, never a replacement for it.
+        // On-hand units for one family, oldest first: the pool a pickup draws from. Serial-less stock has no row.
         public List<CompressorUnit> GetOnHandUnits(string itemId)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return new List<CompressorUnit>();
@@ -1129,16 +871,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Logs/corrects On Hand compressor units directly from the roster view --
-        /// the other entrance to CompressorUnits besides PickUpOrder's match-or-
-        /// create. Lets anyone passing a shelf record a serial that was never
-        /// picked up (825 units, ~184 have a serial as of the 7/28 intake -- this
-        /// is how that gap actually closes over time instead of only at pickup).
-        ///
-        /// Each row is either an edit to an EXISTING On Hand unit (unitId > 0) or
-        /// a NEW one at a given location (unitId == 0, variantId required). A row
-        /// with both fields blank is a no-op -- the caller pads the roster with
-        /// blank rows up to each variant's Quantity, and most stay blank.
+        /// Logs or corrects On Hand compressor units from the roster. A row edits an existing
+        /// unit (unitId > 0) or adds one at a location (unitId == 0). Both fields blank = no-op.
         /// </summary>
         public UnitLogResult LogCompressorUnits(string itemId,
             List<(int UnitId, int? VariantId, string? Serial, string? Lab)> rows, string recordedBy)
@@ -1225,9 +959,7 @@ namespace Visual_Inventory_System.Services
             return result;
         }
 
-        // All MotorUnit rows, grouped by ItemId. CompressorUnit's sibling --
-        // see MotorUnit.cs for why it's a separate table instead of one
-        // generalized over both.
+        // All MotorUnit rows by ItemId, newest first.
         public Dictionary<string, List<MotorUnit>> GetMotorUnitsGrouped()
         {
             return _db.MotorUnits
@@ -1239,14 +971,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Logs/corrects TC motor units. Unlike LogCompressorUnits, edits reach
-        /// BOTH On Hand AND Picked Up (out on loan) rows -- [decided] a motor's
-        /// lab number is worth capturing whenever someone notices it, not just
-        /// while it happens to be on a shelf, since there's no serial to fall
-        /// back on for identity. Scrapped rows are terminal, same as compressors.
-        /// New rows (blank pad filled in) are still On-Hand-only -- you can't
-        /// invent a unit that's out on loan, only correct one that already
-        /// exists because PickUpOrder created it.
+        /// Logs or corrects TC motor units. Edits reach On Hand and Picked Up rows, since a
+        /// lab number is the only identity a motor has. New rows are On Hand only.
         /// </summary>
         public UnitLogResult LogMotorUnits(string itemId,
             List<(int UnitId, int? VariantId, string? Lab)> rows, string recordedBy)
@@ -1318,14 +1044,8 @@ namespace Visual_Inventory_System.Services
         }
 
 
-        // =====================================================================
-        // BULK INTAKE (Pass 9)
-        // =====================================================================
-        // ONE commit path, two entrances: a batch whose location already exists
-        // runs this straight from the Intake screen, and a batch that was held
-        // pending runs the SAME method once the superuser resolves the location.
-        // Anything that diverged between those two would drift apart within a
-        // month, which is the whole reason it lives here and not in a controller.
+        // Bulk intake. One commit path, two entrances: straight from the Intake screen,
+        // or after the superuser resolves a held batch's location.
 
         public class IntakeLine
         {
@@ -1334,12 +1054,9 @@ namespace Visual_Inventory_System.Services
             public string Brand { get; set; } = "";
             public string RheemPartNumber { get; set; } = "N/A";
             public int Quantity { get; set; } = 1;
-            // Compressors only. One row, up to Quantity slots -- unlike the old
-            // single-serial field, a row can now name every unit it's bringing in.
+            // Compressors only. Up to Quantity serials per row.
             public List<string> Serials { get; set; } = new();
-            // Motors only. "How many of these are thermocoupled" -- a count, not
-            // per-unit identity (motors have no serial to key on). Clamped to
-            // Quantity server-side regardless of what the client posts.
+            // Motors only. A count, not per-unit identity. Clamped to Quantity server-side.
             public int ThermocoupledQty { get; set; }
         }
 
@@ -1355,13 +1072,8 @@ namespace Visual_Inventory_System.Services
             public bool Ok => Errors.Count == 0;
         }
 
-        // Whether a variant sits on the shelf named by these five location values.
-        // Compared on the Parent/Major/Sub/Rack/Row COLUMNS, not FdaString: the app
-        // writes that string in more than one shape ("PATS.Lean-To" from Registry
-        // and Intake, "PATS.0.0.LEAN-TO.0" from Modify Stock's NEW location, Location
-        // Transfer and Loan Return), so an == on it missed the same physical shelf.
-        // Blank counts as "0" and case is ignored -- the rule Location Transfer's
-        // merge target has always used, and the one place it now lives.
+        // Same shelf = the five location columns match, blank counting as "0", case ignored.
+        // Never compare FdaString: the app writes it in more than one shape.
         private static bool SameShelf(ItemVariant v, string? parent, string? major, string? sub, string? rack, string? row)
         {
             static string Norm(string? s) => string.IsNullOrWhiteSpace(s) ? "0" : s.Trim().ToUpperInvariant();
@@ -1370,16 +1082,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Commit a batch of rows at one location, under one Line/Team.
-        ///
-        /// preview=true runs every check and reports what WOULD happen without
-        /// writing -- the same thing the hand-written 02_verify SQL files did, but
-        /// before the fact instead of after.
-        ///
-        /// Group is derived from the item's Line (the batch's `line`), the same rule
-        /// New Item Registry uses, so one item gets one ItemId prefix whichever door
-        /// it came through. It used to follow the submitter's own Line, which is
-        /// blank for whole-Branch users and so always minted a "C".
+        /// Commits a batch of rows at one location, under one Line and Team.
+        /// preview = run every check and report, write nothing. Group comes from the batch's Line.
         /// </summary>
         public IntakeResult CommitIntake(
             IEnumerable<IntakeLine> lines, string line, string team,
@@ -1409,13 +1113,10 @@ namespace Visual_Inventory_System.Services
                 string type = Seg(l.Type);
                 var serials = (l.Serials ?? new List<string>())
                     .Select(Seg).Where(s => s.Length > 0).Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
-                // Clamped here, not just client-side -- never trust the posted count
-                // past what's actually coming in.
+                // Clamped here too. The posted count is not trusted.
                 int tcQty = System.Math.Max(0, System.Math.Min(l.ThermocoupledQty, qty));
 
-                // A real PN already owned by another family is the one thing that
-                // must block -- it means the same physical part is about to exist
-                // twice under two ItemIds. "N/A" is the shared sentinel, exempt.
+                // The one thing that blocks: a real PN owned by another family. "N/A" is exempt.
                 if (!string.Equals(pn, "N/A", System.StringComparison.OrdinalIgnoreCase))
                 {
                     var owner = _db.InventoryItems.AsNoTracking()
@@ -1433,10 +1134,7 @@ namespace Visual_Inventory_System.Services
 
                 if (existing != null)
                 {
-                    // Known model. Stock lands as a variant at this location --
-                    // never a second item, which is the rule the compressor loads
-                    // established and the reason 18 models legitimately sit in two
-                    // places.
+                    // Known model: the stock lands as a variant at this location, never a second item.
                     var here = existing.Variants.FirstOrDefault(v => !v.IsRetired
                         && SameShelf(v, parentCode, majorCode, subCode, rack, row));
                     if (here != null)
@@ -1457,12 +1155,7 @@ namespace Visual_Inventory_System.Services
                     {
                         VariantNumber = NextFreeVariantNumber(existing),
                         Quantity = qty, ThermocoupledQty = tcQty,
-                        // Deliberately the EXISTING item's family Team, not this
-                        // batch's `team` param: Intake has no per-variant team
-                        // picker (only interactive Modify Stock does), so letting
-                        // the batch's team through here would silently split an
-                        // item across teams as a side effect of a bulk import.
-                        // Inheriting keeps intake additive -- see the backlog note.
+                        // The item's own Team, not the batch's: an import must not split an item across teams.
                         Team = existing.Team ?? "",
                         Parent = parentCode, Major = majorCode, Sub = subCode, Rack = rack, Row = row,
                         FdaString = fda, RegisteredAt = now, IsRetired = false
@@ -1526,13 +1219,8 @@ namespace Visual_Inventory_System.Services
             return res;
         }
 
-        // Serials given at intake are stock ON THE SHELF, so each unit is recorded
-        // On Hand -- not Picked Up. A duplicate (item, serial) is skipped rather
-        // than thrown: the unique index would reject it anyway and a whole batch
-        // failing over one repeated serial helps nobody. Shared by both Intake
-        // branches AND New Item Registry (CreateItem) -- one entrance for "a
-        // serial was captured at intake/registration time" regardless of which
-        // form it came through.
+        // Intake serials are stock on the shelf, so each unit is recorded On Hand.
+        // A duplicate (item, serial) is skipped, not thrown. Shared by Intake and CreateItem.
         private void LogIntakeSerials(string itemId, int variantId, List<string> serials, string by, System.DateTime now, IntakeResult res)
         {
             if (!IsCompressorType(_db.InventoryItems.AsNoTracking()
@@ -1554,14 +1242,7 @@ namespace Visual_Inventory_System.Services
             _db.SaveChanges();
         }
 
-        // "How many of these are thermocoupled" at intake/registration time --
-        // motors have no serial to key on, so this is a COUNT, not per-unit
-        // identity (unlike compressors above). ItemVariant.ThermocoupledQty is
-        // already set by the caller before this runs; this only mints the
-        // matching blank (no lab yet) MotorUnit roster rows, same shape
-        // PickUpOrder already creates for untracked TC stock leaving the shelf --
-        // so the lab number has real rows to attach to later, via the existing
-        // Log Units entrance, rather than being asked for here.
+        // Motors: a count, not identity. Mints that many blank MotorUnit rows for a lab number to land on later.
         private void LogIntakeThermocoupled(string itemId, int variantId, int count, string by, System.DateTime now, IntakeResult res)
         {
             if (!IsMotorType(_db.InventoryItems.AsNoTracking()
@@ -1579,14 +1260,8 @@ namespace Visual_Inventory_System.Services
             res.TcUnitsLogged += count;
         }
 
-        // =====================================================================
-        // INTAKE STOCK BATCH (Pass 21) -- for models Bulk Intake found already
-        // registered. A row whose typed name exact-matches an existing item is
-        // pulled out of Import entirely and routed here instead, reviewed and
-        // acknowledged section-by-section on the Intake page before anything
-        // is applied. Add/Adjustment only -- this is a stock-count correction,
-        // not an ownership move.
-        // =====================================================================
+        // Intake stock batch: rows whose name matched an existing item. Add or Adjustment only,
+        // reviewed on the Intake page before anything is applied.
 
         public class StockBatchUpdate
         {
@@ -1598,21 +1273,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Applies every update in ONE transaction -- all or nothing, same
-        /// pattern OrderService.Submit()/PickUpOrder() use for their own
-        /// multi-step commits. Each update reuses ModifyStock itself (Add's
-        /// existing-stack-vs-NEW-location resolution, TC clamps, serial
-        /// logging, TransactionLog) rather than re-deriving any of that here --
-        /// the only new logic is resolving which variant this batch's ONE
-        /// shared intake location actually is for each item, and refusing an
-        /// Adjustment against a location the item doesn't already occupy
-        /// (Adjustment has no "NEW location" concept in ModifyStock; letting
-        /// one through would silently adjust the item's PRIMARY variant
-        /// instead of the location the human was actually looking at).
-        /// Throws (and rolls back everything already applied this call) on
-        /// the first update that can't proceed -- an item deleted between the
-        /// modal opening and Apply All, a bad quantity, or that Adjustment
-        /// case -- so a batch never applies half of itself silently.
+        /// Applies every update in one transaction, all or nothing, through ModifyStock.
+        /// Refuses an Adjustment at a location the item does not occupy. Throws on the first failure.
         /// </summary>
         public List<(InventoryItem Item, int OldQty, int NewQty)> CommitIntakeStockBatch(
             List<StockBatchUpdate> updates, string parentCode, string majorCode, string subCode, string rack, string row)
@@ -1655,39 +1317,22 @@ namespace Visual_Inventory_System.Services
             return results;
         }
 
-        // How many units of an order line are LOANABLE (library books, expected
-        // back): a Control loans its whole quantity; a Motor loans only its TC
-        // subset; everything else loans nothing. Drives LoanOutstanding at pickup.
+        // Loanable units of an order line: a Control loans all, a Motor its TC subset,
+        // a Compressor all (meaning "not yet dispositioned"), everything else none.
         public static int LoanableQuantity(string? type, int quantity, int thermocoupledCount)
         {
             if (IsControlType(type)) return quantity;
             if (IsMotorType(type)) return System.Math.Min(thermocoupledCount, quantity);
 
-            // Pass 6B: compressors count too, but the meaning differs. A Control
-            // or Motor is a library book -- LoanOutstanding means "expected back".
-            // A compressor is normally CONSUMED; here the same counter means
-            // "not yet dispositioned", i.e. nobody has pressed Done Using on it.
-            // Deliberately reusing the field rather than adding a parallel
-            // PendingDisposition column: one counter that cannot drift beats two
-            // that have to be kept in lockstep across PickUpOrder / ReturnLoan /
-            // ScrapLoan. The My Orders UI carries the wording for users.
+            // Compressors reuse the counter: here it means nobody has pressed Done Using yet.
             if (IsCompressorType(type)) return quantity;
 
             return 0;
         }
 
         /// <summary>
-        /// Which of a stack's recorded On Hand units a PARTIAL Location Transfer
-        /// takes along, from the ones the person ticked as moving. `moving` and
-        /// `staying` are the units going and the units left behind -- the stack's
-        /// quantity for compressor rows, its TC for motor rows, which are TC-only.
-        /// Refuses (nothing has changed yet) when:
-        ///   - a ticked unit isn't recorded On Hand on this stack any more;
-        ///   - more are ticked than are moving;
-        ///   - the unticked rows can't all fit in what stays. That minimum is
-        ///     capped at what's moving: a stack already carrying more rows than
-        ///     units (Modify Stock's Scrap lowers the count without touching unit
-        ///     rows) would otherwise be impossible to move at all.
+        /// The recorded units a partial Location Transfer takes along, from the ones ticked.
+        /// Throws, with nothing changed, when the ticks do not fit what moves and what stays.
         /// </summary>
         private static List<T> TickedUnitsMoving<T>(List<T> here, System.Func<T, int> idOf,
             IReadOnlyCollection<int>? ticked, int moving, int staying, string noun)
@@ -1714,12 +1359,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Which of a stack's recorded On Hand units leave when its count drops
-        /// below the number of units on record (Scrap, a downward Adjustment, a
-        /// short-pull correction). `mustLeave` is the surplus: recorded rows minus
-        /// what the stack can still hold. Refuses (nothing has changed yet) when a
-        /// ticked unit isn't recorded On Hand on this stack any more, or when the
-        /// number ticked isn't exactly the surplus.
+        /// The recorded units that leave when a stack's count drops below its rows.
+        /// Throws, with nothing changed, unless exactly `mustLeave` are ticked.
         /// </summary>
         private static List<T> TickedUnitsLeaving<T>(List<T> here, System.Func<T, int> idOf,
             IReadOnlyCollection<int>? ticked, int mustLeave, string noun)
@@ -1741,18 +1382,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Keeps a stack's recorded On Hand units from outnumbering the stack: once a
-        /// Scrap, a downward Adjustment or a short-pull correction has lowered the
-        /// variant's quantity (its TC count, for motors, which are TC-only), the
-        /// surplus rows leave as Scrapped. Taking the whole stack (or all its TC)
-        /// takes every row with no question asked; anything short of that needs the
-        /// person to say WHICH recorded units are gone. Without this the count went
-        /// down and the roster kept the serials, so phantom units were offered at
-        /// pickup, shown on the Item Card, and blocked Delete Stack for good.
-        ///
-        /// Call it AFTER the variant's new Quantity/ThermocoupledQty are set. Throws
-        /// before changing any unit row when the ticks don't fit; the caller restores
-        /// its own count. Returns a note for the log line ("" when nothing left).
+        /// After a stack's count drops, surplus recorded units leave as Scrapped. Call after the
+        /// new counts are set. Throws before changing any row when the ticks do not fit.
         /// </summary>
         public static string RetireSurplusUnits(AppDbContext db, InventoryItem item, ItemVariant v,
             IReadOnlyCollection<int>? leavingCompressorIds, IReadOnlyCollection<int>? leavingMotorIds,
@@ -1761,10 +1392,7 @@ namespace Visual_Inventory_System.Services
             var names = new List<string>();
             int count = 0;
 
-            // Reservations (2026-11-08): a unit named in a live hold can't be ticked
-            // as leaving by a Scrap or Adjustment -- release or edit the hold first.
-            // A short-pull correction passes heldMayLeave (it's a recount; the
-            // holds shrink to fit afterwards).
+            // A unit named in a live hold cannot be ticked as leaving. A recount (heldMayLeave) can take it.
             var held = heldMayLeave ? new Dictionary<int, string>() : ReservationService.PinOwners(db, item.ItemId);
             void RefuseHeld(int? reservationId, string name)
             {
@@ -1779,8 +1407,7 @@ namespace Visual_Inventory_System.Services
                     .Where(c => c.ItemId == item.ItemId && c.ItemVariantId == v.Id && c.Status == UnitStatus.OnHand)
                     .OrderBy(c => c.RecordedAt)
                     .ToList()
-                    // Rechecked in memory: an earlier step of this same request may have
-                    // flipped a row that is tracked but not saved yet.
+                    // Rechecked in memory: an earlier step of this request may have changed a tracked row.
                     .Where(c => c.Status == UnitStatus.OnHand && c.ItemVariantId == v.Id)
                     .ToList();
                 int surplus = rows.Count - v.Quantity;
@@ -1832,16 +1459,8 @@ namespace Visual_Inventory_System.Services
             return $" {count} recorded unit{(count == 1 ? "" : "s")} scrapped [{string.Join(", ", names)}].";
         }
 
-        // serials: compressors only, Add action only -- mirrors CreateItem/
-        // CommitIntake's own optional per-unit serial capture (Pass 17), just
-        // reached from the Modify Stock jump-in (registry name-match click)
-        // instead of a fresh registration. One CompressorUnit per non-blank
-        // entry, logged On Hand against whichever variant actually received
-        // the stock (existing stack or a freshly minted NEW-location one).
-        // movingCompressorIds / movingMotorIds: Location Transfer only -- the
-        // recorded units the person ticked as moving on a PARTIAL move. See
-        // TickedUnitsMoving for the rule; ignored when the move takes the whole
-        // stack (or all of its TC), since then every recorded unit goes.
+        // serials: compressors, Add only. moving*Ids: units ticked on a partial Location Transfer.
+        // leaving*Ids: units ticked as gone on a Scrap or downward Adjustment.
         public (InventoryItem item, int oldQty, int newQty)? ModifyStock(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
             string? newParent = null, string? newMajor = null, string? newSub = null, string? newRack = null, string? newRow = null,
             string? targetVariant = null, int? transferQty = null, int thermocoupledQty = 0,
@@ -1852,22 +1471,17 @@ namespace Visual_Inventory_System.Services
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
 
-            // TC only exists on motors; for anything else, force the incoming
-            // count to 0 so a stray post can never tag a non-motor as TC.
+            // TC exists on motors only.
             bool isMotor = IsMotorType(item.Type);
             if (!isMotor) thermocoupledQty = 0;
             if (thermocoupledQty < 0) thermocoupledQty = 0;
 
-            // Blank segment -> "0" so every level is explicit (matches the
-            // existing data convention, e.g. PATS.0.0.0.0).
+            // A blank segment becomes "0" so every level is explicit, e.g. PATS.0.0.0.0.
             string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "0" : v.Trim().ToUpperInvariant();
             string FiveSeg(string? p, string? m, string? s, string? rk, string? rw)
                 => string.Join(".", new[] { Seg(p), Seg(m), Seg(s), Seg(rk), Seg(rw) });
 
-            // Resolve which variant this action targets. "" / null = primary
-            // (single-location items never send one);
-            // a number = that specific ItemVariant.Id; "NEW" (Add only) =
-            // create a fresh variant at the posted location.
+            // targetVariant: blank = primary, a number = that ItemVariant.Id, "NEW" (Add only) = a new variant.
             bool wantsNewLocation = string.Equals(targetVariant, "NEW", System.StringComparison.OrdinalIgnoreCase);
             ItemVariant? pv = null;
             if (!wantsNewLocation && int.TryParse(targetVariant, out int tvId))
@@ -1875,8 +1489,7 @@ namespace Visual_Inventory_System.Services
             pv ??= item.PrimaryVariant;
             if (pv == null && !wantsNewLocation)
             {
-                // Self-heal: an item somehow missing all variants gets a fresh
-                // #1 at qty 0 (should never happen after backfill).
+                // Self-heal: an item with no variants gets a #1 at quantity 0.
                 pv = new ItemVariant { VariantNumber = 1, Quantity = 0, Team = item.Team ?? "", IsRetired = false };
                 item.Variants.Add(pv);
             }
@@ -1884,26 +1497,17 @@ namespace Visual_Inventory_System.Services
             int oldQty = item.Quantity;
             int qtyChange = 0;
             string details = "";
-            // The stack's own numbers before this action -- Scrap/Adjustment restore
-            // them if the recorded-unit check below refuses, so a refusal leaves the
-            // tracked variant exactly as it was.
+            // The stack's numbers before the action, restored if a later check refuses.
             int pvQtyBefore = pv?.Quantity ?? 0;
             int pvTcBefore = pv?.ThermocoupledQty ?? 0;
-            // Which variant received an Add's stock -- captured here so the
-            // serial-logging step after SaveChanges knows where to point,
-            // whichever of the two Add branches ran (existing stack vs NEW).
+            // The variant an Add landed on, for serial logging after the save.
             ItemVariant? addedVariant = null;
-            // Location Transfer only: tracked unit rows that have to follow the
-            // stock to another variant, and where to. Re-pointed after the
-            // SaveChanges below, since a split's new variant has no Id before it.
+            // Location Transfer: unit rows that follow the stock, re-pointed once a split has its Id.
             ItemVariant? unitDest = null;
             var movingCompressors = new List<CompressorUnit>();
             var movingMotors = new List<MotorUnit>();
 
-            // Add and Scrap are one-directional amounts; only Adjustment is signed.
-            // A negative Scrap used to pass straight through the Min() clamp below
-            // and ADD stock (and a negative Add subtracted it), logged as the
-            // opposite of what happened.
+            // Add and Scrap take a positive amount. Only Adjustment is signed.
             if ((actionType == "Add" || actionType == "Scrap") && quantity < 1)
                 throw new System.InvalidOperationException(
                     $"{actionType} needs a quantity of at least 1 — nothing was changed.");
@@ -1916,14 +1520,7 @@ namespace Visual_Inventory_System.Services
                 string tcNote = (isMotor && tcAdd > 0) ? $" ({tcAdd} thermocoupled)" : "";
                 if (wantsNewLocation)
                 {
-                    // New physical spot for this family: mint the next free
-                    // variant number at the posted (coded) location. Team
-                    // (per-team quantity ownership, 2026-08-26): a second team's
-                    // slice is exactly this same "new variant" mechanism, just
-                    // with a different Team instead of (or alongside) a
-                    // different location -- blank posted team falls back to the
-                    // item's own family-level Team, same default the migration
-                    // backfill used for every pre-existing variant.
+                    // A new spot, or another team's slice: both are a new variant. Blank team = the item's Team.
                     string team = string.IsNullOrWhiteSpace(variantTeam) ? (item.Team ?? "") : variantTeam.Trim();
                     var nv = new ItemVariant
                     {
@@ -1948,8 +1545,7 @@ namespace Visual_Inventory_System.Services
                 else
                 {
                     pv!.Quantity += quantity;
-                    // New TC rides on top of whatever TC the stack already held,
-                    // never past the stack's new total.
+                    // New TC adds to the stack's TC, never past its total.
                     pv.ThermocoupledQty = System.Math.Min(pv.ThermocoupledQty + tcAdd, pv.Quantity);
                     details = $"Added {quantity} unit(s){tcNote} to stock (Variant {pv.VariantNumber}, {pv.FdaString}).";
                     addedVariant = pv;
@@ -1957,14 +1553,10 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Scrap")
             {
-                // A scrap past what's on the shelf clamps to what's actually there;
-                // the log (and ExportToCsv's ScrappedQty, which sums these) must
-                // record the clamped amount, not the request.
+                // Clamped to what is on the shelf. The log records the clamped amount.
                 int actualScrap = System.Math.Min(quantity, pv!.Quantity);
                 qtyChange = -actualScrap;
-                // How many scrapped units are TC. Floor: if there aren't enough
-                // non-TC units to cover the scrap, the overflow MUST come out of
-                // TC (you can't leave more TC than total). Ceiling: the TC on hand.
+                // TC scrapped: at least the overflow past the non-TC units, at most the TC on hand.
                 int nonTc = pv.Quantity - pv.ThermocoupledQty;
                 int forcedTc = System.Math.Max(0, actualScrap - nonTc);
                 int tcScrap = System.Math.Min(pv.ThermocoupledQty,
@@ -1978,23 +1570,15 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Adjustment")
             {
-                // Floored at 0, same clamp-and-say-so shape as Scrap: a downward
-                // adjust past what the stack holds takes it to 0, never negative,
-                // and the log records what was actually applied.
+                // Floored at 0. The log records what was applied.
                 int requested = quantity;
                 quantity = System.Math.Max(quantity, -pv!.Quantity);
                 qtyChange = quantity;
                 pv.Quantity += quantity;
-                // [decided] Adjustment can also RECLASSIFY existing on-hand stock
-                // as thermocoupled without changing the total count -- "take my
-                // existing N, mark X of those as TC" is a different action from
-                // Add's "these NEW units include X that are TC". thermocoupledQty
-                // here is a delta onto whatever's already on the shelf, not tied
-                // to `quantity` at all (quantity can be 0 -- a pure reclassify).
+                // Can also reclassify on-hand stock as TC without changing the count (quantity may be 0).
                 if (isMotor && thermocoupledQty > 0)
                     pv.ThermocoupledQty = System.Math.Min(pv.ThermocoupledQty + thermocoupledQty, pv.Quantity);
-                // A downward adjust can still push Qty below the TC count --
-                // clamp so TC <= Qty holds regardless of which direction got it there.
+                // Keep TC <= Qty.
                 if (pv.ThermocoupledQty > pv.Quantity)
                     pv.ThermocoupledQty = System.Math.Max(0, pv.Quantity);
                 string tcNote = (isMotor && thermocoupledQty > 0)
@@ -2005,28 +1589,14 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Ownership")
             {
-                // Pass 7B: ownership means LINE now, not Group.
-                //
-                // The old "New Group" picker offered Commercial / Residential /
-                // International -- two BRANCHES and one LINE, flattened as peers.
-                // Group is also derived from the registering user's Line and frozen
-                // at creation (it mints the ItemId prefix), so a transfer must not
-                // move it or an item's Group would contradict its own id.
-                //
-                // newGroup is still accepted by the signature for call compatibility
-                // and is deliberately IGNORED.
+                // Ownership means Line. Group is frozen at creation with the ItemId prefix. newGroup is ignored.
                 string oldLine = string.IsNullOrWhiteSpace(item.Line) ? "unassigned" : item.Line;
                 string oldTeam = string.IsNullOrWhiteSpace(item.Team) ? "no team" : item.Team;
 
                 if (newLine != null)
                 {
                     string ln = newLine.Trim();
-                    // Blank is legal -- it means unassigned, which fails OPEN
-                    // (visible to everyone), the Pass 3 rollout default.
-                    // An unrecognized Line used to return the success-shaped tuple
-                    // with nothing changed/logged/saved, so the controller toasted
-                    // "applied" over a no-op. Throw instead -- the controller's
-                    // catch turns this into a visible error toast.
+                    // Blank is legal: unassigned, fails open. An unknown Line throws so the caller shows an error.
                     if (ln.Length > 0 && !OrgStructure.IsValidLine(ln))
                         throw new System.InvalidOperationException(
                             $"'{ln}' isn't a recognized Line — the item was left unchanged.");
@@ -2034,13 +1604,7 @@ namespace Visual_Inventory_System.Services
                 }
                 if (newTeam != null)
                 {
-                    // Pass 7A: was
-                    //   ProjectCode = newTeam.ToLower() == "ninja" ? "7165" : "7166";
-                    // -- which handed every team that wasn't Ninja Samurai's project
-                    // code, silently, forever. Now the code travels with the team row.
-                    //
-                    // newTeam == "" is a real choice (team is optional), so this
-                    // tests for null rather than blank.
+                    // "" is a real choice (no team), so this tests for null. The project code comes from the team row.
                     string t = newTeam.Trim();
                     string previousTeam = (item.Team ?? "").Trim();
                     item.Team = t;
@@ -2048,15 +1612,7 @@ namespace Visual_Inventory_System.Services
                         ? ""
                         : (_db.Teams.FirstOrDefault(x => x.Name == t)?.ProjectCode ?? "");
 
-                    // Per-team quantity ownership: the family-level Team moving
-                    // has to take the stock that belonged to it along, or the
-                    // variants keep reading (and exporting, and displaying) as
-                    // the OLD team forever while the item claims the new one.
-                    // Scoped to variants carrying the previous family team on
-                    // purpose -- on an item split across teams that moves only
-                    // the slice this reassignment is actually about and leaves
-                    // the other team's claim intact, which is the whole point of
-                    // the split existing.
+                    // The family's stock moves with it: variants on the previous team, and only those.
                     if (t != previousTeam)
                     {
                         foreach (var av in item.ActiveVariants
@@ -2072,14 +1628,9 @@ namespace Visual_Inventory_System.Services
             }
             else if (actionType == "Location Transfer")
             {
-                // Move a quantity (default: all of it) from the source variant
-                // to the destination. Three outcomes:
-                //   destination matches ANOTHER active variant -> MERGE into it
-                //     (source retires only if fully drained to 0);
-                //   whole pile, no collision -> relocate the variant in place
-                //     (keeps its number);
-                //   partial, no collision -> SPLIT: new variant at destination.
-                // Item total never changes (qtyChange stays 0).
+                // Three outcomes: merge into a same-team stack at the destination,
+                // relocate the whole stack in place, or split off a new variant.
+                // The item total never changes.
                 string dP = Seg(newParent), dM = Seg(newMajor), dS = Seg(newSub), dRk = Seg(newRack), dRw = Seg(newRow);
                 string destFda = string.Join(".", new[] { dP, dM, dS, dRk, dRw });
 
@@ -2091,9 +1642,7 @@ namespace Visual_Inventory_System.Services
                     ? System.Math.Min(transferQty.Value, pv.Quantity)
                     : pv.Quantity;
 
-                // How many of the moved units are TC. Same floor/ceiling logic as
-                // scrap: enough TC must move to keep the SOURCE's TC <= its leftover
-                // qty, and no more TC than the source actually has.
+                // TC moved: enough to keep the source's TC <= what stays, at most what it has.
                 int srcNonTc = pv.Quantity - pv.ThermocoupledQty;
                 int forcedTcMove = System.Math.Max(0, moveQty - srcNonTc);
                 int tcMove = System.Math.Min(pv.ThermocoupledQty,
@@ -2102,32 +1651,14 @@ namespace Visual_Inventory_System.Services
                 if (moveQty >= pv.Quantity) tcMove = pv.ThermocoupledQty;
                 string tcMoveNote = (isMotor && tcMove > 0) ? $" [{tcMove} TC]" : "";
 
-                // Per-team quantity ownership: a merge target has to be the SAME
-                // team's stack, not just the same shelf. Two teams legitimately
-                // stock one location (a slice is a variant, and nothing requires it
-                // to sit somewhere else), so a location-only match handed the
-                // destination team the source team's units -- ownership changing
-                // hands as a side effect of moving a box across the floor. With no
-                // same-team stack there, this falls through to the relocate-in-place
-                // or split branches below, both of which already carry pv.Team, so
-                // the stock lands where it was asked to and stays whose it was.
+                // A merge target must be the same team's stack, not just the same shelf.
                 string srcTeam = (pv!.Team ?? "").Trim();
                 var mergeTarget = item.ActiveVariants.FirstOrDefault(v => v.Id != pv.Id
                     && SameShelf(v, dP, dM, dS, dRk, dRw)
                     && string.Equals((v.Team ?? "").Trim(), srcTeam, System.StringComparison.OrdinalIgnoreCase));
 
-                // Which recorded units move with the stock. The On Hand unit rows
-                // point at a VARIANT, so a merge or split that leaves them behind
-                // on the source strands them: a merged-and-retired source kept its
-                // serials, and picking that real serial from the destination was
-                // refused as "already on record at a different location". A move
-                // that leaves no room for a unit at the source settles it: the
-                // whole stack (every row goes), or -- motor rows being TC-only --
-                // all of the source's TC. Anything short of that can't tell WHICH
-                // units moved, so the person ticks them (TickedUnitsMoving). All
-                // of this is checked before anything below changes. A whole-stack
-                // relocate with no merge keeps its variant Id, so its rows are
-                // already right.
+                // Unit rows point at a variant, so they must follow the stock. A drained stack
+                // (or all its TC, for motors) takes every row. Anything less: the person ticks which.
                 bool sourceDrained = moveQty >= pv.Quantity;
                 bool tcDrained = pv.ThermocoupledQty > 0 && tcMove >= pv.ThermocoupledQty;
                 if (mergeTarget != null || !sourceDrained)
@@ -2190,11 +1721,7 @@ namespace Visual_Inventory_System.Services
                         VariantNumber = NextFreeVariantNumber(item),
                         Quantity = moveQty,
                         ThermocoupledQty = tcMove,
-                        // Moving stock across the floor never changes WHOSE it is
-                        // -- the split carries the source stack's Team. Without
-                        // this the moved units land team-less and their own team
-                        // can no longer order them (they still count toward the
-                        // item total, so the shortfall reads as a phantom).
+                        // The split keeps the source's Team. Team-less, its own team could not order it.
                         Team = srcTeam,
                         Parent = dP, Major = dM, Sub = dS, Rack = dRk, Row = dRw,
                         FdaString = destFda,
@@ -2210,18 +1737,13 @@ namespace Visual_Inventory_System.Services
             }
             else
             {
-                // The controller's gates compare case-insensitively but the branches
-                // above don't, so a direct post of e.g. "scrap" fell through every
-                // branch, changed nothing, and still logged and reported success.
+                // The controller compares case-insensitively and these branches do not, so reject anything else.
                 throw new System.InvalidOperationException(
                     $"'{actionType}' isn't a recognized stock action -- nothing was changed.");
             }
 
-            // Reservations (2026-11-08, hard hold): a Scrap, Adjustment or partial
-            // move can't take a stack below what's held on it -- by anyone, the
-            // reserver included; they edit or release the hold first. Named held
-            // units stay with their stack on a partial move. A whole-stack merge
-            // carries its holds into the stack it merged into.
+            // Hard hold: a Scrap, Adjustment or partial move cannot take a stack below what is held on it.
+            // Named held units stay on a partial move. A whole-stack merge carries its holds along.
             if (pv != null && (actionType == "Scrap" || actionType == "Adjustment" || actionType == "Location Transfer"))
             {
                 var holdView = StockClaims.FromVariants(_db, itemId, item.Variants);
@@ -2251,10 +1773,7 @@ namespace Visual_Inventory_System.Services
                 }
             }
 
-            // Scrap and a downward Adjustment can leave more recorded units on the
-            // stack than its new count can hold; the surplus has to leave with it.
-            // Only when the stack actually shrank -- an Adjustment that changes
-            // nothing, or only adds, never asks about units.
+            // A stack that shrank may hold more recorded units than its new count. The surplus leaves.
             if ((actionType == "Scrap" || actionType == "Adjustment") && pv != null
                 && (pv.Quantity < pvQtyBefore || pv.ThermocoupledQty < pvTcBefore))
             {
@@ -2273,7 +1792,6 @@ namespace Visual_Inventory_System.Services
             item.LastUpdated = System.DateTime.UtcNow;
             item.UpdatedBy = _currentUser.Name;
 
-            // LOG THE TRANSACTION
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = System.DateTime.UtcNow,
@@ -2285,11 +1803,8 @@ namespace Visual_Inventory_System.Services
                 User = _currentUser.Name
             });
 
-            // Unit rows following a Location Transfer are saved in the same
-            // transaction as the stock move -- a caller's own transaction when
-            // there is one, else one opened here. The second save is needed
-            // because ItemVariantId has no navigation, so EF can't fix up a
-            // split's new variant Id on its own (it would store 0).
+            // Unit rows are re-pointed in the same transaction as the stock move.
+            // Two saves: ItemVariantId has no navigation, so EF cannot fill in a split's new Id.
             bool movesUnits = unitDest != null && (movingCompressors.Count > 0 || movingMotors.Count > 0);
             var unitTx = movesUnits && _db.Database.CurrentTransaction == null ? _db.Database.BeginTransaction() : null;
             try
@@ -2328,7 +1843,7 @@ namespace Visual_Inventory_System.Services
                 var pv = inv.PrimaryVariant;
                 if (pv == null)
                 {
-                    // Self-heal (see ModifyStock): never expected post-backfill.
+                    // Self-heal, as in ModifyStock.
                     pv = new ItemVariant { VariantNumber = 1, Quantity = 0, Team = inv.Team ?? "", IsRetired = false };
                     inv.Variants.Add(pv);
                 }
@@ -2336,7 +1851,6 @@ namespace Visual_Inventory_System.Services
                 inv.LastUpdated = System.DateTime.UtcNow;
                 inv.UpdatedBy = _currentUser.Name;
 
-                // LOG THE QUICK ADD
                 _db.TransactionLogs.Add(new TransactionLog
                 {
                     Timestamp = System.DateTime.UtcNow,

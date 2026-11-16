@@ -3,24 +3,8 @@ using System.ComponentModel.DataAnnotations;
 namespace Visual_Inventory_System.Models
 {
     /// <summary>
-    /// A managed location NAME. Replaces four hand-maintained copies of the same
-    /// vocabulary that had already drifted apart:
-    ///
-    ///   Services/LocationCodec.cs      CanonicalNames[]   (the decode source)
-    ///   Views/Home/Index.cshtml        locMap {}          (the JS cascade)
-    ///   Views/Home/Index.cshtml        hardcoded &lt;option value="RLB"&gt;
-    ///   Views/Home/MyOrders.cshtml     the same list again
-    ///
-    /// The drift was real: 34 ItemVariant rows carried Sub codes MZA3-MZA8 that
-    /// no copy knew about, so the UI rendered raw codes at every breadcrumb.
-    ///
-    /// CODES ARE NEVER STORED. LocationCodec.Encode() still derives them from the
-    /// name by the same 1st/3rd/5th/last rule -- that rule is untouched and remains
-    /// the only authority. Storing a code would create a second one that could
-    /// disagree with it.
-    ///
-    /// Rack and Row stay free text on ItemVariant: they are per-shelf detail, not
-    /// shared vocabulary, and the Lean-To lives there by design (Pass 7C option B).
+    /// A managed location name. The code is never stored: LocationCodec.Encode
+    /// derives it from the name and is the only authority.
     /// </summary>
     public class Location
     {
@@ -30,18 +14,14 @@ namespace Visual_Inventory_System.Models
         [Required, MaxLength(80)]
         public string Name { get; set; } = "";
 
-        /// <summary>"Parent" | "Major" | "Sub" -- see LocationLevel.</summary>
+        /// <summary>"Parent" | "Major" | "Sub". See LocationLevel.</summary>
         [Required, MaxLength(10)]
         public string Level { get; set; } = LocationLevel.Parent;
 
-        /// <summary>
-        /// Owning location one level up. NULL for Parent rows. A Major belongs to a
-        /// Parent; a Sub belongs to a Major -- which is exactly the shape the JS
-        /// cascade needs, so it can be serialized straight out of this table.
-        /// </summary>
+        /// <summary>Owner one level up. Null for a Parent. A Major sits under a Parent, a Sub under a Major.</summary>
         public int? ParentId { get; set; }
 
-        /// <summary>Soft hide -- drops it from the pickers without touching variants already there.</summary>
+        /// <summary>Soft hide: off the pickers, variants already there are untouched.</summary>
         public bool IsActive { get; set; } = true;
     }
 

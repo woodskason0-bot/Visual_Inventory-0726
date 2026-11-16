@@ -74,12 +74,8 @@
     .ut-notes { max-width: 260px; color: var(--vis-text-muted); overflow-wrap: anywhere; }
     .ut-actions { white-space: nowrap; }
 
-    /* The In Lab / In Storage / Outbound boxes and the Built / Not Built boxes: the two
-       leftmost columns, so they stay on screen when the table scrolls sideways on a phone.
-       Bootstrap's white unchecked box and its ~1.5:1 border vanish on a white card, so
-       the box is transparent with a 3.3:1+ edge in both themes. Checked is a solid blue
-       that clears 3:1 against its own card: a lighter blue on the dark card (the
-       light-theme blue is 2.6:1 there), the deeper one on white. */
+    @* The Where and Build boxes: the two leftmost columns, so they stay on screen when the table scrolls.
+       Transparent box with a visible edge in both themes; checked is a blue that clears 3:1 on its own card. *@
     .ut-where { white-space: nowrap; min-width: 118px; }
     .ut-where.ut-build { min-width: 100px; }
     .ut-wh { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; line-height: 1.7; color: var(--vis-text); cursor: pointer; }
@@ -88,34 +84,34 @@
     :root[data-theme="light"] .ut-wh .form-check-input:checked { background-color: #0A58CA; border-color: #0A58CA; }
     .ut-wh .form-check-input:disabled { cursor: not-allowed; }
     .ut-wh .form-check-input:disabled ~ span { cursor: not-allowed; }
-    /* Units get counted in the yard on a phone: on a touch screen each row of the
-       label is a 28px-tall tap target instead of ~20px, and the box itself is bigger. */
+    @* Units get counted in the yard on a phone: on a touch screen each row of the
+       label is a 28px-tall tap target instead of ~20px, and the box itself is bigger. *@
     @@media (pointer: coarse) {
         .ut-wh { padding: 4px 0; font-size: 13px; }
         .ut-wh .form-check-input { width: 1.3em; height: 1.3em; }
     }
 
-    /* Fixed-colour surface: white on these fills is 6.4:1 / 6.5:1 in both themes. */
+    @* Fixed-colour surface: white on these fills is 6.4:1 / 6.5:1 in both themes. *@
     .ut-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .03em; color: #FFFFFF; }
     .ut-pill-package { background: #0A58CA; }
     .ut-pill-split { background: #146C43; }
 
-    /* Bootstrap's outline-danger red is ~3.7:1 on the dark card. */
+    @* Bootstrap's outline-danger red is ~3.7:1 on the dark card. *@
     .ut-btn-del { color: #FF8A90; border-color: #FF8A90; background: transparent; }
     .ut-btn-del:hover, .ut-btn-del:focus { background: #A61E2B; border-color: #A61E2B; color: #FFFFFF; }
     :root[data-theme="light"] .ut-btn-del { color: #A61E2B; border-color: #A61E2B; }
     :root[data-theme="light"] .ut-btn-del:hover, :root[data-theme="light"] .ut-btn-del:focus { background: #A61E2B; border-color: #A61E2B; color: #FFFFFF; }
 
-    /* Bootstrap's text-danger red is 3.7:1 on the dark card. */
+    @* Bootstrap's text-danger red is 3.7:1 on the dark card. *@
     .ut-req { color: #FF8A90; }
     :root[data-theme="light"] .ut-req { color: #A61E2B; }
 
-    /* The page-wide placeholder grey is 3:1 on the dark input and 3.1:1 on the light one. */
+    @* The page-wide placeholder grey is 3:1 on the dark input and 3.1:1 on the light one. *@
     .ut-form .form-control::placeholder, .ut-filter .form-control::placeholder { color: #94A3B8 !important; }
     :root[data-theme="light"] .ut-form .form-control::placeholder,
     :root[data-theme="light"] .ut-filter .form-control::placeholder { color: #6B7480 !important; }
 
-    /* Modals above the sidebar/holo layers (z-index registry: backdrop 2150, modal 2200). */
+    @* Modals above the sidebar/holo layers (z-index registry: backdrop 2150, modal 2200). *@
     .modal { z-index: 2200 !important; }
     .modal-backdrop { z-index: 2150 !important; }
 </style>
@@ -143,9 +139,7 @@
 
     <form asp-controller="UnitTracker" asp-action="Index" method="get" class="cc-card ut-filter ut-form" id="filterForm">
         <div class="row g-2 align-items-end">
-            @* One row from 1400px; below that it wraps (Search + Package/Split + Where, then
-               Build + Team + Line, then the buttons), so no field is squeezed to a sliver
-               beside the sidebar. *@
+            @* One row from 1400px. Below that it wraps so no field is squeezed beside the sidebar. *@
             <div class="col-12 col-md-6 col-xxl-3">
                 <label class="ut-label" for="f-q">Search</label>
                 <input type="text" name="q" id="f-q" class="form-control" value="@fQ" placeholder="Model, serial, sample, notes, line, team" autocomplete="off" />
@@ -495,17 +489,17 @@
 }
 
 <script>
-    // Branch -> Line -> Team data, declared before anything below uses it. site.js
-    // loads first and its cascade helpers read orgStructure as a global at call time.
+    @* Branch -> Line -> Team data, declared before anything below uses it. site.js *@
+    @* loads first and its cascade helpers read orgStructure as a global at call time. *@
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
-    // Team -> home Line (metadata, suggestion only) and the signed-in user's own
-    // assignment, for autofilling Branch/Line on open and on Team change.
+    @* Team -> home Line (metadata, suggestion only) and the signed-in user's own *@
+    @* assignment, for autofilling Branch/Line on open and on Team change. *@
     const teamLines    = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
     const myLine       = @Html.Raw(ViewBag.MyLineJson ?? "\"\"");
     const myBranch     = @Html.Raw(ViewBag.MyBranchJson ?? "\"\"");
-    // Every listed row, keyed by id, for the Edit modal (no second request).
+    @* Every listed row, keyed by id, for the Edit modal (no second request). *@
     const unitRows     = @Html.Raw(ViewBag.UnitRowsJson ?? "{}");
-    // Set for exactly one load after "Save & add another".
+    @* Set for exactly one load after "Save & add another". *@
     let   unitAddCarry = @Html.Raw(ViewBag.UnitAddCarryJson ?? "null");
 
     (function () {
@@ -519,7 +513,7 @@
             return Object.assign(document.createElement('option'), { value: value, textContent: text });
         }
         function setSelect(sel, value) {
-            // A value with no matching option would leave the select blank-but-selected.
+            @* A value with no matching option would leave the select blank-but-selected. *@
             sel.value = Array.prototype.some.call(sel.options, function (o) { return o.value === value; }) ? value : '';
         }
         function setPackage(prefix, pkg) {
@@ -528,10 +522,8 @@
             });
         }
 
-        // Same Branch -> Line cascade as Bulk Intake (Views/Home/Intake.cshtml), used by
-        // both modals. keepCurrent: a Line hidden in Settings since the row was saved
-        // is not in orgStructure, so it is added back as "(current, hidden)" -- without
-        // it the select would silently blank and an untouched Save would fail.
+        @* The same Branch -> Line cascade as Bulk Intake. keepCurrent adds back a Line hidden in *@
+        @* Settings as "(current, hidden)", so an untouched Save does not fail. *@
         function fillLines(lSel, branch, selected, keepCurrent) {
             lSel.innerHTML = '';
             lSel.appendChild(mkOption('', '-- Select a Line --'));
@@ -548,9 +540,7 @@
             }
         }
 
-        // Branch drives Line; a Team with a recognized home Line overwrites both to
-        // match (a deliberate act, so it wins) and a Team without one, or going back
-        // to N/A, changes nothing. Both stay editable afterwards.
+        @* Branch drives Line. A Team with a home Line sets both; a Team without one changes nothing. *@
         function wireCascade(bSel, lSel, tSel) {
             Object.keys(orgStructure).forEach(function (b) { bSel.appendChild(mkOption(b, b)); });
             bSel.addEventListener('change', function () { fillLines(lSel, bSel.value, null, false); });
@@ -564,9 +554,8 @@
             });
         }
 
-        // Forms here post for real; a second tap while the first is in flight would
-        // add the unit twice. Disable the buttons only after the browser has built
-        // the entry list, or the clicked button's own name/value (addAnother) is lost.
+        @* Guards against a double submit. Buttons are disabled after the browser builds the *@
+        @* entry list, or the clicked button's own name and value (addAnother) would be lost. *@
         const guarded = [];
         function guardSubmit(form) {
             guarded.push(form);
@@ -586,7 +575,7 @@
             if (e.persisted) guarded.forEach(releaseForm);
         });
 
-        // ---- Add ---------------------------------------------------------
+        @* Add *@
         const addEl = document.getElementById('addUnitModal');
         if (addEl) {
             const form = document.getElementById('addUnitForm');
@@ -594,17 +583,15 @@
             wireCascade(bSel, lSel, tSel);
             guardSubmit(form);
 
-            // Re-seeded on EVERY open, so a second Add after a partly-filled first
-            // one starts clean.
+            @* Re-seeded on EVERY open, so a second Add after a partly-filled first *@
+            @* one starts clean. *@
             addEl.addEventListener('shown.bs.modal', function () {
                 form.reset();
                 releaseForm(form);
                 let branch = '', line = '', team = '', carried = false;
                 if (unitAddCarry) {
                     carried = true;
-                    // After "Save & add another": Model, Package/Split, Line and Team
-                    // stay; Serial, Sample and Notes start empty. Branch comes from
-                    // the kept Line, and this replaces the user's own seed.
+                    @* After "Save & add another": Model, Package/Split, Line and Team stay. The rest start empty. *@
                     document.getElementById('ua-model').value = unitAddCarry.model || '';
                     setPackage('ua-pkg-', unitAddCarry.pkg || '');
                     line = unitAddCarry.line || '';
@@ -612,8 +599,8 @@
                     team = unitAddCarry.team || '';
                     unitAddCarry = null;
                 } else if (myLine) {
-                    // A specific Line wins (Branch derived from it); else a whole-Branch
-                    // user gets Branch only and must pick the Line; else nothing.
+                    @* A specific Line wins (Branch derived from it); else a whole-Branch *@
+                    @* user gets Branch only and must pick the Line; else nothing. *@
                     branch = utBranchFor(myLine);
                     line = branch ? myLine : '';
                 } else if (myBranch) {
@@ -622,8 +609,8 @@
                 setSelect(bSel, branch);
                 fillLines(lSel, bSel.value, line, false);
                 setSelect(tSel, team);
-                // The next unit differs by serial/sample, so start there after a carry.
-                // Skipped on a touch device: focusing pops the keyboard over the form.
+                @* The next unit differs by serial/sample, so start there after a carry. *@
+                @* Skipped on a touch device: focusing pops the keyboard over the form. *@
                 if (!window.matchMedia('(pointer: coarse)').matches) {
                     document.getElementById(carried ? 'ua-serial' : 'ua-model').focus();
                 }
@@ -634,7 +621,7 @@
             if (unitAddCarry) bootstrap.Modal.getOrCreateInstance(addEl).show();
         }
 
-        // ---- Edit --------------------------------------------------------
+        @* Edit *@
         const editEl = document.getElementById('editUnitModal');
         if (editEl) {
             const form = document.getElementById('editUnitForm');
@@ -655,13 +642,13 @@
                 document.getElementById('ue-sample').value = u.sample;
                 document.getElementById('ue-notes').value = u.notes;
 
-                // Seed from the row's CURRENT Line. A Line hidden in Settings has no
-                // Branch here; it stays selectable as "(current, hidden)".
+                @* Seed from the row's CURRENT Line. A Line hidden in Settings has no *@
+                @* Branch here; it stays selectable as "(current, hidden)". *@
                 const branch = utBranchFor(u.line);
                 setSelect(bSel, branch);
                 fillLines(lSel, branch, u.line, true);
 
-                // Same for a Team hidden in Settings since the row was saved.
+                @* Same for a Team hidden in Settings since the row was saved. *@
                 Array.prototype.slice.call(tSel.options).forEach(function (o) {
                     if (o.dataset.hiddenCurrent) o.remove();
                 });
@@ -679,7 +666,7 @@
             });
         }
 
-        // ---- Delete (a button on the table row, never inside another modal) ----
+        @* Delete: a button on the table row, never inside another modal. *@
         const delEl = document.getElementById('deleteUnitModal');
         if (delEl) {
             guardSubmit(document.getElementById('deleteUnitForm'));
@@ -694,13 +681,8 @@
             });
         }
 
-        // ---- Where and Build: optional boxes, saved on click --------------------
-        // Where is In Lab / In Storage / Outbound; Build is Built / Not Built. Each is its
-        // own group on the row and they work the same way: one at a time (ticking a box
-        // clears the others in its group, ticking the lit one clears it; blank = nobody
-        // has said). Saves in place, no reload, so a long list keeps its scroll position.
-        // The boxes are disabled for Viewers by the server; the server refuses the POST
-        // below Standard regardless.
+        @* Where and Build boxes, saved on click with no reload. One at a time per group: *@
+        @* ticking a box clears the others, ticking the lit one clears it. Blank = not recorded. *@
         const boxFields = {
             whereabouts: { url: '/UnitTracker/SetWhereabouts', param: 'whereabouts', row: 'whereabouts' },
             build: { url: '/UnitTracker/SetBuildStatus', param: 'buildStatus', row: 'build' }
@@ -708,8 +690,7 @@
         const whBoxes = document.querySelectorAll('.ut-wh-box');
         const csrfEl = document.querySelector('#editUnitForm input[name="__RequestVerificationToken"]');
         if (whBoxes.length && csrfEl) {
-            // showToast sets the message as text (BC-10), so server text goes in as-is;
-            // escaping it here as well would show "&amp;" and the like on screen.
+            @* showToast sets the message as text, so server text goes in as-is. *@
             function whToast(message, kind) { showToast(message, kind); }
             function whGroup(id, field) {
                 return document.querySelectorAll('.ut-wh-box[data-id="' + id + '"][data-field="' + field + '"]');
@@ -721,8 +702,8 @@
                 whGroup(id, field).forEach(function (b) { b.disabled = locked; });
             }
             function whStamp(row, d) {
-                // Updated column, rebuilt from nodes (never innerHTML) so it shows the
-                // change without a reload.
+                @* Updated column, rebuilt from nodes (never innerHTML) so it shows the *@
+                @* change without a reload. *@
                 const cell = row.querySelector('.ut-updated');
                 if (!cell || !d.updatedDate) return;
                 cell.textContent = '';

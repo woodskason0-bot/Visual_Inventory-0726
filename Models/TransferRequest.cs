@@ -4,46 +4,23 @@ using System.ComponentModel.DataAnnotations;
 namespace Visual_Inventory_System.Models
 {
     /// <summary>
-    /// An internal cross-Line/cross-Team transfer request against another
-    /// Line's item, found via Search Center once Search stopped filtering
-    /// results to the viewer's own Line. Deliberately parallel to Order/
-    /// OrderItem, not built on them -- a transfer never touches the cart/order
-    /// pipeline, so an item can be ordered by its own Line and transferred to
-    /// another at the same time without either path needing to know about the
-    /// other beyond the shared ItemVariant.Quantity both actually decrement.
-    ///
-    /// ONE-WAY, NOT A LOAN (corrected 2026-08-26 after live testing -- the
-    /// original design had this as a Borrow with a due date and a Return flow,
-    /// but in practice a transferred unit never comes back, same as how a
-    /// picked-up compressor already stays "Picked Up" forever with no return
-    /// expected). Only the initial request needs the lending Line's approval
-    /// (Engineer+, same Line/Team as the item); once decided, nothing further
-    /// happens to this row.
+    /// A request to transfer another Line's stock. Parallel to Order, never through the cart.
+    /// One-way, not a loan: once decided, nothing more happens to the row.
     /// </summary>
     public class TransferRequest
     {
         public int Id { get; set; }
 
-        /// <summary>Business id of the item being transferred, e.g. "CCR-0029". Loose reference, no FK (matches TransactionLog/CompressorUnit style).</summary>
+        /// <summary>Item, e.g. "CCR-0029". Loose reference, no FK.</summary>
         [Required, MaxLength(30)]
         public string ItemId { get; set; } = "";
 
         public int Quantity { get; set; }
 
-        /// <summary>
-        /// How many of Quantity the requester wants thermocoupled -- motor
-        /// items only, same meaning as OrderItem.ThermocoupledCount. 0 for
-        /// every non-motor line.
-        /// </summary>
+        /// <summary>Units requested thermocoupled. 0 for non-motors.</summary>
         public int ThermocoupledCount { get; set; } = 0;
 
-        /// <summary>
-        /// Which physical location to pull from -- a preference, not a lock.
-        /// References ItemVariant.Id, same convention as OrderItem.RequestedVariantId
-        /// (nullable = no preference / single-location item). If the chosen
-        /// variant can't cover Quantity alone by approval time, approval spills
-        /// into the item's other active variants the same way a normal pickup does.
-        /// </summary>
+        /// <summary>Preferred stack (ItemVariant.Id), not a lock. Approval spills into other stacks if short.</summary>
         public int? RequestedVariantId { get; set; }
 
         [Required, MaxLength(100)]
@@ -58,14 +35,14 @@ namespace Visual_Inventory_System.Models
         [MaxLength(100)]
         public string? Note { get; set; }
 
-        // ----- Set once decided -----
+        // Set once decided.
 
         [MaxLength(100)]
         public string? DecidedBy { get; set; }
         public DateTime? DecidedAt { get; set; }
     }
 
-    /// <summary>Allowed TransferRequest.Status values. Plain strings, matching the loose-string style used for OrderItem.Status/Delivery.Status.</summary>
+    /// <summary>Allowed TransferRequest.Status values.</summary>
     public static class TransferStatus
     {
         public const string Requested = "Requested";

@@ -4,10 +4,7 @@ using Visual_Inventory_System.Models;
 
 namespace Visual_Inventory_System.Models.ViewModels
 {
-    // Backs the self-scoped "My Activity" page (renamed 2026-08-26 from "My
-    // Orders" once it grew past orders -- loans and internal transfers live
-    // here too now). Section 1 = this user's order history; Section 2 = their
-    // items still out on loan; Section 3 = internal transfer requests.
+    // My Activity page: this user's orders, their loans still out, their transfer requests.
     public class MyActivityViewModel
     {
         public string UserName { get; set; } = string.Empty;
@@ -16,9 +13,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         public TransferSectionViewModel Transfer { get; set; } = new();
     }
 
-    // One still-outstanding loan line. Carries order context (id + when + what)
-    // so several near-identical loans stay distinguishable, plus the active
-    // locations the returned stock can land in.
+    // One loan line still out, with enough order context to tell near-identical loans apart.
     public class LoanLineViewModel
     {
         public int OrderItemId { get; set; }
@@ -34,22 +29,12 @@ namespace Visual_Inventory_System.Models.ViewModels
         public bool ReturnsAsTc { get; set; }   // motor loans come back as TC stock
         public List<VariantChoiceViewModel> LocationChoices { get; set; } = new();
 
-        // ----- Pass 6B: compressor disposition -----
+        // Compressor disposition
 
-        /// <summary>
-        /// Compressors are normally consumed, not returned, so their line is
-        /// gated behind "Done Using" instead of presenting Return/Scrap up front.
-        /// Outstanding here reads as "not yet dispositioned", not "expected back".
-        /// </summary>
+        /// <summary>Compressor line: gated behind "Done Using". Outstanding = not yet dispositioned.</summary>
         public bool IsCompressor { get; set; }
 
-        /// <summary>
-        /// The individual units pulled on this line that we actually know by
-        /// serial. USUALLY SHORTER THAN Outstanding -- only 184 of 825 compressors
-        /// have a serial on record, so a line of 3 may list 1 unit and leave 2
-        /// unidentified. The view renders the remainder as a plain quantity,
-        /// exactly how motor loans already work.
-        /// </summary>
+        /// <summary>Units on this line known by serial. Usually fewer than Outstanding.</summary>
         public List<CompressorUnit> Units { get; set; } = new();
 
         /// <summary>Outstanding minus the units we can name. Never negative.</summary>

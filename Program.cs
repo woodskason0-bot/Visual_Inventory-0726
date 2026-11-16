@@ -5,20 +5,16 @@ using Visual_Inventory_System.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ==========================================
-// 1. SERVICE REGISTRATION
-// ==========================================
+// Services
 builder.Services.AddControllersWithViews(options =>
 {
-    // Require a name (see Identify page) before any action runs.
+    // Name required before any action (Identify page).
     options.Filters.Add<Visual_Inventory_System.Services.RequireNameFilter>();
 });
 
-// Configure DbContext (SQLite)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register Business Logic Services as Scoped
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<EmailService>();
@@ -26,18 +22,14 @@ builder.Services.AddScoped<CurrentUserService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<SuperuserGateService>();
 builder.Services.AddScoped<TrackedUnitService>();
-// Reservations (2026-11-08): holds on stock, and the sweep that ends dated ones.
 builder.Services.AddScoped<ReservationService>();
 builder.Services.AddHostedService<ReservationSweepService>();
 
-// Configure Session (The "Locker")
 builder.Services.AddDistributedMemoryCache();
 builder.Services.AddSession(options =>
 {
     options.IdleTimeout = TimeSpan.FromMinutes(30);
-    // Own name, not the default ".AspNetCore.Session": browsers scope cookies by
-    // host, not port, so the Sourcing Tool on :5001 and VIS on :5000 would
-    // overwrite each other's session (and log "Error unprotecting the session cookie").
+    // Own name: cookies scope by host, not port. Sourcing Tool shares the host.
     options.Cookie.Name = ".VisualInventory.Session";
     options.Cookie.HttpOnly = true;
     options.Cookie.IsEssential = true;
@@ -46,9 +38,7 @@ builder.Services.AddHttpContextAccessor();
 
 var app = builder.Build();
 
-// ==========================================
-// 2. DATABASE INITIALIZATION
-// ==========================================
+// Database: migrate, first-run seed, vocabulary caches
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
@@ -56,11 +46,10 @@ using (var scope = app.Services.CreateScope())
 
     try
     {
-        // Apply migrations
         db.Database.Migrate();
         Console.WriteLine(">>> Database connection established successfully.");
 
-        // --- AUTO-SEED EMAIL ROUTING DATA (first run only) ---
+        // First run only: email routing.
         if (!db.EmailRoutings.Any())
         {
             db.EmailRoutings.AddRange(
@@ -86,16 +75,11 @@ using (var scope = app.Services.CreateScope())
             db.SaveChanges();
             Console.WriteLine(">>> Automatically seeded dummy Email Routing data.");
         }
-        // -----------------------------------------
 
-        // --- SEED STARTER USER ROSTER (name picker) ---
+        // First run only: starter roster.
         if (!db.Users.Any())
         {
-            // ===== EDIT THIS LIST: your team, in "First Last" form =====
-            // Levels: 1 Viewer, 2 Standard, 3 Engineer, 4 Management, 5 Admin.
-            // A fresh database MUST seed at least one Admin -- levels can only
-            // be changed from inside the app, so an all-Viewer roster would
-            // leave no one able to raise anyone's level (or do anything else).
+            // Seed at least one Admin: levels only change from inside the app.
             var seedUsers = new (string FullName, int Level)[]
             {
                 ("Kason Woods",     AccessLevels.Admin),
@@ -120,11 +104,9 @@ using (var scope = app.Services.CreateScope())
                 db.Users.Add(seededUser);
                 newlySeeded.Add(seededUser);
             }
-            db.SaveChanges(); // assigns Ids before the subscription pass below
+            db.SaveChanges(); // Ids needed below
 
-            // Standard tier used to mean "gets pickup alerts" for free (old
-            // AccessLevel-band behavior). Preserve that for anyone seeded at
-            // Standard now that alerts are an individual opt-in.
+            // Seeded Standard: pickup alerts on.
             foreach (var u in newlySeeded.Where(u => u.AccessLevel == AccessLevels.Standard))
             {
                 db.NotificationSubscriptions.Add(new Visual_Inventory_System.Models.NotificationSubscription
@@ -137,12 +119,8 @@ using (var scope = app.Services.CreateScope())
             db.SaveChanges();
             Console.WriteLine(">>> Seeded starter user roster.");
         }
-        // -----------------------------------------
 
-        // --- BACKFILL: existing Standard-tier users keep their pickup alerts ---
-        // Runs every launch but is a no-op after the first pass -- only inserts
-        // a subscription row where one is missing, so it can't create duplicates
-        // or override anyone who has since turned their alerts off on purpose.
+        // Standard users with no pickup-alert row get one. Opt-outs are left alone.
         var standardUserIds = db.Users
             .Where(u => u.AccessLevel == AccessLevels.Standard)
             .Select(u => u.Id)
@@ -164,20 +142,11 @@ using (var scope = app.Services.CreateScope())
             db.SaveChanges();
             Console.WriteLine($">>> Backfilled PickupRequested subscription for {missingSub.Count} existing Standard-tier user(s).");
         }
-        // -----------------------------------------
 
-        // --- REFRESH DB-BACKED VOCABULARY CACHES ---
-        // OrgStructure (Branches/Lines) and LocationCodec (Locations) are both
-        // static classes read from all over the app with no DB access of their
-        // own -- they're loaded here once at boot, then re-loaded after any
-        // Settings edit (see SettingsController.RefreshOrgStructure /
-        // RefreshLocationCodec). Without this call each fresh process start
-        // would run on the compiled-in seed values until someone happened to
-        // save something in Settings.
+        // Static caches with no db access. Loaded here, reloaded on Settings edits.
         OrgStructure.Refresh(db.OrgLines.Where(l => l.IsActive && l.Branch!.IsActive)
             .Select(l => new ValueTuple<string, string>(l.Branch!.Name, l.Name)).ToList());
         LocationCodec.Refresh(db.Locations.Where(l => l.IsActive).Select(l => l.Name).ToList());
-        // -----------------------------------------
     }
     catch (Exception ex)
     {
@@ -185,9 +154,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// ==========================================
-// 3. MIDDLEWARE PIPELINE
-// ==========================================
+// Middleware
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");
@@ -196,9 +163,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// Delivery photos live outside the publish folder (C:\VIS_Image-Uploads), same
-// "moved deliberately" reasoning as inventory.db, but still served over a
-// normal URL so they're viewable in the app without sitting in wwwroot.
+// Delivery photos: stored outside the publish folder, served by URL.
 Directory.CreateDirectory(DeliveryPhotoStorage.RootPath);
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -208,12 +173,11 @@ app.UseStaticFiles(new StaticFileOptions
 
 app.UseRouting();
 
-// Session MUST be between Routing and Authorization
+// Session: after Routing, before Authorization.
 app.UseSession();
 app.UseAuthorization();
 
 
-//Support for ASP.NET Core 9.0 Optimized Static Assets
 app.MapStaticAssets();
 
 app.MapControllerRoute(

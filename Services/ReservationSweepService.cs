@@ -8,14 +8,8 @@ using Visual_Inventory_System.Data;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// Ends dated holds after their last day and sends the reserver's "ends today"
-    /// and "ended" notifications (Kason's rule 7, 2026-11-08). Runs once right after
-    /// startup and every 10 minutes while the app is up -- the host is always on, and
-    /// every query already treats a hold past its date as not holding, so a missed run
-    /// only delays the log row and the notification, never the stock.
-    ///
-    /// A failure here (no database yet, a locked file) is written to the console and
-    /// retried next round; it must never take the app down.
+    /// Ends dated holds after their last day and sends the "ends today" and "ended" notices.
+    /// Runs at startup and every 10 minutes. A failure is logged and retried, never fatal.
     /// </summary>
     public class ReservationSweepService : BackgroundService
     {

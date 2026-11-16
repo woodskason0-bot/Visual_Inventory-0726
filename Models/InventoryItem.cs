@@ -6,30 +6,15 @@ using System.Linq;
 namespace Visual_Inventory_System.Models
 {
     /// <summary>
-    /// The item FAMILY record (e.g. "CCR-0001"). Holds everything that is true
-    /// regardless of where the physical stock sits: identity, ownership, alert
-    /// threshold (item-TOTAL by design). Physical stock lives in ItemVariant
-    /// children -- one per location -- and Quantity/location on this class are
-    /// now computed pass-throughs over the active (non-retired) variants.
-    ///
-    /// PASS-THROUGH BRIDGE: the flat properties (Quantity, Parent, Major,
-    /// Sub, Rack, Row, FdaString) are computed facades over the variants.
-    /// Reads resolve against the PRIMARY variant (lowest active number) or
-    /// the active-variant SUM (Quantity); writes
-    /// land in staging fields that CreateItem uses to build variant 1. These
-    /// are [NotMapped]: NEVER use them inside an EF query (Where/Select/Sum) --
-    /// they cannot translate to SQL. Query ItemVariants directly instead.
+    /// Item family, e.g. "CCR-0001": identity, ownership, alert threshold. Stock is in
+    /// ItemVariant. [NotMapped] members are computed: never use them in an EF query.
     /// </summary>
     public class InventoryItem
     {
         public int Id { get; set; }          // DB PK
         public string ItemId { get; set; } = "";   // Business/FAMILY ID, e.g. "CVE-0042"
 
-        // Second business identifier, per leadership: every item SHOULD carry
-        // the Rheem part number off the physical label. Family-level like
-        // ItemId (variants inherit it -- it's on the binder, not the pockets).
-        // "" = not captured yet (legacy rows); non-blank values are UNIQUE
-        // across items (partial index, blanks exempt).
+        // Label part number. One per family, unique unless blank.
         public string RheemPartNumber { get; set; } = "";
 
         public string ItemName { get; set; } = "";
@@ -40,43 +25,35 @@ namespace Visual_Inventory_System.Models
         public DateTime? LastUpdated { get; set; }
         public string UpdatedBy { get; set; } = "";
 
-        // First-registered timestamp. Nullable so existing rows migrate cleanly
-        // (they backfill from their earliest "New Registry" transaction log).
+        // Nullable: rows older than the column.
         public DateTime? RegisteredAt { get; set; }
 
         public string Team { get; set; } = "";
         public string Group { get; set; } = "";
         public string ProjectCode { get; set; } = "";
 
-        // Owning Line -- one of OrgStructure.AllLines (e.g. "International").
-        // Supersedes Team/Group/ProjectCode as the thing that actually gates
-        // visibility; those three stay in place untouched (still feed ID
-        // generation and legacy email routing) but no longer decide who can
-        // see this item. "" = not yet assigned, fails OPEN (visible to all)
-        // until an Engineer+ assigns one via Edit Details.
+        // One of OrgStructure.AllLines. Gates visibility. "" = visible to all.
         public string Line { get; set; } = "";
 
-        // Item-TOTAL alert threshold (fires on the sum across all locations).
+        // Fires on the item total, all locations summed.
         public int AlertThreshold { get; set; } = 0;
 
-        /// <summary>All physical instances of this family, one per location. Includes retired rows.</summary>
+        /// <summary>One per location. Includes retired rows.</summary>
         public List<ItemVariant> Variants { get; set; } = new();
 
-        // =====================================================================
-        // PASS-THROUGH BRIDGE -- computed over variants, staged before creation
-        // =====================================================================
+        // Computed over the variants. Setters only stage values for CreateItem.
 
-        /// <summary>Active (non-retired) variants only.</summary>
+        /// <summary>Non-retired variants.</summary>
         [NotMapped]
         public IEnumerable<ItemVariant> ActiveVariants =>
             (Variants ?? new List<ItemVariant>()).Where(v => !v.IsRetired);
 
-        /// <summary>The anchor: lowest-numbered active variant. Null only if the item has no active stock rows.</summary>
+        /// <summary>Lowest-numbered active variant. Null = no active stock rows.</summary>
         [NotMapped]
         public ItemVariant? PrimaryVariant =>
             ActiveVariants.OrderBy(v => v.VariantNumber).FirstOrDefault();
 
-        // ----- Quantity: SUM of active variants; setter stages for CreateItem -----
+        // Sum of active variants.
         private int _stagedQuantity;
         [NotMapped]
         public int Quantity
@@ -85,14 +62,11 @@ namespace Visual_Inventory_System.Models
             set => _stagedQuantity = value;
         }
 
-        // ----- Thermocoupled total: SUM of active variants' TC subset. -----
-        // Read-only convenience for family-level display (holoviewer header).
-        // [NotMapped] like Quantity -- NEVER use inside an EF query; query
-        // ItemVariants.ThermocoupledQty directly for anything DB-side.
+        // Thermocoupled subset, active variants summed.
         [NotMapped]
         public int TotalThermocoupled => ActiveVariants.Sum(v => v.ThermocoupledQty);
 
-        // ----- Location fields: read the PRIMARY variant; setters stage -----
+        // Location fields read the primary variant.
         private string _stagedParent = "";
         [NotMapped]
         public string Parent

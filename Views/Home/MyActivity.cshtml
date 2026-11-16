@@ -4,7 +4,7 @@
 }
 
 <style>
-    /* Theme-aware (uses --vis-* so it flips with the toggle -- no hardcoded white). */
+    @* Theme-aware (uses --vis-* so it flips with the toggle -- no hardcoded white). *@
     .mo-wrap { max-width: 1100px; margin: 1.5rem auto; }
     .mo-card {
         background-color: var(--vis-card);
@@ -15,11 +15,7 @@
         margin-bottom: 1.5rem;
     }
     .mo-h { color: var(--vis-text); font-weight: 700; }
-    /* Was inline color:#F59E0B (--vis-yellow). Fine on dark, ~2.15:1 on the
-       light theme's white card (found live testing 2d.1) -- --vis-yellow is
-       a brand accent, deliberately unchanged between themes (see site.css),
-       so this needs its own light-mode override rather than just reaching
-       for the variable. */
+    @* The yellow accent is 2.15:1 on the light card, so light theme gets its own darker value. *@
     .mo-outstanding { color: var(--vis-yellow); }
 
     :root[data-theme="light"] .mo-outstanding { color: #8A6100; }
@@ -54,7 +50,7 @@
     <h2 class="mo-h mb-1"><i class="bi bi-activity me-2 text-primary"></i>My Activity</h2>
     <div class="mo-sub mb-4">Signed in as <strong>@Model.UserName</strong> — this page shows only your own orders, loans, and internal transfers.</div>
 
-    <!-- SECTION 2 first: action lives here (things you owe back). -->
+    @* SECTION 2 first: action lives here (things you owe back). *@
     <div class="mo-card">
         <h4 class="mo-h mb-1"><i class="bi bi-arrow-return-left me-2" style="color:#F59E0B;"></i>Items Out on Loan</h4>
         <div class="mo-sub mb-3">Loanable stock you've picked up and still owe back — Controls, and the thermocoupled motors. Return puts stock back; Scrap writes it off.</div>
@@ -86,16 +82,13 @@
                             </div>
                         </div>
                         <div class="text-end">
-                            @* A compressor is normally CONSUMED, so "still out" would
-                               misdescribe it -- the counter means "not yet dispositioned". *@
+                            @* A compressor is consumed, so the counter reads "In use", not "Still out". *@
                             <div class="mo-sub" style="font-size:11px;">@(loan.IsCompressor ? "In use" : "Still out")</div>
                             <div class="mo-h mo-outstanding" style="font-size:1.5rem;">@loan.Outstanding</div>
                         </div>
                     </div>
 
-                    @* ---- Pass 6B: compressors hide Return/Scrap behind Done Using.
-                         Nobody one-clicks a scrap by accident, and a line nobody has
-                         finished with stays visually quiet. ---- *@
+                    @* Compressors hide Return and Scrap behind Done Using, so nobody scraps one by a stray click. *@
                     @if (loan.IsCompressor)
                     {
                         <div class="mt-3" id="gate-@loan.OrderItemId">
@@ -110,10 +103,7 @@
                         {
                             <div class="mt-3 disp-@loan.OrderItemId" style="display:none;">
                                 <div class="mo-sub" style="font-size:11px;">Which units?</div>
-                                @* Deliberately NOT inside either form. Both Return and Scrap
-                                   read these on submit (see syncUnits) so one tick list drives
-                                   whichever action is taken -- otherwise scrap would silently
-                                   write off every unit regardless of what was ticked. *@
+                                @* Outside both forms on purpose: Return and Scrap both read this one tick list on submit. *@
                                 @foreach (var cu in loan.Units)
                                 {
                                     <label class="d-block loan-ctx" style="color:var(--vis-text);">
@@ -137,7 +127,7 @@
                         }
                     }
 
-                    <!-- RETURN: adds stock back at a chosen active location, or a new one. -->
+                    @* RETURN: adds stock back at a chosen active location, or a new one. *@
                     <form asp-controller="Home" asp-action="ReturnLoan" method="post"
                           class="mt-3 @(loan.IsCompressor ? "disp-" + loan.OrderItemId : "")"
                           style="@(loan.IsCompressor ? "display:none;" : "")"
@@ -169,13 +159,10 @@
                             <button type="submit" class="btn btn-success fw-bold">Return · Execute</button>
                         </div>
 
-                        <!-- New-location fields (lightweight): Parent dropdown + coded text.
-                             Blank levels store as "0". Shown only when "New location" chosen. -->
+                        @* New-location fields. Blank levels store as "0". Shown only for "New location". *@
                         <div class="new-loc-row mt-2" id="newloc-@loan.OrderItemId">
                             <div class="d-flex flex-wrap gap-2">
-                                @* Pass 7C: from the Locations table -- this list and the one in
-                                   Index.cshtml used to be maintained by hand, in two places, with
-                                   the codes typed out. *@
+                                @* Parents come from the Locations table. *@
                                 <select name="newParent" class="mo-input">
                                     <option value="">Parent…</option>
                                     @foreach (var lp in (List<(string Code, string Name)>)(ViewBag.LocationParents ?? new List<(string Code, string Name)>()))
@@ -192,7 +179,7 @@
                         </div>
                     </form>
 
-                    <!-- SCRAP: writes the loaned units off; no stock returns. -->
+                    @* SCRAP: writes the loaned units off; no stock returns. *@
                     <form asp-controller="Home" asp-action="ScrapLoan" method="post"
                           class="mt-2 @(loan.IsCompressor ? "disp-" + loan.OrderItemId : "")"
                           style="@(loan.IsCompressor ? "display:none;" : "")"
@@ -218,13 +205,7 @@
         }
     </div>
 
-    <!-- INTERNAL TRANSFERS (Pass 30, corrected same day after live testing --
-         no due date, no return flow: a transferred unit doesn't come back in
-         practice, same as how a picked-up compressor already stays "Picked Up"
-         forever. One approval, then done.) MyRequests = requests I placed
-         against another Line's item, full history; AwaitingApproval = requests
-         against items my own Line/Team owns -- the approval queue lives right
-         here, not on a separate page. -->
+    @* Internal transfers: my requests (full history) and requests awaiting my approval. *@
     <div class="mo-card">
         <h4 class="mo-h mb-1"><i class="bi bi-arrow-left-right me-2" style="color:#F59E0B;"></i>Internal Transfers</h4>
         <div class="mo-sub mb-3">Cross-Line stock moves -- one-way, one approval. Once approved, it's gone from the lending Line's shelf for good.</div>
@@ -318,13 +299,7 @@
 
                         @if (b.IsCompressor && b.UnitSlots.Any())
                         {
-                            @* Each slot lists ONLY the serials on the shelf that slot
-                               will actually be pulled from (OrderService.PlanTransferPull's
-                               plan, same order ApproveTransfer executes). Pooling every
-                               location's serials into every slot let the approver pick one
-                               that lives elsewhere, which AssignOneCompressorUnit then
-                               correctly refused -- same location-scoping Pickup Queue
-                               already does for a normal pickup. *@
+                            @* Each slot lists only the serials on the shelf it will be pulled from. *@
                             <div class="mb-2 transfer-serial-block" data-req="@b.Id">
                                 <span class="d-block mb-1 mo-sub" style="font-size:11px;">Serial # -- each unit lists what's on hand at the shelf it's coming off</span>
                                 @for (int u = 0; u < b.UnitSlots.Count; u++)
@@ -360,7 +335,7 @@
         }
     </div>
 
-    <!-- SECTION 1: my order history. -->
+    @* SECTION 1: my order history. *@
     <div class="mo-card">
         <h4 class="mo-h mb-3"><i class="bi bi-clock-history me-2 text-primary"></i>My Order History</h4>
         @if (!Model.Orders.Any())
@@ -413,17 +388,12 @@
 </div>
 
 <script>
-    // Show the new-location fields only when "＋ New location…" (empty value) is picked.
+    @* Show the new-location fields only when "＋ New location…" (empty value) is picked. *@
     function toggleReturnLoc(sel, oiId) {
         var row = document.getElementById('newloc-' + oiId);
         if (row) row.style.display = (sel.value === '') ? 'block' : 'none';
     }
-    // Pass 6B: reveal Return/Scrap for a compressor line once the user has
-    // confirmed they're finished with it. Pure UI -- no state is stored, so a
-    // refresh puts the gate back and nothing is half-committed.
-    // Copy the ticked unit ids into whichever form is being submitted. The tick
-    // list lives outside both forms so Return and Scrap act on the SAME selection;
-    // without this, one of them would always act on all units or none.
+    @* Copies the ticked unit ids into the form being submitted, so Return and Scrap act on the same selection. *@
     function syncUnits(form, oiid) {
         form.querySelectorAll('input[name="unitIds"]').forEach(function (el) { el.remove(); });
         document.querySelectorAll('.unitbox-' + oiid + ':checked').forEach(function (cb) {
@@ -434,18 +404,14 @@
         return true;
     }
 
-    // Reveal the free-text serial input when the approver picks "Serial not in
-    // list -- add serial" instead of a known on-hand one.
+    @* Shows the free-text serial box when "Serial not in list" is picked. *@
     function toggleTransferManual(sel) {
         var manual = sel.parentElement.querySelector('.comp-serial-manual');
         if (manual) manual.classList.toggle('d-none', sel.value !== '__ADD__');
     }
 
-    // Two units on one approval can't be the same physical compressor.
-    // AssignOneCompressorUnit rejects it server-side, but greying the option out
-    // the moment a sibling claims it is friendlier than a bounced submit --
-    // same treatment Pickup Queue's own serial picker already gives this.
-    // __NONE__/__ADD__ are exempt: several units may genuinely have no serial.
+    @* Two units on one approval cannot be the same compressor. Greys out a serial a sibling has claimed. *@
+    @* "No serial" and "add serial" are exempt. *@
     function enforceTransferSerialExclusivity(changed) {
         var block = changed.closest('.transfer-serial-block');
         if (!block) return;
@@ -467,14 +433,14 @@
         });
     });
 
+    @* Reveals Return and Scrap for a compressor line. UI only: a refresh puts the gate back. *@
     function doneUsing(oiid) {
         document.querySelectorAll('.disp-' + oiid).forEach(function (el) { el.style.display = ''; });
         var gate = document.getElementById('gate-' + oiid);
         if (gate) gate.style.display = 'none';
     }
 
-    // On load, honor the initial selection (e.g. a loan whose only option is
-    // "New location" because the item has no active variants left).
+    @* On load, honour the initial selection (a loan whose only option is "New location"). *@
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('select[name="targetVariantId"]').forEach(function (sel) {
             toggleReturnLoc(sel, sel.getAttribute('data-oiid'));

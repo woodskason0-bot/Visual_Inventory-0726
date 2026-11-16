@@ -44,9 +44,7 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<InventoryItem>(b =>
             {
-                // Rheem PN is a business identifier like ItemId: no two items
-                // may share one. Partial index so blanks and the shared "N/A"
-                // sentinel (legacy blanks were folded into "N/A") both coexist.
+                // Unique, but blank and "N/A" are exempt.
                 b.HasIndex(i => i.RheemPartNumber)
                  .IsUnique()
                  .HasFilter("\"RheemPartNumber\" <> '' AND \"RheemPartNumber\" <> 'N/A'");
@@ -61,8 +59,7 @@ namespace Visual_Inventory_System.Data
                  .HasForeignKey(v => v.InventoryItemId)
                  .OnDelete(DeleteBehavior.Cascade);
 
-                // Non-unique on purpose: retired rows KEEP their VariantNumber for
-                // history, and a freed number may be reused by a later variant.
+                // Not unique: retired rows keep their number and a freed number can be reused.
                 b.HasIndex(v => new { v.InventoryItemId, v.VariantNumber });
             });
 
@@ -72,8 +69,7 @@ namespace Visual_Inventory_System.Data
                 b.Property(o => o.CreatedAt).IsRequired();
                 b.Property(o => o.Status).HasMaxLength(50);
 
-                // Reverse lookup ("what split off of this order?") is the common
-                // direction -- OrderDetails renders it on every page view.
+                // OrderDetails looks up "what split off this order" on every view.
                 b.HasIndex(o => o.SplitFromOrderId);
             });
 
@@ -90,13 +86,13 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<AppSetting>(b =>
             {
-                // One row per key -- UpdateSetting() upserts on this.
+                // One row per key. UpdateSetting upserts on it.
                 b.HasIndex(s => s.Key).IsUnique();
             });
 
             modelBuilder.Entity<NotificationSubscription>(b =>
             {
-                // One row per (user, category) -- UpdateNotificationSubscription() upserts on this.
+                // One row per (user, category). UpdateNotificationSubscription upserts on it.
                 b.HasIndex(s => new { s.UserId, s.Category }).IsUnique();
 
                 b.HasOne(s => s.User)
@@ -107,9 +103,7 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<IntakeBatch>(b =>
             {
-                // Only PENDING batches live here, so the queue is the table -- an
-                // index on Status keeps "show me what's waiting" cheap as approved
-                // ones accumulate behind it.
+                // The table is the queue. Keeps "what is waiting" cheap.
                 b.HasIndex(x => x.Status);
                 b.HasMany(x => x.Rows)
                  .WithOne(r => r.Batch!)
@@ -119,8 +113,7 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<LocationZone>(b =>
             {
-                // Cascade: deleting a Parent takes its map rectangles with it --
-                // a zone pointing at nothing would render an unclickable ghost.
+                // Cascade: a zone pointing at no Parent would be an unclickable ghost.
                 b.HasOne<Location>()
                  .WithMany()
                  .HasForeignKey(z => z.LocationId)
@@ -131,30 +124,25 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<Location>(b =>
             {
-                // Unique per (level, owner, name): two "Rack A" Subs under different
-                // Majors are legitimate, a duplicate under the same one is not.
+                // Unique per (level, owner, name): the same Sub name under two Majors is fine.
                 b.HasIndex(l => new { l.Level, l.ParentId, l.Name }).IsUnique();
             });
 
             modelBuilder.Entity<Team>(b =>
             {
-                // One row per team name. Vocabulary table -- items still store the
-                // NAME as a plain string (same convention as Line), so this is a
-                // picker source, not a foreign key.
+                // One row per name. A picker source, not a foreign key.
                 b.HasIndex(t => t.Name).IsUnique();
             });
 
             modelBuilder.Entity<Branch>(b =>
             {
-                // One row per branch name, same vocabulary-table convention as Team.
+                // One row per name, like Team.
                 b.HasIndex(x => x.Name).IsUnique();
             });
 
             modelBuilder.Entity<OrgLine>(b =>
             {
-                // Global uniqueness, not per-branch: User/InventoryItem/Team.Line
-                // are flat strings with no branch qualifier, so two branches can't
-                // share a Line name without an ambiguous reverse lookup.
+                // Unique across all branches: Line strings carry no branch.
                 b.HasIndex(x => x.Name).IsUnique();
                 b.HasIndex(x => x.BranchId);
 
@@ -166,46 +154,29 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<CompressorUnit>(b =>
             {
-                // Every read of this table is "all units for this ItemId"
-                // (GetCompressorUnitsGrouped, the sidebar Compressors modal),
-                // so ItemId carries an index.
-                //
-                // This block is not optional. Migration 20260727 creates
-                // IX_CompressorUnits_ItemId, so the snapshot declares it;
-                // without a matching HasIndex the runtime model and the
-                // snapshot disagree, EF raises PendingModelChangesWarning, and
-                // Migrate() aborts before applying ANY migration -- which is
-                // what silently blocked Passes 3, 4 and 5.
+                // Every read is "all units for this ItemId".
+                // Trap: the snapshot declares this index. Drop it here and Migrate() aborts.
                 b.HasIndex(c => c.ItemId);
 
-                // A model may not carry the same serial twice; two DIFFERENT
-                // models may share one, because LG reuses serials across model
-                // lines. So the unique key is the PAIR. Blank/NULL exempt --
-                // most units have no serial captured yet.
+                // Unique per (ItemId, SerialNumber): LG reuses serials across models. Blank is exempt.
                 b.HasIndex(c => new { c.ItemId, c.SerialNumber })
                  .IsUnique()
                  .HasFilter("\"SerialNumber\" IS NOT NULL AND \"SerialNumber\" <> ''");
 
-                // Reservations (2026-11-08): "which units does this hold name".
+                // "Which units does this hold name".
                 b.HasIndex(c => c.ReservationId);
             });
 
             modelBuilder.Entity<MotorUnit>(b =>
             {
-                // Same reasoning as CompressorUnit above -- every read is "all
-                // units for this ItemId", and an un-declared index here is
-                // exactly the PendingModelChangesWarning trap that blocked
-                // several earlier passes. No SerialNumber-style unique index:
-                // LabNumber is the only identifying field and won't always be
-                // present, so it can't carry a uniqueness constraint.
+                // Same index and same Migrate() trap as CompressorUnit. No unique key: LabNumber is often blank.
                 b.HasIndex(c => c.ItemId);
                 b.HasIndex(c => c.ReservationId);
             });
 
             modelBuilder.Entity<UserTeam>(b =>
             {
-                // One membership row per (user, team) -- the team-centric picker's
-                // Save diffs against this.
+                // One row per (user, team). The Settings team picker diffs against it.
                 b.HasIndex(x => new { x.UserId, x.TeamName }).IsUnique();
 
                 b.HasOne<User>()
@@ -216,36 +187,25 @@ namespace Visual_Inventory_System.Data
 
             modelBuilder.Entity<Delivery>(b =>
             {
-                // The Deliveries board queries "everything not Done, for this
-                // recipient (or the Unknown bucket)" -- both carry an index.
+                // The board reads "not Done, for this recipient or the Unknown bucket".
                 b.HasIndex(x => x.Status);
                 b.HasIndex(x => x.RecipientUserName);
             });
 
             modelBuilder.Entity<TransferRequest>(b =>
             {
-                // My Orders' MyRequests subsection queries "everything I requested";
-                // AwaitingApproval queries "everything against this ItemId" (then
-                // filters to the viewer's Line in memory, same as the compressor
-                // roster does).
+                // Read by requester (My Requests) and by item (Awaiting Approval).
                 b.HasIndex(x => x.RequesterUserName);
                 b.HasIndex(x => x.ItemId);
             });
 
             modelBuilder.Entity<TrackedUnit>(b =>
             {
-                // The Unit Tracker list filters on Line. This block must exist
-                // BEFORE `migrations add`: the migration creates
-                // IX_TrackedUnits_Line, so the snapshot declares it, and an index
-                // the model lacks raises PendingModelChangesWarning, which aborts
-                // Migrate() before any SQL runs (handoff Pass 5 trap).
+                // The list filters on Line. Declared before `migrations add`: same Migrate() trap.
                 b.HasIndex(u => u.Line);
             });
 
-            // Reservations (2026-11-08, docs/Unit_Reservations_Spec.md). Every read
-            // is "live holds on this ItemId" (the claims engine, the Item Card) or
-            // "everything live" (Reserved Items); lines hang off their reservation
-            // and go with it. Declared before `migrations add`, same reason as above.
+            // Reservations: read by item, by status, by who made them. Lines go with their reservation.
             modelBuilder.Entity<Reservation>(b =>
             {
                 b.HasIndex(r => r.ItemId);

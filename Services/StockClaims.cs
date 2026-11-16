@@ -8,28 +8,9 @@ using Visual_Inventory_System.Models;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// The ONE answer to "how much of this item can this person still take"
-    /// (2026-11-08, docs/Unit_Reservations_Spec.md section 4). Item Card, Search
-    /// Center, Submit, Pickup Queue, transfers and Reserve all ask it, so none of
-    /// them can disagree with another.
-    ///
-    /// Supply is each active stack's quantity and TC count, grouped by the stack's
-    /// Team (a blank Team is its own group). Claims are live holds (pinned to their
-    /// stack) and Pending lines on Pending orders (scoped to their Team, or
-    /// unscoped when the Team is blank). A reserver's own pending lines draw on
-    /// their own holds first ("coverage"), so a held unit its reserver has ordered
-    /// isn't counted twice.
-    ///
-    /// The claims fit (Hall's condition for this shape) when every stack's holds
-    /// fit the stack, every team group's holds + scoped lines fit the group, and the
-    /// unscoped lines fit what the groups have left -- the same for TC. Deficit()
-    /// sums how far each of those is over. "Available" for a new claim is the most
-    /// that can be added without raising the Deficit, so data that is already
-    /// over-claimed (old overbookings, drift) never blocks an unrelated request.
-    ///
-    /// BC-01: the old team-scoped count ignored unscoped lines entirely; here they
-    /// compete with every group through the "left over" term. BC-07: TC was never
-    /// counted across orders; it's a second dimension of the same check.
+    /// The one answer to "how much of this item can this person still take".
+    /// Supply is the active stacks by Team. Claims are live holds and Pending order lines.
+    /// Available = the most that can be added without raising Deficit().
     /// </summary>
     public sealed class StockClaims
     {
@@ -50,9 +31,7 @@ namespace Visual_Inventory_System.Services
             Lines = lines;
         }
 
-        // ------------------------------------------------------------------
         // Loading
-        // ------------------------------------------------------------------
 
         /// <summary>Everything from the database, untracked.</summary>
         public static StockClaims Load(AppDbContext db, string itemId)
@@ -92,8 +71,7 @@ namespace Visual_Inventory_System.Services
 
         public static List<Line> LoadLines(AppDbContext db, string itemId)
         {
-            // Line status too, same as every reservation query before this: a Split
-            // line's units already left even while its order waits on another line.
+            // Line status too: a Split line's units have left even while its order waits on another line.
             return db.OrderItems.AsNoTracking()
                 .Where(oi => oi.ItemId == itemId && oi.Order.Status == "Pending" && oi.Status == "Pending")
                 .Select(oi => new Line
@@ -108,9 +86,7 @@ namespace Visual_Inventory_System.Services
                 .ToList();
         }
 
-        // ------------------------------------------------------------------
         // The check
-        // ------------------------------------------------------------------
 
         private static bool Same(string a, string b) => string.Equals(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
 
@@ -206,9 +182,7 @@ namespace Visual_Inventory_System.Services
             return deficit;
         }
 
-        // ------------------------------------------------------------------
         // Questions
-        // ------------------------------------------------------------------
 
         private int MaxAdd(Func<int, int> deficitWith, int upper)
         {
@@ -251,11 +225,7 @@ namespace Visual_Inventory_System.Services
         public static Line NewLine(string by, string team, int qty, int tc, int seq = 0) =>
             new Line { OrderItemId = int.MaxValue - 1000 + seq, By = by ?? "", Team = team ?? "", Qty = qty, Tc = tc, CreatedAt = DateTime.MaxValue };
 
-        /// <summary>
-        /// The most `by` could newly hold on one stack, on top of the holds already
-        /// there except reservation `excludeReservationId` (the one being edited),
-        /// without taking anything a pending order or another hold already has.
-        /// </summary>
+        /// <summary>The most `by` could newly hold on one stack. excludeReservationId = the hold being edited.</summary>
         public (int Qty, int Tc) Holdable(string by, int variantId, int? excludeReservationId)
         {
             var stack = Stacks.FirstOrDefault(s => s.Id == variantId);

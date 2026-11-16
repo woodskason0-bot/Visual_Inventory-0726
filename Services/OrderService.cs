@@ -14,8 +14,7 @@ namespace Visual_Inventory_System.Services
         public int RecordedQty { get; set; }
         /// <summary>TC count on this stack (motors); a correction that lowers it can leave TC unit rows over.</summary>
         public int RecordedTc { get; set; }
-        /// <summary>The compressor / TC motor units recorded On Hand here, so a correction that drops the count
-        /// below them can ask which are gone (see InventoryService.RetireSurplusUnits).</summary>
+        /// <summary>Units recorded On Hand here, so a correction below them can ask which are gone.</summary>
         public System.Collections.Generic.List<RecordedUnit> CompressorUnits { get; set; } = new();
         public System.Collections.Generic.List<RecordedUnit> MotorUnits { get; set; } = new();
     }
@@ -28,12 +27,7 @@ namespace Visual_Inventory_System.Services
         public string? Lab { get; set; }
     }
 
-    /// <summary>
-    /// An order line that couldn't be pulled as ordered -- requested exceeds what's
-    /// actually on the shelf across this item's active locations. Carries the
-    /// per-location breakdown so the picker can report the true count at whichever
-    /// shelf(s) they're actually standing at, rather than one flat number.
-    /// </summary>
+    /// <summary>An order line the shelf cannot cover, with the per-location breakdown for the picker to correct.</summary>
     public class ShortPullLine
     {
         public int OrderItemId { get; set; }
@@ -44,10 +38,8 @@ namespace Visual_Inventory_System.Services
     }
 
     /// <summary>
-    /// Outcome of a pickup attempt (PickUpOrder or ReportShortPull's immediate
-    /// re-pickup). Lines that came up short are NOT fulfilled -- they're reported
-    /// here instead, untouched, for correction via ReportShortPull. Other lines on
-    /// the same order complete normally.
+    /// Outcome of a pickup attempt. Short lines are not fulfilled: they are reported here,
+    /// untouched, for ReportShortPull. Other lines complete normally.
     /// </summary>
     public class PickupResult
     {
@@ -73,9 +65,7 @@ namespace Visual_Inventory_System.Services
             _notifications = notifications;
         }
 
-        // ==========================================
-        // SESSION HELPERS (The "Locker" logic)
-        // ==========================================
+        // Session helpers (the "locker")
 
         private LedgerDraft GetDraftFromSession()
         {
@@ -102,9 +92,7 @@ namespace Visual_Inventory_System.Services
             session.SetString(SessionKey, json);
         }
 
-        // ==========================================
-        // PUBLIC ACTIONS
-        // ==========================================
+        // Public actions
         public LedgerDraft GetCurrentDraft()
         {
             return GetDraftFromSession();
@@ -123,9 +111,7 @@ namespace Visual_Inventory_System.Services
             string? team = string.IsNullOrWhiteSpace(requestedTeam) ? null : requestedTeam.Trim();
 
             var draft = GetDraftFromSession();
-            // Same item + same location + same requested team stack together; a
-            // different request on any of the three gets its own line so all
-            // three survive independently.
+            // Same item, location and team stack on one line. Any difference gets its own line.
             var existing = draft.Entries.FirstOrDefault(e => e.ItemId == itemId
                 && e.RequestedVariantId == requestedVariantId
                 && e.RequestedTeam == team);
@@ -152,23 +138,10 @@ namespace Visual_Inventory_System.Services
             SaveDraftToSession(draft);
         }
 
-        /// <summary>
-        /// Which team an order line resolves against (per-team quantity
-        /// ownership, scoped 2026-08-26). Defaults to the requester's own team;
-        /// asks (via requestedTeam, captured at Add to Cart time) only when
-        /// genuinely ambiguous -- the requester belongs to more than one of the
-        /// item's actual claimant teams. "" covers every non-split item AND the
-        /// fails-open cases (no team on either side, or none of the requester's
-        /// teams claim this item) -- same convention Line already uses.
-        /// </summary>
+        /// <summary>The team this line orders against. "" for unsplit items and the fails-open cases. Throws when ambiguous.</summary>
         private string ResolveOrderingTeam(InventoryItem item, string? requestedTeam)
         {
-            // The rule itself lives in InventoryService so Search Center's
-            // "Available:" figure resolves the team the exact same way this does
-            // -- a card promising more than Submit() will accept is the same
-            // class of disagreement as the Transfer one Pass 32 closed. Only the
-            // "what do we do about an unanswered ambiguity" half differs: an
-            // order can't proceed without the answer, a display can.
+            // The rule lives in InventoryService so Search Center's "Available" resolves the same way.
             var inv = new InventoryService(_db, _currentUser);
             var (team, ambiguous, applicable) = inv.ResolveOrderingTeam(item, requestedTeam);
 
@@ -179,14 +152,7 @@ namespace Visual_Inventory_System.Services
             return team;
         }
 
-        /// <summary>
-        /// Removes ONE cart line. AddItem deliberately keys a line on
-        /// (ItemId, RequestedVariantId, RequestedTeam) so the same item ordered
-        /// from two locations -- or against two teams -- survives as two
-        /// independent lines; removing by ItemId alone silently wiped all of
-        /// them. The cart posts all three back, so an exact match is what
-        /// "remove this row" actually means.
-        /// </summary>
+        /// <summary>Removes one cart line, matched on item, location and team, the same key AddItem uses.</summary>
         public void RemoveItem(string itemId, int? requestedVariantId = null, string? requestedTeam = null)
         {
             if (string.IsNullOrWhiteSpace(itemId)) return;
@@ -217,38 +183,23 @@ namespace Visual_Inventory_System.Services
             using var tx = _db.Database.BeginTransaction();
             try
             {
-                // 1. Create the Order header
                 var order = new Order { CreatedAt = System.DateTime.UtcNow, Status = "Pending", RequestedBy = _currentUser.Name };
                 _db.Orders.Add(order);
                 _db.SaveChanges(); // This generates the new Order.Id
                 newOrderId = order.Id;
 
-                // What THIS cart has already claimed, line by line. The stock
-                // check below reads committed Pending lines from the database,
-                // and the lines this loop adds aren't saved until after it -- so
-                // without this, two rows of the same item (the cart keeps them
-                // apart by location/team on purpose) each passed against the
-                // full shelf: 4 + 4 accepted against 5 units. Each cart line
-                // goes into the same StockClaims check as every saved claim
-                // (2026-11-08), which is what closes BC-01 (an unscoped order
-                // was invisible to a team-scoped one) and BC-07 (TC was never
-                // counted across orders): the whole cart has to fit, holds,
-                // other orders, teams and TC together.
+                // What this cart has claimed so far. Saved lines come from the database, but the cart's
+                // own lines are not saved yet, so each is checked together with the ones before it.
                 var claimsByItem = new Dictionary<string, StockClaims>();
                 var cartLinesByItem = new Dictionary<string, List<StockClaims.Line>>();
 
-                // 2. Attach the Items
                 foreach (var entry in draft.Entries)
                 {
                     var invItem = invService.GetById(entry.ItemId);
                     if (invItem == null)
                         throw new InvalidOperationException($"Failed: ID {entry.ItemId} no longer exists.");
 
-                    // Per-team quantity ownership (2026-08-26): resolves to "" for
-                    // every item that's never been split -- same behavior as before
-                    // this existed. Throws only in the genuinely ambiguous case
-                    // (requester's own teams collide on a split item), same spirit
-                    // as the stock check right below it.
+                    // "" for an unsplit item. Throws only when the requester's own teams collide.
                     string team = ResolveOrderingTeam(invItem, entry.RequestedTeam);
 
                     // TC request only sticks for motors, and never exceeds the line qty.
@@ -256,7 +207,7 @@ namespace Visual_Inventory_System.Services
                         ? System.Math.Min(entry.ThermocoupledCount, entry.Quantity)
                         : 0;
 
-                    // Verify Stock (Clean error message without quotes to protect Toast JS)
+                    // Stock check. No quotes in the message: it lands in toast JS.
                     if (!claimsByItem.TryGetValue(entry.ItemId, out var claims))
                     {
                         claims = StockClaims.Load(_db, entry.ItemId);
@@ -293,12 +244,11 @@ namespace Visual_Inventory_System.Services
                     });
                 }
 
-                // 3. Save to DB and Commit
                 _db.SaveChanges();
                 tx.Commit();
                 tx.Dispose(); // release the ambient tx so the post-commit ping can SaveChanges cleanly
 
-                // 4. Wipe the user's Session Cart only upon success
+                // Clear the cart only on success.
                 StartOrder();
             }
             catch
@@ -307,13 +257,10 @@ namespace Visual_Inventory_System.Services
                 throw;
             }
 
-            // Reaching here means the order committed. Ping the L2 runners that a pickup
-            // is waiting. Best-effort: a notification hiccup must never fail a real order.
+            // Committed. Tell the runners a pickup is waiting. Best-effort: never fail a real order.
             try
             {
-                // Individual opt-in now (Settings -> Pickup Alerts checkbox), not tied to
-                // access tier -- so promoting someone off Standard no longer silently
-                // cuts them off from alerts they'd deliberately turned on.
+                // Individual opt-in, not tied to access tier.
                 _notifications.CreateForSubscribers(
                 "PickupRequested",
                 $"New pickup requested: Order #{newOrderId} from {requester} ({itemCount} item{(itemCount == 1 ? "" : "s")}).",
@@ -323,9 +270,7 @@ namespace Visual_Inventory_System.Services
             catch { /* swallow: the order is already safely submitted */ }
         }
 
-        // compressorUnits: orderItemId -> list of (LabNumber, SerialNumber) pairs,
-        // one entry per physical unit being pulled on that line. Both soft --
-        // null/blank in either slot just means that unit's field wasn't given.
+        // compressorUnits: orderItemId -> (LabNumber, SerialNumber) per physical unit. Either may be blank.
         public PickupResult PickUpOrder(int orderId, Dictionary<int, int>? variantChoices = null,
             Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits = null)
         {
@@ -340,47 +285,27 @@ namespace Visual_Inventory_System.Services
                 var order = _db.Orders.Include(o => o.Items).FirstOrDefault(o => o.Id == orderId);
                 if (order == null) throw new InvalidOperationException("Order not found.");
                 if (order.Status == "Completed") throw new InvalidOperationException("Already completed.");
-                // Cancelled (or anything else non-Pending) is just as final as
-                // Completed here -- without this, a runner holding a stale queue
-                // page could pull real stock against an order an Engineer already
-                // cancelled, and the pickup would overwrite Cancelled with
-                // Completed as if the cancellation never happened. NB: an
-                // engineer-cancelled order's lines deliberately stay "Pending" --
-                // line-level "Cancelled" specifically means "came up short at
-                // pickup" (ReportShortPull's eligibility, OrderDetails' Short
-                // badge), so this order-level guard is the only thing standing
-                // between a cancelled order and a pull.
+                // Any non-Pending order is final. An engineer-cancelled order keeps its lines "Pending"
+                // (line-level "Cancelled" means short at pickup), so this guard is all that stops a pull.
                 if (order.Status != "Pending") throw new InvalidOperationException($"Order #{orderId} was cancelled and can no longer be picked up.");
 
-                // Only lines still awaiting pickup -- a second attempt on the same
-                // order (or one that already had a short line pulled aside) must
-                // not re-touch lines that already resolved either way.
+                // Only lines still Pending. A second attempt must not re-touch resolved lines.
                 foreach (var it in order.Items.Where(i => i.Status == "Pending"))
                 {
                     var shortLine = FulfillOrderItem(it, orderId, variantChoices, compressorUnits);
                     if (shortLine != null) result.ShortLines.Add(shortLine);
                 }
 
-                // Order-level status follows the lines: nothing left Pending means
-                // this order is done being worked on. If every line came up short,
-                // call the order what it is -- Cancelled, not Completed -- since
-                // nothing under this order id actually left the shelf. A mix of
-                // Completed/Cancelled still counts as Completed: real fulfillment
-                // happened here, the short line's real fulfillment lives on
-                // whatever order ReportShortPull reissues.
+                // The order follows its lines. Every line short = Cancelled: nothing left the shelf.
+                // Any Completed or Split line = Completed.
                 bool anyPending = order.Items.Any(i => i.Status == "Pending");
                 if (anyPending)
                 {
-                    // Shouldn't happen -- FulfillOrderItem always leaves a line
-                    // Completed or Cancelled -- but leave the order Pending rather
-                    // than lie about it if it ever does.
+                    // Should not happen. Leave the order Pending rather than lie about it.
                 }
                 else
                 {
-                    // "Split" counts as fulfillment too -- a deliberate partial
-                    // pickup really did pull stock under this order id, same as
-                    // "Completed"; the remainder's real fulfillment lives on
-                    // whatever order CreateSplitOrder spun off.
+                    // Split counts: stock did leave under this order id.
                     bool anyCompleted = order.Items.Any(i => i.Status == "Completed" || i.Status == "Split");
                     order.Status = anyCompleted ? "Completed" : "Cancelled";
                     order.FulfilledBy = _currentUser.Name;
@@ -399,8 +324,7 @@ namespace Visual_Inventory_System.Services
                 throw;
             }
 
-            // Order is picked up -- let the person who requested it know who grabbed it.
-            // Best-effort, and never notify yourself if you picked up your own request.
+            // Tell the requester who picked it up. Best-effort, and never notify yourself.
             try
             {
                 if (!string.IsNullOrWhiteSpace(requesterToNotify)
@@ -419,17 +343,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Deliberate partial pickup for a compressor line (Pass 29's proactive
-        /// shortfall UX): the picker saw, before ever attempting a normal pickup,
-        /// that the location they're standing at can't cover the full ordered
-        /// qty, and chose to take what's actually there rather than let the pull
-        /// spill automatically to another location. Pulls exactly `pickupQty`
-        /// from `variantId` -- no spill, this is a deliberate cap, not a
-        /// shortfall -- then spins the remainder off as a new Pending order
-        /// (CreateSplitOrder) so it isn't silently lost. For "take the full
-        /// amount, wherever it has to come from," that's just a normal
-        /// PickUpOrder call; this method only exists for the "less than asked,
-        /// on purpose" case.
+        /// A deliberate partial pickup of a compressor line: pulls exactly `pickupQty` from one
+        /// stack, no spill, and spins the remainder off as a new Pending order.
         /// </summary>
         public PickupResult PickUpPartialAndSplit(int orderId, int orderItemId, int variantId, int pickupQty,
             Dictionary<int, (string? Lab, string? Serial)>? unitChoices)
@@ -453,23 +368,17 @@ namespace Visual_Inventory_System.Services
 
                 var variant = inv.Variants.FirstOrDefault(v => v.Id == variantId && !v.IsRetired);
                 if (variant == null) throw new InvalidOperationException("That location is no longer active.");
-                // Pickup Queue only ever OFFERS this line's own team's locations,
-                // so this closes a direct-POST hole rather than a UI one -- but
-                // the whole point of the team boundary is that it holds without
-                // the UI's cooperation, same as ApproveTransfer's own check.
+                // The queue only offers this team's locations. This holds the boundary against a direct POST.
                 if (!string.IsNullOrEmpty(it.Team) && variant.Team != it.Team)
                     throw new InvalidOperationException(
                         $"That location belongs to {(string.IsNullOrWhiteSpace(variant.Team) ? "no team" : variant.Team)}, not {it.Team} -- this line can only be pulled from its own team's stock.");
-                // Live recheck at the moment of pickup, same principle as the
-                // short-pull guard in FulfillOrderItem -- what the picker saw on
-                // the queue page a moment ago may already be stale.
+                // Live recheck: the queue page may be stale.
                 if (variant.Quantity < pickupQty)
                     throw new InvalidOperationException($"Only {variant.Quantity} actually on hand there now -- someone beat you to it. Refresh and try again.");
 
                 var now = System.DateTime.UtcNow;
 
-                // Reservations (2026-11-08): what other people hold on this stack
-                // stays, whoever is picking up -- same rule as FulfillOrderItem.
+                // What other people hold on this stack stays, whoever is picking up.
                 string requester = order.RequestedBy ?? "";
                 var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
                 var heldByOthers = holdView.HeldByOthers(variant.Id, requester);
@@ -477,10 +386,7 @@ namespace Visual_Inventory_System.Services
                 if (pickupQty > freeHere)
                     throw new InvalidOperationException(HeldRefusal(it.ItemId, new List<ItemVariant> { variant }, requester, holdView, freeHere, pickupQty));
 
-                // Same per-take TC math FulfillOrderItem's spill loop uses for a
-                // single variant -- this call only ever pulls from the one
-                // location the picker is standing at, so it's exactly one
-                // iteration of that loop, computed before the take is applied.
+                // One stack, so one pass of FulfillOrderItem's TC math, computed before the take.
                 var (_, tcTake) = PlanTake(variant, pickupQty, it.ThermocoupledCount, heldByOthers);
                 var pins = ReservationService.PinOwners(_db, it.ItemId);
 
@@ -507,8 +413,7 @@ namespace Visual_Inventory_System.Services
                 {
                     (string? Lab, string? Serial) pair = (null, null);
                     unitChoices?.TryGetValue(u, out pair);
-                    // variant.Quantity is already net of this pull, so the units still on
-                    // the shelf with this one included are what's left plus the slots left.
+                    // variant.Quantity is already net of this pull: add back the slots still to assign.
                     AssignOneCompressorUnit(it.ItemId, onHandHere, pair.Lab, pair.Serial, orderId, it.Id, null, now,
                         claimedThisCall, variant.Quantity + (pickupQty - u), unitChoices != null && unitChoices.ContainsKey(u),
                         ref missingLab, ref missingSerial, ref matchedUnits, pins, requester);
@@ -554,17 +459,11 @@ namespace Visual_Inventory_System.Services
             }
         }
 
-        /// <summary>
-        /// What the short-pull correction form shows for one line: each active location's
-        /// recorded quantity, and the compressor / TC motor units recorded On Hand there,
-        /// so a count typed below them can ask which are gone (see
-        /// InventoryService.RetireSurplusUnits).
-        /// </summary>
+        /// <summary>The short-pull correction form's data for one line: each location's count and its recorded units.</summary>
         private ShortPullLine BuildShortPullLine(OrderItem it, InventoryItem inv, List<ItemVariant> activeVariants)
         {
             var variantIds = activeVariants.Select(v => v.Id).ToList();
-            // Tracked, then rechecked in memory: an earlier line of this same pickup
-            // may have flipped a row that isn't saved yet.
+            // Tracked, then rechecked in memory: an earlier line of this pickup may have changed an unsaved row.
             var compressorsHere = InventoryService.IsCompressorType(inv.Type)
                 ? _db.CompressorUnits
                     .Where(c => c.ItemId == it.ItemId && c.Status == UnitStatus.OnHand && c.ItemVariantId != null && variantIds.Contains(c.ItemVariantId.Value))
@@ -599,11 +498,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// The correction form's data for a line that is STILL flagged short, or null.
-        /// The form only ever comes from TempData, so a correction that was refused
-        /// (units not ticked, say) used to strand the order: the line stayed flagged
-        /// short in the database and nothing could bring the form back. The controller
-        /// puts it back from here.
+        /// The correction form's data for a line still flagged short, or null.
+        /// Lets the controller bring the form back after a refused correction.
         /// </summary>
         public ShortPullLine? GetShortPullLine(int orderId, int orderItemId)
         {
@@ -617,31 +513,16 @@ namespace Visual_Inventory_System.Services
             return BuildShortPullLine(it, inv, active);
         }
 
-        /// <summary>
-        /// Pulls (or refuses) a single order line. Mutates `it.Status` to
-        /// "Completed" or "Cancelled" and, on success, decrements stock / logs the
-        /// pickup exactly as before. Returns the shortfall (stock left untouched)
-        /// instead of pulling anything if the shelf can't cover what was ordered --
-        /// a short pull is a data-integrity event, not a fulfillment variation, so
-        /// nothing partial ever gets pulled here. Shared by PickUpOrder and by
-        /// ReportShortPull's immediate re-pickup of the corrected quantity.
-        /// </summary>
         private static bool SameName(string? a, string? b) =>
             string.Equals((a ?? "").Trim(), (b ?? "").Trim(), System.StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>Who placed the order this line is on -- the person whose holds a pickup may use.</summary>
+        /// <summary>Who placed the order this line is on: the person whose holds a pickup may use.</summary>
         private string RequesterOf(OrderItem it) =>
             it.Order?.RequestedBy
             ?? _db.Orders.Where(o => o.Id == it.OrderId).Select(o => o.RequestedBy).FirstOrDefault()
             ?? "";
 
-        /// <summary>
-        /// How much of one stack a pull may take, and how much of that is TC, once
-        /// what other people hold there stays behind (2026-11-08). With nothing held
-        /// it's exactly the old per-stack math: floor = TC forced out when the stack
-        /// lacks enough non-TC; ceiling = the TC there; between them, what the line
-        /// still owes.
-        /// </summary>
+        /// <summary>How much of one stack a pull may take, and how much of that is TC, leaving what others hold.</summary>
         private static (int Take, int TcTake) PlanTake(ItemVariant v, int remaining, int remainingTc, (int Qty, int Tc) heldByOthers)
         {
             int capQ = System.Math.Max(0, v.Quantity - heldByOthers.Qty);
@@ -667,6 +548,10 @@ namespace Visual_Inventory_System.Services
                 + $". {wanted} needed. Ask them to release it, or change the order. Nothing was picked up.";
         }
 
+        /// <summary>
+        /// Pulls one order line, or refuses it. A line the shelf cannot cover is set Cancelled and
+        /// returned as a short pull with stock untouched. Nothing partial is ever pulled here.
+        /// </summary>
         private ShortPullLine? FulfillOrderItem(OrderItem it, int orderId,
             Dictionary<int, int>? variantChoices,
             Dictionary<int, List<(string? Lab, string? Serial)>>? compressorUnits)
@@ -674,20 +559,12 @@ namespace Visual_Inventory_System.Services
             var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
             if (inv == null)
             {
-                // Item vanished after the order was placed. Nothing to pull or
-                // report short on -- let the line close rather than block the
-                // order forever.
+                // The item was deleted after the order was placed. Close the line rather than block the order.
                 it.Status = "Completed";
                 return null;
             }
 
-            // Per-team quantity ownership (2026-08-26): a resolved team scopes
-            // this line to ONLY that team's own variants, same shape as Pass
-            // 29's location-scoping fix -- without this, the pull loop below
-            // would silently spill across a team boundary it isn't allowed to
-            // cross, reopening the identical bug on a new axis. "" (no team
-            // resolved -- item was never split, or fails open) sees every
-            // active variant, exactly like today.
+            // A resolved team limits the pull to that team's variants. "" sees every active variant.
             var activeVariants = inv.Variants
                 .Where(v => !v.IsRetired && (string.IsNullOrEmpty(it.Team) || v.Team == it.Team))
                 .ToList();
@@ -695,29 +572,20 @@ namespace Visual_Inventory_System.Services
 
             if (it.Quantity > totalAvailable)
             {
-                // Not enough on the shelf to honor this line as ordered. Refuse
-                // it here rather than pulling whatever exists -- [decided] a
-                // short pull is a data-integrity event, not a fulfillment
-                // variation. Stock stays untouched; the picker reports the real
-                // count via ReportShortPull, location by location.
+                // Not enough on the shelf. Refuse the line and leave stock untouched: a short pull is a data problem.
                 it.Status = "Cancelled";
                 return BuildShortPullLine(it, inv, activeVariants);
             }
 
-            // Reservations (2026-11-08): stock held for anyone but the person
-            // who placed this order stays on the shelf, whoever is doing the
-            // pickup (Kason's rule 1 -- the orderer's holds are what get used).
-            // Held stock isn't a miscount, so running short because of it is a
-            // refusal with names, never the short-pull path.
+            // Stock held for anyone but the requester stays on the shelf, whoever picks up.
+            // Short because of holds is a refusal with names, never the short-pull path.
             string requester = RequesterOf(it);
             var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
             int freeForRequester = activeVariants.Sum(v => System.Math.Max(0, v.Quantity - holdView.HeldByOthers(v.Id, requester).Qty));
             if (it.Quantity > freeForRequester)
                 throw new InvalidOperationException(HeldRefusal(it.ItemId, activeVariants, requester, holdView, freeForRequester, it.Quantity));
 
-            // Which location to pull from first: the engineer's request
-            // on the order line wins; else the pickup person's choice
-            // (posted from the queue page); else no preference.
+            // Pull from: the line's requested location, else the picker's choice, else no preference.
             int? preferId = it.RequestedVariantId;
             if (preferId == null && variantChoices != null
                 && variantChoices.TryGetValue(it.Id, out int chosen))
@@ -725,10 +593,7 @@ namespace Visual_Inventory_System.Services
                 preferId = chosen;
             }
 
-            // Preferred variant first (if still active), then the stacks the
-            // requester holds, then the rest lowest-number-first as spill. The
-            // pre-checks above guarantee enough free stock exists, so this always
-            // fully satisfies the line -- it can still span two locations.
+            // Preferred stack first, then stacks the requester holds, then the rest by number. May span locations.
             var myHeld = holdView.Holds.Where(h => SameName(h.By, requester)).Select(h => h.VariantId).ToHashSet();
             var pullOrder = activeVariants
                 .OrderBy(v => preferId.HasValue && v.Id == preferId.Value ? 0 : myHeld.Contains(v.Id) ? 1 : 2)
@@ -739,10 +604,7 @@ namespace Visual_Inventory_System.Services
             int remainingTc = it.ThermocoupledCount;   // TC motors still owed to this line
             int pulledTc = 0;   // TC motors that actually left, forced ones included
             var pulls = new List<string>();   // snapshot for the log
-            // Which variant each pulled unit actually came from -- needed below
-            // so compressor unit rows get matched against on-hand stock AT THAT
-            // LOCATION instead of pooled across every stack the item sits on,
-            // and so TC motor rows come off the shelves the TC really left.
+            // Which variant each pulled unit came from, so unit rows are matched on that shelf, not pooled.
             var variantPulls = new List<(int VariantId, int Take, int TcTake)>();
             foreach (var v in pullOrder)
             {
@@ -761,37 +623,14 @@ namespace Visual_Inventory_System.Services
             }
             var pins = ReservationService.PinOwners(_db, it.ItemId);
 
-            // LOAN STARTS HERE. Loanable units that ACTUALLY left the
-            // shelf are now out and expected back (Controls: everything
-            // pulled; Motors: the TC pulled). Based on what shipped, not
-            // what was ordered, so a short pickup can't over-count a loan.
-            // pulledTc is summed inside the loop above, not derived as
-            // "requested minus still owed": the floor can FORCE more TC off a
-            // stack than the line asked for, and that derivation dropped the
-            // extra -- a TC motor left the shelf with no loan and its unit
-            // row still On Hand.
+            // The loan starts here, based on what left the shelf, not what was ordered.
+            // pulledTc is summed in the loop: the floor can force more TC out than the line asked for.
             int pulledQty = it.Quantity - remaining;
-            // Pass 6B: call the shared helper instead of repeating the
-            // rule inline. This block WAS a duplicate of
-            // InventoryService.LoanableQuantity -- which meant the helper
-            // had zero callers, and adding compressors to it changed
-            // nothing while this copy still returned 0 for them.
-            //
-            // Equivalent for the existing types: pulledTc can never exceed
-            // pulledQty (TC is a subset of what was pulled), so the Min()
-            // inside the helper resolves to pulledTc for motors exactly as
-            // before. Controls are unchanged. Compressors now count.
             it.LoanOutstanding = InventoryService.LoanableQuantity(
                 inv.Type, pulledQty, pulledTc);
 
-            // COMPRESSOR MINI-VARIANTS: one CompressorUnit row per
-            // physical unit actually pulled (pulledQty, not the ordered
-            // qty -- a short pickup can't log units that never left the
-            // shelf). Lab#/Serial# are both soft: whatever pairs were
-            // posted for this line get used in order; anything past the
-            // posted count (or left blank) just logs null/null. Missing
-            // values are summarized onto the pickup log line below, not
-            // blocked here.
+            // One CompressorUnit row per unit pulled. Lab# and Serial# are both optional:
+            // missing values are counted onto the log line, never blocked.
             int missingLab = 0, missingSerial = 0, matchedUnits = 0;
             if (InventoryService.IsCompressorType(inv.Type) && pulledQty > 0)
             {
@@ -799,17 +638,12 @@ namespace Visual_Inventory_System.Services
                 compressorUnits?.TryGetValue(it.Id, out pairs);
                 var now = System.DateTime.UtcNow;
 
-                // Flatten variantPulls into one entry per physical unit, in pull
-                // order, so slot u lines up with both the Lab#/Serial# posted
-                // for slot u and the specific shelf that unit came from.
+                // One entry per physical unit in pull order, so slot u matches its posted pair and its shelf.
                 var unitVariant = new List<int>();
                 foreach (var (variantId, take, _) in variantPulls)
                     for (int i = 0; i < take; i++) unitVariant.Add(variantId);
 
-                // On-hand rows fetched once per variant and mutated in-memory
-                // as units get matched below -- SaveChanges hasn't run yet, so
-                // a fresh query mid-loop wouldn't see this call's own pending
-                // flips and could match the same physical unit twice.
+                // Fetched once per variant and edited in memory: a fresh query would miss this call's unsaved changes.
                 var onHandByVariant = new Dictionary<int, List<CompressorUnit>>();
                 List<CompressorUnit> OnHandAt(int variantId)
                 {
@@ -819,11 +653,7 @@ namespace Visual_Inventory_System.Services
                             .Where(c => c.ItemId == it.ItemId && c.ItemVariantId == variantId && c.Status == UnitStatus.OnHand)
                             .OrderBy(c => c.RecordedAt)
                             .ToList()
-                            // Rechecked in memory: the SQL filter reads saved
-                            // values, but an EARLIER line of this same pickup may
-                            // already have flipped one of these rows (tracked,
-                            // unsaved) -- EF hands back that same instance, and
-                            // without this the second line re-claimed it.
+                            // Rechecked in memory: an earlier line of this pickup may have changed a tracked row.
                             .Where(c => c.Status == UnitStatus.OnHand && c.ItemVariantId == variantId)
                             .ToList();
                         onHandByVariant[variantId] = list;
@@ -832,9 +662,7 @@ namespace Visual_Inventory_System.Services
                 }
 
                 var claimedThisCall = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-                // Slots still to assign per shelf: each variant's quantity is already net
-                // of this pull, so quantity + slots left = units on the shelf with the
-                // current one included (AssignOneCompressorUnit's "No serial" check).
+                // Slots left per shelf. Quantity is already net of this pull, so quantity + slots = units still there.
                 var slotsLeft = variantPulls.ToDictionary(p => p.VariantId, p => p.Take);
                 for (int u = 0; u < pulledQty; u++)
                 {
@@ -849,9 +677,7 @@ namespace Visual_Inventory_System.Services
                 }
             }
 
-            // TC MOTOR UNITS: mirrors the compressor block above, minus the
-            // serial match step (motors have none to match on). Only the TC
-            // subset of the pull gets a row; a non-TC motor never does.
+            // TC motor units: the same, without the serial match. Only the TC part of the pull gets a row.
             if (InventoryService.IsMotorType(inv.Type) && pulledTc > 0)
                 TakeMotorUnits(it.ItemId, variantPulls, orderId, it.Id, null, System.DateTime.UtcNow, pins, requester);
 
@@ -864,14 +690,8 @@ namespace Visual_Inventory_System.Services
             if (matchedUnits > 0) flagParts.Add($"{matchedUnits} matched to known unit(s)");
             string compressorFlag = flagParts.Count > 0 ? $" ({string.Join(", ", flagParts)})" : "";
 
-            // LOG THE PICKUP HERE! Details snapshot the actual pull
-            // locations at this moment -- variant numbers can be
-            // reused later, so the log must not rely on lookups.
-            // QuantityChange logs what actually left (pulledQty), not what
-            // was ordered -- the pre-check above means the two always match
-            // for a line that reaches this point, but pulledQty is the
-            // honest source regardless (see the short-pull writeup: ordered
-            // != pulled is exactly the bug that let exports overstate).
+            // The log snapshots the pull locations: variant numbers can be reused later.
+            // QuantityChange is what left, not what was ordered.
             _db.TransactionLogs.Add(new TransactionLog
             {
                 Timestamp = System.DateTime.UtcNow,
@@ -890,14 +710,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// Match-or-create for one physical compressor unit leaving one specific
-        /// shelf (Pass 29). Shared by FulfillOrderItem's normal pull,
-        /// PickUpPartialAndSplit's deliberate partial pull, and ApproveTransfer's
-        /// serial capture -- all three need the exact same location-scoped
-        /// matching and the same guard against silently grabbing a serial that
-        /// lives somewhere else for this item. orderId/orderItemId vs.
-        /// transferRequestId are mutually exclusive -- a real pickup passes the
-        /// former with null transferRequestId, a Transfer approval the reverse.
+        /// Match-or-create for one compressor unit leaving one specific shelf. Shared by pickup, partial
+        /// pickup and transfer approval. Pass orderId/orderItemId or transferRequestId, never both.
         /// </summary>
         private void AssignOneCompressorUnit(
             string itemId, List<CompressorUnit> onHandHere, string? lab, string? serial,
@@ -906,9 +720,7 @@ namespace Visual_Inventory_System.Services
             ref int missingLab, ref int missingSerial, ref int matchedUnits,
             Dictionary<int, string> pins, string requester)
         {
-            // Reservations (2026-11-08): a unit named in someone else's live hold
-            // never leaves for this order; the requester's own named units go first
-            // when nobody picked a specific one.
+            // A unit named in someone else's hold never leaves for this order. The requester's own go first.
             bool OthersPin(CompressorUnit c) => c.ReservationId.HasValue
                 && pins.TryGetValue(c.ReservationId.Value, out var who) && !SameName(who, requester);
             bool MinePin(CompressorUnit c) => c.ReservationId.HasValue
@@ -919,13 +731,8 @@ namespace Visual_Inventory_System.Services
             if (lab == null) missingLab++;
             if (serial == null) missingSerial++;
 
-            // A picker choosing the same known serial for two different unit
-            // slots on the same line is a same-submission mistake, not a
-            // cross-location conflict -- HashSet.Add returns false when the
-            // value's already in the set, which is exactly "an earlier unit on
-            // THIS pickup already claimed it." Checked before the on-hand match
-            // below so it reports the right cause instead of the generic
-            // "already on record elsewhere" message meant for a different bug.
+            // The same serial picked for two slots is a same-submission mistake.
+            // Checked before the on-hand match so it reports the right cause.
             if (serial != null && !claimedThisCall.Add(serial))
             {
                 throw new System.InvalidOperationException(
@@ -944,25 +751,13 @@ namespace Visual_Inventory_System.Services
             }
             else
             {
-                // No serial given for this slot -- take the oldest anonymous
-                // on-hand unit at THIS location instead of silently orphaning
-                // it. Mirrors the motor TC fallback, which never had this gap
-                // since motors never try to match by serial to begin with.
-                // With no per-unit choice at all, the requester's own held unit
-                // goes first (their hold is what this order uses up).
+                // No serial given: take the oldest unnamed on-hand unit on this shelf.
+                // With no per-unit choice at all, the requester's own held unit goes first.
                 known = (!slotChosenByPicker ? onHandHere.FirstOrDefault(MinePin) : null)
                     ?? onHandHere.FirstOrDefault(c => string.IsNullOrWhiteSpace(c.SerialNumber) && !OthersPin(c));
 
-                // No unnamed unit on the roster for this shelf. If every unit still
-                // physically on it (this one included) is already recorded WITH a
-                // serial, the one leaving can only be one of those -- minting a fresh
-                // unnamed Picked Up row here would leave a named row On Hand for a
-                // unit that's gone, a phantom the roster can never shed. When the
-                // picker deliberately chose "No serial", make them say which; when no
-                // per-unit choice was made at all (a short-pull correction's own
-                // re-pickup), take the oldest recorded unit -- FIFO, same as the
-                // fallback motors have. When the shelf holds more units than rows, an
-                // unrecorded unit exists, so a new row is the right outcome.
+                // No unnamed row. If every unit still on the shelf has a recorded serial, the one leaving
+                // must be one of them: the picker says which, or with no choice made, the oldest goes.
                 if (known == null && onHandHere.Count >= shelfUnitsLeft)
                 {
                     if (slotChosenByPicker)
@@ -975,9 +770,7 @@ namespace Visual_Inventory_System.Services
 
             if (known != null)
             {
-                // A unit we already knew about is leaving the shelf. Flip it --
-                // its history (and lab number) carries forward. A unit that
-                // leaves isn't held by anyone any more.
+                // A known unit is leaving: flip it, keep its history. Nobody holds it any more.
                 onHandHere.Remove(known);
                 known.ReservationId = null;
                 known.Status = UnitStatus.PickedUp;
@@ -986,29 +779,20 @@ namespace Visual_Inventory_System.Services
                 known.TransferRequestId = transferRequestId;
                 known.PickedUpAt = now;
                 known.PickedUpBy = _currentUser.Name;
-                known.ItemVariantId = null;   // off the shelf; 6B sets it again on return
+                known.ItemVariantId = null;   // off the shelf; set again on return
                 if (lab != null) known.LabNumber = lab;
                 matchedUnits++;
             }
             else if (serial != null && _db.CompressorUnits.Any(c => c.ItemId == itemId && c.SerialNumber == serial))
             {
-                // This exact serial is already on the roster for this item --
-                // just not at the location this order is pulling from (or it
-                // already left under a different order). Case-sensitive on
-                // purpose: matches what the real unique index
-                // (IX_CompressorUnits_ItemId_SerialNumber) actually enforces,
-                // which is the thing an insert below would violate. Scoping the
-                // match by location means this no longer gets found above, and
-                // silently grabbing it from wherever it actually lives would be
-                // the exact CCR-0213 mistake over again. Reject with an
-                // actionable message instead.
+                // The serial is on the roster for this item, but not on this shelf (or it already left).
+                // Case-sensitive, like the unique index. Refuse rather than take it from wherever it is.
                 throw new System.InvalidOperationException(
                     $"Serial \"{serial}\" is already on record for {itemId} at a different location (or already picked up) -- double check you're pulling from the right shelf.");
             }
             else
             {
-                // First time we've seen this one. Recorded and picked up in
-                // the same breath.
+                // First time this unit is seen: recorded and picked up at once.
                 _db.CompressorUnits.Add(new CompressorUnit
                 {
                     ItemId = itemId,
@@ -1028,22 +812,14 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// The TC motor counterpart of AssignOneCompressorUnit, shared by
-        /// FulfillOrderItem and ApproveTransfer: flips the oldest On Hand
-        /// MotorUnit rows on EACH shelf the pull actually drew TC from, as many
-        /// per shelf as TC left it. It used to take the oldest rows item-wide,
-        /// so pulling from shelf B marked shelf A's lab-numbered unit Picked Up
-        /// and left B's On Hand. TC the shelf had no row for is created straight
-        /// into Picked Up so it's still trackable once it's out, same as an
-        /// unmatched compressor serial. orderId/orderItemId vs.
-        /// transferRequestId are mutually exclusive, as in the compressor helper.
+        /// The TC motor counterpart: flips the oldest On Hand MotorUnit rows on each shelf the pull
+        /// drew TC from. TC with no row is created straight into Picked Up.
         /// </summary>
         private void TakeMotorUnits(string itemId, List<(int VariantId, int Take, int TcTake)> variantPulls,
             int? orderId, int? orderItemId, int? transferRequestId, System.DateTime now,
             Dictionary<int, string> pins, string requester)
         {
-            // Same reservation rule as AssignOneCompressorUnit: someone else's
-            // named TC motor stays; the requester's own go first.
+            // Same hold rule: someone else's named TC motor stays, the requester's own go first.
             bool OthersPin(MotorUnit m) => m.ReservationId.HasValue
                 && pins.TryGetValue(m.ReservationId.Value, out var who) && !SameName(who, requester);
             bool MinePin(MotorUnit m) => m.ReservationId.HasValue
@@ -1057,9 +833,7 @@ namespace Visual_Inventory_System.Services
                     .Where(m => m.ItemId == itemId && m.ItemVariantId == variantId && m.Status == UnitStatus.OnHand)
                     .OrderBy(m => m.RecordedAt)
                     .ToList()
-                    // Rechecked in memory, same reason as FulfillOrderItem's
-                    // OnHandAt: an earlier line of this pickup may already have
-                    // flipped a row that the database still reads as On Hand.
+                    // Rechecked in memory, as in FulfillOrderItem.
                     .Where(m => m.Status == UnitStatus.OnHand && m.ItemVariantId == variantId && !OthersPin(m))
                     .OrderBy(m => MinePin(m) ? 0 : 1)
                     .Take(tcTake)
@@ -1097,21 +871,8 @@ namespace Visual_Inventory_System.Services
             }
         }
 
-        /// <summary>
-        /// Spins off a fresh Pending order for a quantity that a line couldn't
-        /// (or, for a deliberate partial pickup, wasn't asked to) fully ship
-        /// under its original order -- ReportShortPull's shelf-count correction
-        /// and PickUpPartialAndSplit's deliberate "take what's here, defer the
-        /// rest" both funnel through this so the lineage (SplitFromOrderId) is
-        /// recorded the same way regardless of which situation caused it.
-        /// </summary>
-        /// <param name="team">
-        /// The original line's resolved ordering team, carried forward. NOT
-        /// optional in practice: a reissue that loses it silently widens the
-        /// remainder's pull back to every team's stock, which is the same shape
-        /// of bug as Pass 19's dropped TC count / requested location -- a field
-        /// added to OrderItem that this copy constructor didn't learn about.
-        /// </param>
+        /// <summary>Spins a quantity off as a new Pending order, with SplitFromOrderId recording the lineage.</summary>
+        /// <param name="team">The original line's team. Must be carried: without it the remainder pulls from every team's stock.</param>
         private (Order Order, OrderItem Item) CreateSplitOrder(Order original, string itemId, int quantity, int? requestedVariantId, int thermocoupledCount, string team)
         {
             var newOrder = new Order
@@ -1141,25 +902,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// The other half of the short-pull flow (see FulfillOrderItem). The
-        /// picker reports what's ACTUALLY on the shelf, location by location, for
-        /// a line that came up short. This adjusts real stock to match what was
-        /// seen -- an audit-logged correction, not a fulfillment -- then
-        /// immediately issues and picks up a fresh order for the corrected
-        /// quantity so the picker leaves with a clean pickup in one action. This
-        /// consolidated action is what the widened Standard-level permission
-        /// covers: it used to take a runner to find the shortage, an Engineer to
-        /// cancel, and the requester to re-order.
-        ///
-        /// corrections: VariantId -> the count the picker actually saw there.
-        /// Only include locations that need correcting; anything left out keeps
-        /// its current recorded quantity.
-        ///
-        /// leavingCompressorUnits / leavingMotorUnits: VariantId -> the recorded
-        /// units the picker ticked as gone. Needed only where the corrected count
-        /// drops below the units recorded On Hand there (see
-        /// InventoryService.RetireSurplusUnits); the whole correction is refused,
-        /// nothing changed, when a stack's ticks don't fit.
+        /// The picker reports the real count for a short line (corrections: VariantId -> count seen).
+        /// Stock is corrected, then a fresh order for the corrected quantity is issued and picked up at once.
         /// </summary>
         public PickupResult ReportShortPull(int orderId, int orderItemId, Dictionary<int, int> corrections,
             Dictionary<int, IReadOnlyCollection<int>>? leavingCompressorUnits = null,
@@ -1176,9 +920,7 @@ namespace Visual_Inventory_System.Services
                 var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
                 if (inv == null) throw new InvalidOperationException("That item no longer exists in inventory.");
 
-                // Flip out of "Cancelled" immediately so a double-click or a
-                // retried form post can't sail past the guard above and apply
-                // this same correction (and reissue a duplicate order) twice.
+                // Leave "Cancelled" at once so a double submit cannot apply the correction twice.
                 it.Status = "Corrected";
 
                 var now = System.DateTime.UtcNow;
@@ -1194,18 +936,14 @@ namespace Visual_Inventory_System.Services
                     v.Quantity = after;
                     v.ThermocoupledQty = System.Math.Min(v.ThermocoupledQty, after);
 
-                    // A count that drops below the units recorded On Hand here has to
-                    // say which of them are gone, or they stay on the roster as
-                    // phantoms. A correction upward never asks.
+                    // A count below the units recorded here must say which are gone. A correction upward never asks.
                     string unitNote = "";
                     if (v.Quantity < before || v.ThermocoupledQty < tcBefore)
                     {
                         IReadOnlyCollection<int>? gone = null, goneMotors = null;
                         leavingCompressorUnits?.TryGetValue(v.Id, out gone);
                         leavingMotorUnits?.TryGetValue(v.Id, out goneMotors);
-                        // A recount is the truth about the shelf, so a held unit the
-                        // picker says is gone may go (heldMayLeave), and the holds
-                        // shrink to fit right after (2026-11-08).
+                        // A recount is the truth: a held unit may go, and the holds shrink to fit right after.
                         unitNote = InventoryService.RetireSurplusUnits(_db, inv, v, gone, goneMotors, heldMayLeave: true);
                         ReservationService.ShrinkToFit(_db, it.ItemId, v, _currentUser.Name,
                             $"short-pull correction on Order #{orderId} found {after} on V{v.VariantNumber}");
@@ -1222,15 +960,10 @@ namespace Visual_Inventory_System.Services
                         User = _currentUser.Name
                     });
                 }
-                // The re-pickup below reads holds from the database, so the shrink
-                // has to be there first (still inside this transaction).
+                // The re-pickup reads holds from the database, so the shrink is saved first.
                 _db.SaveChanges();
 
-                // Scoped to the line's own team, same as FulfillOrderItem's pull
-                // loop -- reissuing against the item-wide total would promise a
-                // quantity the re-pickup below then has to find outside this
-                // team's stock (or short-pull a second time). Stock other people
-                // hold doesn't count either, or the re-pickup would refuse.
+                // Only the line's own team's stock, minus what other people hold, or the re-pickup would refuse.
                 string lineRequester = it.Order.RequestedBy ?? "";   // Order is Included above
                 var holdView = StockClaims.FromVariants(_db, it.ItemId, inv.Variants);
                 int available = inv.Variants
@@ -1248,19 +981,11 @@ namespace Visual_Inventory_System.Services
                     return result;
                 }
 
-                // Carry the original line's intent onto the reissue: the
-                // engineer's requested pull location, and how many TC motors
-                // they asked for -- clamped, since the corrected qty can be
-                // lower than what was ordered and TC can never exceed the
-                // line qty. Without these the re-pickup drew lowest-variant-
-                // first with TC = 0, so no TC stock was drawn down, no
-                // MotorUnit rows flipped, and no loan was created.
+                // The reissue keeps the requested location and the TC count, clamped to the corrected quantity.
                 var (newOrder, newItem) = CreateSplitOrder(it.Order, it.ItemId, correctedQty, it.RequestedVariantId,
                     System.Math.Min(it.ThermocoupledCount, correctedQty), it.Team);
 
-                // Pick it up immediately -- the picker is already standing here
-                // with the corrected count in hand. This IS the "pick up clean"
-                // step; no second trip through the queue.
+                // Picked up at once: the picker is standing there with the corrected count.
                 var shortLine = FulfillOrderItem(newItem, newOrder.Id, null, null);
                 if (shortLine == null)
                 {
@@ -1271,9 +996,7 @@ namespace Visual_Inventory_System.Services
                 }
                 else
                 {
-                    // Came up short again (e.g. two corrections raced on the same
-                    // shelf) -- leave it Pending in the normal queue instead of
-                    // silently failing.
+                    // Short again (two corrections raced). It stays Pending in the queue.
                     result.ShortLines.Add(shortLine);
                 }
 
@@ -1284,28 +1007,15 @@ namespace Visual_Inventory_System.Services
             catch
             {
                 tx.Rollback();
-                // The rolled-back changes are still tracked in memory (the line's flip to
-                // Corrected, the corrected counts); what the controller reads next, to put
-                // the form back, has to be what the database actually holds.
+                // Rolled-back changes are still tracked. Clear them so the controller reads what the database holds.
                 _db.ChangeTracker.Clear();
                 throw;
             }
         }
 
         /// <summary>
-        /// The compressor unit rows a Return or Scrap of `settling` units acts
-        /// on, checked before anything changes. Units are a PARTIAL overlay --
-        /// a line of 3 may name 1 unit and carry 2 as pure quantity -- but the
-        /// ticks and the quantity still have to describe the same units:
-        ///   - every ticked unit must be out on THIS loan line. The lookup used
-        ///     to match on ItemId alone, so a posted id from another person's
-        ///     loan of the same model was flipped while their counter stayed;
-        ///   - no more ticked than the quantity being settled (every tick
-        ///     starts checked, so lowering qty alone put 2 rows On Hand
-        ///     against 1 unit returned to the shelf);
-        ///   - the units NOT ticked have to fit in what this line carries as
-        ///     pure quantity (outstanding minus its unit rows), or a recorded
-        ///     unit would stay Picked Up on a loan that says it's settled.
+        /// The compressor unit rows a Return or Scrap acts on, checked before anything changes.
+        /// The ticks and the quantity must describe the same units on this loan line.
         /// </summary>
         private List<CompressorUnit> LoanUnitsToSettle(OrderItem it, int settling, int[]? unitIds, string verbPast)
         {
@@ -1334,10 +1044,8 @@ namespace Visual_Inventory_System.Services
             return picked;
         }
 
-        // Return loaned units to inventory: adds stock back at a chosen active
-        // location OR a freshly minted one, and draws down LoanOutstanding. Motor
-        // loans come back as TC stock (they were TC when they went out). Self-
-        // scoped: you can only act on your own order's loans.
+        // Returns loaned units to a chosen active location or a new one, and draws down LoanOutstanding.
+        // Motor loans come back as TC stock. Own orders only.
         public void ReturnLoan(int orderItemId, int qty, int? targetVariantId,
             string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
             int[]? unitIds = null, string? reason = null)
@@ -1358,21 +1066,13 @@ namespace Visual_Inventory_System.Services
                 var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == it.ItemId);
                 if (inv == null) throw new InvalidOperationException("That item no longer exists in inventory.");
 
-                // Checked before anything moves -- including the new-location
-                // mint below, which saves mid-transaction.
+                // Checked before anything moves, including the new-location save below.
                 var pickedUnits = LoanUnitsToSettle(it, give, unitIds, "returned");
 
                 bool asTc = InventoryService.IsMotorType(inv.Type);   // motor loans return as TC stock
                 string Seg(string? v) => string.IsNullOrWhiteSpace(v) ? "0" : v.Trim().ToUpperInvariant();
 
-                // Per-team quantity ownership: units come back to whoever they were
-                // pulled FOR, which is the order line's resolved team -- falling back
-                // to the item's family Team for a line that predates the split (or an
-                // item that was never split at all), the same default every other
-                // variant-creation site uses. Without it a return to a brand-new shelf
-                // mints a team-less stack: it still counts toward the item total, so
-                // its own team reads the missing units as a phantom shortfall rather
-                // than as stock they can no longer reach.
+                // Units come back to the team they were pulled for: the line's team, else the item's.
                 string returnTeam = string.IsNullOrWhiteSpace(it.Team) ? (inv.Team ?? "") : it.Team;
 
                 ItemVariant dest;
@@ -1380,10 +1080,7 @@ namespace Visual_Inventory_System.Services
                 {
                     dest = inv.Variants.FirstOrDefault(v => v.Id == targetVariantId.Value && !v.IsRetired)
                         ?? throw new InvalidOperationException("The chosen location is no longer active.");
-                    // The picker only ever OFFERS this line's own team's shelves, so
-                    // this closes a direct-POST hole rather than a UI one -- same
-                    // reasoning as PickUpPartialAndSplit's identical guard. Returning
-                    // into another team's stack would hand them the units outright.
+                    // Only this line's own team's shelves. Holds the boundary against a direct POST.
                     if (!string.IsNullOrEmpty(it.Team) && dest.Team != it.Team)
                         throw new InvalidOperationException(
                             $"That location belongs to {(string.IsNullOrWhiteSpace(dest.Team) ? "no team" : dest.Team)}, not {it.Team} -- this loan can only be returned to its own team's stock.");
@@ -1408,12 +1105,10 @@ namespace Visual_Inventory_System.Services
                         IsRetired = false
                     };
                     inv.Variants.Add(dest);
-                    _db.SaveChanges();   // need dest.Id before unit rows can reference it -- ItemVariantId has no FK/navigation, so EF does no fixup and would store 0
+                    _db.SaveChanges();   // dest.Id is needed: ItemVariantId has no navigation, so EF would store 0
                 }
 
-                // Pass 6B: act on the individual units the user ticked --
-                // validated against this line and the quantity by
-                // LoanUnitsToSettle above.
+                // The units the user ticked, already validated by LoanUnitsToSettle.
                 string unitNote = "";
                 var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
                                        .Select(u => u.SerialNumber).ToList();
@@ -1431,11 +1126,7 @@ namespace Visual_Inventory_System.Services
                     cu.PickedUpBy = null;
                 }
 
-                // TC motor units have no serial for a human to tick, so unlike
-                // compressors this isn't a selection -- the oldest `give` units
-                // still out ON THIS ORDER LINE flip back automatically. Scoped
-                // to OrderItemId so a return can't accidentally pull in a
-                // different order's outstanding units for the same model.
+                // TC motors have no serial to tick: the oldest units still out on this order line flip back.
                 if (asTc)
                 {
                     var returningMotors = _db.MotorUnits
@@ -1478,8 +1169,7 @@ namespace Visual_Inventory_System.Services
             catch { tx.Rollback(); throw; }
         }
 
-        // Scrap loaned units: they aren't coming back, so NO stock is added --
-        // this only closes out the loan counter and logs it. Self-scoped.
+        // Scraps loaned units: no stock is added, the loan counter closes and it is logged. Own orders only.
         public void ScrapLoan(int orderItemId, int qty, int[]? unitIds = null, string? reason = null)
         {
             if (qty <= 0) return;
@@ -1498,8 +1188,7 @@ namespace Visual_Inventory_System.Services
                 bool isMotor = InventoryService.IsMotorType(
                     _db.InventoryItems.AsNoTracking().Where(i => i.ItemId == it.ItemId).Select(i => i.Type).FirstOrDefault());
 
-                // Pass 6B: act on the individual units the user ticked --
-                // same checks as ReturnLoan, see LoanUnitsToSettle.
+                // Same unit checks as ReturnLoan.
                 var pickedUnits = LoanUnitsToSettle(it, drop, unitIds, "scrapped");
                 string unitNote = "";
                 var named = pickedUnits.Where(u => !string.IsNullOrWhiteSpace(u.SerialNumber))
@@ -1507,18 +1196,14 @@ namespace Visual_Inventory_System.Services
                 if (named.Count > 0) unitNote = $" [{string.Join(", ", named)}]";
                 string reasonNote = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
 
-                // Scrapped units never come back to a shelf: ItemVariantId stays
-                // null and the status is terminal. The roster row survives the
-                // machine, so the serial's history is still queryable afterwards.
+                // Scrapped is final. The row stays so the serial's history can still be read.
                 foreach (var cu in pickedUnits)
                 {
                     cu.Status = UnitStatus.Scrapped;
                     cu.ItemVariantId = null;
                 }
 
-                // Same auto-select reasoning as ReturnLoan: no serial to pick
-                // from, so the oldest `drop` units still out on THIS order line
-                // become the ones scrapped.
+                // Motors: the oldest units still out on this order line.
                 if (isMotor)
                 {
                     var scrappingMotors = _db.MotorUnits
@@ -1555,12 +1240,8 @@ namespace Visual_Inventory_System.Services
             catch { tx.Rollback(); throw; }
         }
 
-        // Only a Pending order can be cancelled -- the mirror of PickUpOrder's
-        // non-Pending refusal. Without it a stale Order History tab could flip an
-        // order that was already picked up to Cancelled while its lines stayed
-        // Completed and the loan stayed out. Lines are left alone on purpose, as
-        // PickUpOrder's note describes. Logged like every other write; ItemId is
-        // blank because an order can span many items, same as "Intake Approved".
+        // Only a Pending order can be cancelled. Lines are left alone, on purpose.
+        // ItemId is blank on the log: an order can span many items.
         public void CancelPersistedOrder(int orderId)
         {
             using var tx = _db.Database.BeginTransaction();
@@ -1595,20 +1276,8 @@ namespace Visual_Inventory_System.Services
             StartOrder();
         }
 
-        // ============================
-        // INTERNAL TRANSFER (Pass 30 -- scoped 2026-08-26, corrected same day
-        // after live testing: originally built as a Borrow with a due date and
-        // a Return flow, but a transferred unit never actually comes back in
-        // practice -- same as how a picked-up compressor already stays
-        // "Picked Up" forever with no return expected. One-way, one approval.)
-        // ============================
-        // Deliberately parallel to the cart/Order pipeline, not built on it: a
-        // transfer never creates an Order/OrderItem row, so an item can be
-        // ordered by its own Line and transferred to another Line at the same
-        // time without either path needing to know about the other beyond the
-        // ItemVariant rows both actually decrement. Only the initial request
-        // needs the lending side's approval (Engineer+, same Line/Team as the
-        // item -- enforced here via IsOwnLine, not just hidden in the UI).
+        // Internal transfer. One-way, one approval. Parallel to the cart and order pipeline:
+        // a transfer never creates an Order row. Approval needs Engineer+ on the item's Line, enforced here.
 
         public void RequestTransfer(string itemId, int qty,
             int? requestedVariantId = null, int thermocoupledCount = 0, string? note = null)
@@ -1619,16 +1288,11 @@ namespace Visual_Inventory_System.Services
             var item = inv.GetById(itemId);
             if (item == null) throw new System.InvalidOperationException("Item not found.");
 
-            // A transfer request is for items outside your own Line/Team --
-            // your own Line's stock is ordered normally, through the cart.
+            // Transfers are for other Lines' items. Your own Line's stock goes through the cart.
             if (inv.IsOwnLine(item.Line))
                 throw new System.InvalidOperationException("This item belongs to your own Line -- use Add to Cart instead of Request Transfer.");
 
-            // Ask for no more than actually exists to give. This used to be capped
-            // against nothing at all, so a request for 500 of a 3-unit slice sat in
-            // the owning Line's queue looking legitimate until approval refused it.
-            // Allocation-aware on purpose (GetAvailableQuantity nets out Pending
-            // orders): units another team already has on order aren't spare.
+            // Capped at what is available to give, net of Pending orders and holds.
             string targetTeam = inv.ResolveTransferTeam(item, requestedVariantId);
             int available = inv.GetAvailableQuantity(itemId, targetTeam);
             if (qty > available)
@@ -1638,7 +1302,7 @@ namespace Visual_Inventory_System.Services
                     + " -- units already on a pending order or reserved don't count.");
 
             int tc = InventoryService.IsMotorType(item.Type) ? System.Math.Min(System.Math.Max(0, thermocoupledCount), qty) : 0;
-            // BC-07 (2026-11-08): TC is counted across claims too.
+            // TC is counted across claims too.
             if (tc > 0)
             {
                 int availTc = inv.GetAvailableTc(itemId, targetTeam);
@@ -1662,18 +1326,8 @@ namespace Visual_Inventory_System.Services
         }
 
         /// <summary>
-        /// The variants an approval will draw from, in the order it draws from
-        /// them: the requester's preferred location first (when it's still
-        /// active), then lowest variant number as spill -- all of it confined to
-        /// the team that owns the requested slice.
-        ///
-        /// One definition, two callers, deliberately: ApproveTransfer executes
-        /// it, and PlanTransferPull hands the same answer to the approval UI so
-        /// each unit's serial picklist offers the shelf that unit is actually
-        /// coming off. Those two disagreeing is what made the approver's serial
-        /// dropdown a trap -- it pooled every location's serials into every
-        /// slot, so a perfectly reasonable pick got refused by
-        /// AssignOneCompressorUnit's (correct) location-scoped match.
+        /// The variants an approval draws from, in order: the preferred location, then by number, all
+        /// inside the team that owns the requested slice. One definition for ApproveTransfer and the UI.
         /// </summary>
         private List<ItemVariant> TransferPullOrder(InventoryItem item, int? requestedVariantId, out string targetTeam)
         {
@@ -1686,13 +1340,7 @@ namespace Visual_Inventory_System.Services
                 .ToList();
         }
 
-        /// <summary>
-        /// How many units an approval of this request would take from each
-        /// location, in pull order -- flattened one entry per physical unit by
-        /// the caller to line each serial slot up with its real shelf. Purely a
-        /// projection: reads nothing it doesn't also read at approval time, and
-        /// writes nothing.
-        /// </summary>
+        /// <summary>How many units an approval would take from each location, in pull order. Reads only.</summary>
         public List<(int VariantId, int Take)> PlanTransferPull(InventoryItem item, int? requestedVariantId, int quantity, string? requester = null)
         {
             // Held stock stays put for a transfer exactly as it does for a pickup.
@@ -1710,10 +1358,7 @@ namespace Visual_Inventory_System.Services
             return plan;
         }
 
-        // compressorUnits mirrors PickUpOrderConfirmed's shape exactly (Lab#/Serial#
-        // pairs posted per physical unit, both soft) -- the approver is standing in
-        // for the fulfiller role a normal pickup already has, so the same serial
-        // capture UI and the same AssignOneCompressorUnit matching applies.
+        // compressorUnits: Lab#/Serial# pairs per physical unit, both optional, the same shape as a pickup.
         public void ApproveTransfer(int transferRequestId, List<(string? Lab, string? Serial)>? compressorUnits = null)
         {
             using var tx = _db.Database.BeginTransaction();
@@ -1729,25 +1374,10 @@ namespace Visual_Inventory_System.Services
                 if (!inv.CanApproveTransfer(item, req.RequestedVariantId))
                     throw new System.InvalidOperationException("You can only approve transfers against your own Line's items -- and, once an item is split across teams, only the owning team's own Engineers can approve that slice.");
 
-                // Per-team quantity ownership: the pull loop below must stay
-                // inside the SAME slice CanApproveTransfer just gated on.
-                // Without this the approver's authority was checked against one
-                // team's variant and the stock then spilled into another team's
-                // -- a Ninja-only Engineer approving a 1-unit Ninja slice took 4
-                // units out of Samurai's stack, with nothing surfaced to Samurai.
-                // Mirrors FulfillOrderItem's own team scoping exactly; "" (item
-                // not split, or no resolvable target) sees every active variant,
-                // same fail-open as before.
+                // The pull stays inside the slice CanApproveTransfer gated on. "" sees every active variant.
                 var pullOrder = TransferPullOrder(item, req.RequestedVariantId, out string targetTeam);
-                // Raw shelf quantity is the wrong ceiling: it counts units a Pending
-                // order has already been promised, so approving here could quietly
-                // turn someone else's clean pickup into a short pull. Same
-                // allocation-aware math AddToCart and Submit() gate on, so a transfer
-                // and an order compete for the same units on the same terms rather
-                // than the transfer silently outbidding the order that got there first.
-                // Measured for the REQUESTER (2026-11-08), not the approver: an
-                // approving Engineer's own holds must not become transferable just
-                // because they're the one clicking.
+                // Ceiling = available, not raw shelf quantity, so a transfer cannot outbid an earlier order.
+                // Measured for the requester: the approver's own holds must not become transferable.
                 string requester = req.RequesterUserName ?? "";
                 int totalAvailable = inv.GetAvailableQuantity(req.ItemId, targetTeam, requester);
                 if (req.Quantity > totalAvailable)

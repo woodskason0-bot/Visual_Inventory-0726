@@ -52,10 +52,7 @@
 </div>
 
 <script>
-    // Same list-group dropdown look as Registry/Modify Stock's search fields,
-    // matched against DISPLAY name (people know their own name, not
-    // necessarily the First.Last login format) but SETS the input to the
-    // login username on pick, since that's what the server parses.
+    @* Matches on display name, but sets the input to the login name, which is what the server parses. *@
     (function () {
         const users = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(
             users.Select(u => new { userName = u.UserName, displayName = u.DisplayName })));

@@ -2,26 +2,18 @@ using System;
 
 namespace Visual_Inventory_System.Models
 {
-    // A lightweight "sticky note" task on the Tasks Available board -- the
-    // "Go Store These" column. Supervisors often don't have item details when
-    // they post one, so there's deliberately NO structured pre-description:
-    // just a title + optional note pointing at the New Item Registry.
-    //
-    // Claim lifecycle (a corkboard card, not an order):
-    //   Open  --(someone claims it)-->  Claimed  --(they finish)-->  Done
-    // First to claim locks their name in; everyone else sees "claimed by X".
-    // Flat table, no navigations -- nothing for OnModelCreating to configure.
+    // A sticky-note task in the "Go Store These" column. Title plus optional note, nothing structured.
+    // Open -> Claimed -> Done. First claim locks the name in.
     public class VisTask
     {
         public int Id { get; set; }
 
-        // Only "Store" today; kept as a field so a future task kind slots in
-        // without a schema change.
+        // Only "Store" today.
         public string TaskType { get; set; } = "Store";
 
         public string Title { get; set; } = string.Empty;
 
-        // Optional free-text note. Nullable -- a supervisor may post with none.
+        // Optional free-text note.
         public string? Details { get; set; }
 
         public string CreatedBy { get; set; } = string.Empty;

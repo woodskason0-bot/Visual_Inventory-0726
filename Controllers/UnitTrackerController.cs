@@ -6,23 +6,9 @@ using Visual_Inventory_System.Services;
 namespace Visual_Inventory_System.Controllers
 {
     /// <summary>
-    /// Unit Tracker holdover: a plain list of whole AC units (model, Package/Split,
-    /// serial, sample, Line/Team, notes) that people can start filling while the
-    /// full tracker is scoped. Information only -- units can't be ordered and
-    /// aren't counted anywhere else in VIS.
-    ///
-    /// Every signed-in user sees the page and every row (the global
-    /// RequireNameFilter already covers this controller). Who may do what:
-    ///   Add                       Standard+
-    ///   Update (model/pkg/serial/sample/notes)   Standard+
-    ///   Update changing Line/Team Engineer+ (checked inside the service)
-    ///   UpdateNotes               any signed-in user, Viewer included
-    ///   SetWhereabouts            Standard+ (the In Lab / In Storage / Outbound boxes)
-    ///   SetBuildStatus            Standard+ (the Built / Not Built boxes)
-    ///   Delete                    Engineer+
-    /// All of it is enforced here and in the service, not by hidden buttons. The
-    /// controller holds no LINQ of its own -- every query and write is in
-    /// TrackedUnitService.
+    /// The Unit Tracker list: whole AC units, information only. Every signed-in user sees every row.
+    /// Add, Update and the row boxes are Standard+; moving Line or Team and Delete are Engineer+;
+    /// Notes is open to everyone. Enforced here and in TrackedUnitService, which holds all the LINQ.
     /// </summary>
     public class UnitTrackerController : Controller
     {
@@ -35,8 +21,7 @@ namespace Visual_Inventory_System.Controllers
             _currentUser = currentUser;
         }
 
-        // Filters live in the query string so a filtered view can be linked, and
-        // SmartRedirect keeps the user on it after a write.
+        // Filters live in the query string so a filtered view can be linked and survives a write.
         public IActionResult Index(string? q, string? pkg, string? team, string? line,
             [FromQuery(Name = "where")] string? whereabouts,
             [FromQuery(Name = "build")] string? buildStatus)
@@ -59,9 +44,8 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.TeamOptions = _units.TeamsInUse();
             ViewBag.LineOptions = _units.LinesInUse();
 
-            // The Edit modal opens from this, so a click costs no second request.
-            // JsonSerializer escapes "<", which is what keeps free text inert inside
-            // the page's <script> block.
+            // Feeds the Edit modal with no second request.
+            // JsonSerializer escapes "<", which keeps free text inert inside the script block.
             ViewBag.UnitRowsJson = JsonSerializer.Serialize(units.ToDictionary(
                 u => u.Id.ToString(),
                 u => new
@@ -76,8 +60,7 @@ namespace Visual_Inventory_System.Controllers
                     notes = u.Notes
                 }));
 
-            // Branch -> Line -> Team autofill: the same four feeds HomeController.Intake()
-            // gives Bulk Intake, so the two pages behave identically.
+            // Branch -> Line -> Team autofill, the same four feeds Bulk Intake gets.
             ViewBag.ActiveTeams = _units.ActiveTeams();
             ViewBag.OrgStructureJson = JsonSerializer.Serialize(OrgStructure.BranchLines);
             ViewBag.TeamLinesJson = JsonSerializer.Serialize(_units.TeamLines());
@@ -101,8 +84,7 @@ namespace Visual_Inventory_System.Controllers
         {
             var result = _units.Add(modelNumber, packageType, serialNumber, sampleNumber, line, team, notes);
 
-            // Package/Split, Line, Team and Model stay for the next one; Serial,
-            // Sample and Notes start clean (they're what differs between units).
+            // Model, Package/Split, Line and Team carry over. Serial, Sample and Notes start clean.
             if (result.Ok && result.Unit != null && addAnother == "1")
             {
                 TempData["UnitAddCarry"] = JsonSerializer.Serialize(new
@@ -122,20 +104,15 @@ namespace Visual_Inventory_System.Controllers
         public IActionResult Update(int id, string? modelNumber, string? packageType, string? serialNumber,
             string? sampleNumber, string? line, string? team, string? notes)
         {
-            // MVC folds a posted "" to null, so "left alone" (a disabled select posts
-            // nothing at all) and "set to blank" (N/A) can only be told apart by
-            // whether the field was posted.
+            // MVC folds a posted "" to null, so "not posted" and "set to blank" are told apart by the form keys.
             string? lineArg = Request.Form.ContainsKey("line") ? (line ?? "") : null;
             string? teamArg = Request.Form.ContainsKey("team") ? (team ?? "") : null;
-            // Package/Split is optional now, and its "Not set" radio posts a blank:
-            // not posted leaves it alone, posted blank clears it.
             string? pkgArg = Request.Form.ContainsKey("packageType") ? (packageType ?? "") : null;
 
             return Finish(_units.Update(id, modelNumber, pkgArg, serialNumber, sampleNumber, lineArg, teamArg, notes));
         }
 
-        // Deliberately no level attribute: Notes is the one field a Viewer may edit.
-        // Takes id + notes only, so nothing else can change through it.
+        // No level attribute: Notes is the one field a Viewer may edit. Takes id and notes only.
         [HttpPost]
         [ValidateAntiForgeryToken]
         public IActionResult UpdateNotes(int id, string? notes)
@@ -143,11 +120,8 @@ namespace Visual_Inventory_System.Controllers
             return Finish(_units.UpdateNotes(id, notes));
         }
 
-        // The row boxes save on click, so this answers JSON instead of redirecting
-        // (a redirect would reload a long list and lose the user's place). Sent with
-        // X-Requested-With so [RequireLevel] answers a refusal with a 403 the page
-        // can read instead of redirecting to Command Center. Takes id + the one
-        // value and nothing else.
+        // Saves on click, so it answers JSON: a redirect would reload a long list and lose the user's place.
+        // Sent with X-Requested-With so a refusal is a 403 the page can read.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -166,9 +140,7 @@ namespace Visual_Inventory_System.Controllers
             });
         }
 
-        // Same shape as SetWhereabouts, for the Built / Not Built boxes: JSON in place of
-        // a redirect, X-Requested-With so a refusal is a readable 403, id + the one value
-        // and nothing else.
+        // Same shape as SetWhereabouts.
         [HttpPost]
         [ValidateAntiForgeryToken]
         [RequireLevel(AccessLevels.Standard)]
@@ -203,17 +175,13 @@ namespace Visual_Inventory_System.Controllers
             return SmartRedirect();
         }
 
-        // Capped so a hostile raw POST can't push the TempData cookie past its size
-        // limit. Only the toast text is capped; the stored value and the log row keep
-        // exactly what was typed. Backslashes and line breaks go through unchanged:
-        // _Layout serializes the toast text as JSON and shows it as plain text (BC-10).
+        // Caps the toast text so a raw POST cannot overflow the TempData cookie. The stored value is not capped.
         private static string ToastText(string message)
         {
             return message.Length > 400 ? message.Substring(0, 400) + "…" : message;
         }
 
-        // What the Package/Split filter shows as selected: "none" for the
-        // not-recorded choice, the canonical label, or "" for Any.
+        // The Package/Split filter's selected value: "none", the canonical label, or "" for Any.
         private static string TrackedUnitPackageName(string? pkg)
         {
             var v = (pkg ?? "").Trim();
@@ -222,8 +190,7 @@ namespace Visual_Inventory_System.Controllers
             return Models.TrackedUnitPackage.Canonical(v) ?? "";
         }
 
-        // Same three lines as HomeController.SmartRedirect (private there): back to
-        // the page the request came from, so the user keeps their filtered view.
+        // Back to the referring page, so the user keeps their filtered view.
         private IActionResult SmartRedirect()
         {
             string referer = Request.Headers["Referer"].ToString();

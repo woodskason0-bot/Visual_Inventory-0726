@@ -71,6 +71,22 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **Server-readiness review, from 2026-11-11: two new docs and the comment move, none of
+  it committed.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
+  real server (identity, HTTPS, the passcode, tests, the open bugs, the handoff split),
+  each with a size and what it needs from me; nothing on it is approved to build.
+  `docs/Code_Notes.md` is where the long code comments went. I picked the comment voice
+  on 2026-11-11 (terse, label style; the rule is at the top of `Code_Notes.md`) and said
+  go the same day. The move is done on all 74 files: 52 C#, `site.js`, `site.css` and 20
+  views. Comment lines went from 4,607 to 1,537 (measured again 2026-11-16). It's
+  comments only (a script compares every file with its comments stripped), a Release
+  build of the C# before and after gives a byte-identical DLL, the views were clicked
+  through on a scratch copy of the dev db on 2026-11-12, and the build is 0 errors, 14
+  warnings. Since 2026-11-15 every comment in a view is a Razor `@* *@`, so none reach
+  the browser; `site.css` and `site.js` still ship theirs. `Code_Notes.md` is sorted by
+  folder. Still to do: the commit, when I say. The pick-up notes are in
+  `docs/Handoff_2026-11-11.md`, and the scripts that applied and checked the edits are in
+  `docs/comment_move/` (not for commit).
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
   (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every
@@ -1410,8 +1426,10 @@ been relying on up to this point.**
 ## Traps — read before editing
 
 **`@` is a Razor transition inside `<script>` blocks and JS comments.** Writing
-`@RenderBody()` in a JS comment invoked it for real and took the dashboard down. There is
-no such thing as a safe comment in a `.cshtml`.
+`@RenderBody()` in a JS comment invoked it for real and took the dashboard down. The one
+safe comment in a `.cshtml` is Razor's own `@* *@`, which is stripped on the server. Since
+2026-11-15 it's the only form used in views, inside `<script>` and `<style>` blocks too,
+so no view comment reaches the browser either.
 
 **`PendingModelChangesWarning` aborts `Migrate()` before any SQL runs.** If migrations
 "silently don't apply," this is the first thing to check — not the migration itself.

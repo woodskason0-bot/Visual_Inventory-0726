@@ -3,14 +3,8 @@ using Microsoft.AspNetCore.Http;
 namespace Visual_Inventory_System.Services
 {
     /// <summary>
-    /// Holds the current user's name for the session. This is a lightweight
-    /// "who's at the keyboard" capture for the audit trail, NOT authentication --
-    /// it does not verify identity, it just records the name the person entered
-    /// so stock changes and pickups are attributed to a real person.
-    ///
-    /// Level, Line and Branch are copied in at sign-in, then re-read from the
-    /// person's roster row on every request by RequireNameFilter, so a change
-    /// in Settings reaches an open session on its next click.
+    /// Who is at the keyboard, held in the session for the audit trail. Not authentication.
+    /// RequireNameFilter re-reads level, Line and Branch from the roster on every request.
     /// </summary>
     public class CurrentUserService
     {
@@ -43,20 +37,13 @@ namespace Visual_Inventory_System.Services
                 ? s
                 : "dark";
 
-        /// <summary>
-        /// Fixed org placement (one of OrgStructure.AllLines), or "" if not yet
-        /// assigned. Blank fails OPEN in visibility filtering -- see everything
-        /// until Settings assigns a real Line.
-        /// </summary>
+        /// <summary>One of OrgStructure.AllLines, or "" = unassigned, which fails open.</summary>
         public string Line =>
             _ctx.HttpContext?.Session?.GetString(LineKey) is string s && !string.IsNullOrWhiteSpace(s)
                 ? s
                 : "";
 
-        /// <summary>
-        /// A whole OrgStructure Branch this user sees entirely, or "" if not set.
-        /// Only takes effect in visibility filtering when Line is also blank.
-        /// </summary>
+        /// <summary>A whole Branch this user sees, or "". Only read when Line is blank.</summary>
         public string Branch =>
             _ctx.HttpContext?.Session?.GetString(BranchKey) is string s && !string.IsNullOrWhiteSpace(s)
                 ? s

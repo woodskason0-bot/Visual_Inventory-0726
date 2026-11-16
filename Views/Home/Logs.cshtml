@@ -5,7 +5,7 @@
 }
 
 <style>
-    /* Dark theme for the logs page, matched to the rest of VIS */
+    @* Dark theme for the logs page, matched to the rest of VIS *@
     .logs-wrap { max-width: 1200px; margin: 1.5rem auto; }
 
     .logs-card {
@@ -15,7 +15,7 @@
         box-shadow: 0 10px 30px rgba(0,0,0,0.45);
     }
 
-    /* Tabs */
+    @* Tabs *@
     .logs-wrap .nav-tabs { border-bottom: none; }
     .logs-wrap .nav-tabs .nav-link {
         color: var(--vis-text-muted);
@@ -32,7 +32,7 @@
         border-bottom: 2px solid var(--vis-red);
     }
 
-    /* Tables */
+    @* Tables *@
     .logs-card table { color: var(--vis-text); margin-bottom: 0; }
     .logs-card thead th {
         background-color: #14151A;
@@ -65,7 +65,7 @@
 
     <div class="tab-content logs-card p-4" id="logTabsContent">
 
-        <!-- TAB 1: TRANSACTIONS -->
+        @* TAB 1: TRANSACTIONS *@
         <div class="tab-pane fade show active" id="transactions" role="tabpanel">
             <div class="table-responsive">
             <table class="table table-hover align-middle" style="min-width:760px;">
@@ -112,7 +112,7 @@
             </div>
         </div>
 
-        <!-- TAB 2: ORDERS -->
+        @* TAB 2: ORDERS *@
         <div class="tab-pane fade" id="orders" role="tabpanel">
             <div class="table-responsive">
             <table class="table table-hover align-middle" style="min-width:760px;">

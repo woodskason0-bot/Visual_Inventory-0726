@@ -3,13 +3,8 @@ using System.Collections.Generic;
 
 namespace Visual_Inventory_System.Models.ViewModels
 {
-    // Backs the "Internal Transfers" section on My Orders: MyRequests = this
-    // user's own transfer requests (full history, same shape as My Order
-    // History below it -- once decided there's nothing left to act on, but the
-    // outcome is still worth showing); AwaitingApproval = Requested-status rows
-    // against items this user's Line/Team owns -- the queue itself, since a
-    // decided row needs no more action and drops off (same convention the loan
-    // bench uses).
+    // Internal Transfers section. MyRequests = my own, full history.
+    // AwaitingApproval = Requested rows against items my Line or Team owns.
     public class TransferSectionViewModel
     {
         public List<TransferLineViewModel> MyRequests { get; set; } = new();
@@ -41,13 +36,8 @@ namespace Visual_Inventory_System.Models.ViewModels
         // The requester's preferred location, resolved to a display label.
         public string? ResolvedLocationLabel { get; set; }
 
-        // One entry per physical unit an approval would pull, in the exact order
-        // ApproveTransfer pulls them (OrderService.PlanTransferPull). Drives the
-        // per-unit serial picklists: slot u offers the units actually on the
-        // shelf slot u comes off, instead of every location's serials pooled
-        // together -- which is what made a reasonable pick get refused by
-        // AssignOneCompressorUnit's location-scoped match. Empty for
-        // non-compressor lines and for anything already decided.
+        // One per physical unit, in the order ApproveTransfer pulls them (PlanTransferPull).
+        // Each slot offers only the serials on its own shelf. Empty for non-compressors.
         public List<TransferUnitSlotViewModel> UnitSlots { get; set; } = new();
     }
 
@@ -58,14 +48,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         public string LocationLabel { get; set; } = string.Empty;
         public List<OnHandUnitViewModel> OnHandUnits { get; set; } = new();
 
-        /// <summary>
-        /// Which serial this slot opens on. Staggered across the slots sharing a
-        /// variant -- one real serial each while they last, then null ("No
-        /// serial") -- so a multi-unit approval doesn't open with every dropdown
-        /// aimed at the same physical unit. Same reasoning as Pickup Queue's own
-        /// staggered default; AssignOneCompressorUnit rejects the duplicate
-        /// anyway, but not defaulting into the rejection is friendlier.
-        /// </summary>
+        /// <summary>Serial this slot opens on. Staggered so slots on one stack do not all default to the same unit.</summary>
         public string? DefaultSerial { get; set; }
     }
 }

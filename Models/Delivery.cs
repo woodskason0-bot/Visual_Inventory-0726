@@ -3,10 +3,8 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Visual_Inventory_System.Models
 {
-    // A logged incoming delivery: one photo + whatever's on the label, routed to
-    // whoever should act on it. Claim lifecycle copied from VisTask verbatim:
-    //   Open  --(someone claims it)-->  Claimed  --(they finish)-->  Done
-    // First to claim locks their name in; everyone else sees "claimed by X".
+    // One logged incoming delivery: a photo plus what is on the label.
+    // Open -> Claimed -> Done. First claim locks the name in.
     public class Delivery
     {
         public int Id { get; set; }
@@ -15,8 +13,7 @@ namespace Visual_Inventory_System.Models
         [Required, MaxLength(260)]
         public string PhotoPath { get; set; } = "";
 
-        // All four below use the same N/A-toggle convention as Rheem PN: blank
-        // and the literal "N/A" are folded together everywhere they're checked.
+        // Blank and "N/A" mean the same thing in all four.
         [MaxLength(100)]
         public string? TrackingNumber { get; set; }
 
@@ -29,15 +26,11 @@ namespace Visual_Inventory_System.Models
         [MaxLength(100)]
         public string? BrandOfItem { get; set; }
 
-        /// <summary>
-        /// A specific Management+ user's UserName, or UnknownRecipient for the
-        /// shared org-wide bucket. Required -- the logger always picks one or
-        /// the other, never leaves it blank.
-        /// </summary>
+        /// <summary>A Management+ UserName, or UnknownRecipient. Never blank.</summary>
         [Required, MaxLength(100)]
         public string RecipientUserName { get; set; } = "";
 
-        /// <summary>Sentinel for "don't know whose delivery this is" -- fans out to every Management+ user instead of one person.</summary>
+        /// <summary>"Don't know whose": goes to every Management+ user.</summary>
         public const string UnknownRecipient = "__UNKNOWN__";
 
         [Required, MaxLength(100)]

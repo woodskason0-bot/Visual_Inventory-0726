@@ -1,9 +1,6 @@
 namespace Visual_Inventory_System.Services
 {
-    /// <summary>
-    /// The five access tiers, as integers so checks read as "level >= required".
-    /// Editing a person's tier is a one-number change in the Users table.
-    /// </summary>
+    /// <summary>The five access tiers, as integers so checks read "level >= required".</summary>
     public static class AccessLevels
     {
         public const int Viewer = 1;

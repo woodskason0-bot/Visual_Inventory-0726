@@ -15,22 +15,19 @@ namespace Visual_Inventory_System.Services
             _config = config;
         }
 
-        /// <summary>
-        /// Checks if an item crossed its threshold. If so, routes an email to the correct supervisor.
-        /// </summary>
+        /// <summary>Emails the team's supervisor when an item crosses down through its threshold.</summary>
         public void CheckAndSendStockAlert(InventoryItem item, int oldQty, int newQty)
         {
-            // SPAM TRAP: Only send if we WERE above the threshold, and now we are AT or BELOW it.
-            // If we were already below it, the manager already knows.
+            // Only on the way down through the threshold. Already below = already told.
             if (oldQty > item.AlertThreshold && newQty <= item.AlertThreshold)
             {
-                // 1. Find the Primary Target (The Supervisor for this specific Team)
+                // To: this team's supervisor.
                 var route = _db.EmailRoutings.FirstOrDefault(r => r.Group == item.Group && r.Team == item.Team);
 
                 if (route == null || string.IsNullOrWhiteSpace(route.SupervisorEmail))
                     return; // No routing rules set up for this team yet
 
-                // 2. Find the CC List (The Manager, plus all OTHER Supervisors in the same Group)
+                // CC: the manager and the group's other supervisors.
                 var peerEmails = _db.EmailRoutings
                     .Where(r => r.Group == item.Group && r.Team != item.Team)
                     .Select(r => r.SupervisorEmail)
@@ -38,11 +35,9 @@ namespace Visual_Inventory_System.Services
 
                 peerEmails.Add(route.ManagerEmail); // Add the boss to the CC list
 
-                // Clean up the list (remove blanks)
                 var cleanCcList = peerEmails.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().ToList();
                 string ccString = string.Join(",", cleanCcList);
 
-                // 3. Build the Email
                 string subject = $"[Stock Alert] {item.Team} - {item.ItemName} is running low!";
                 string body = $@"
                     <div style='font-family: Arial, sans-serif; padding: 20px; border: 1px solid #ccc; border-radius: 8px;'>
@@ -56,17 +51,13 @@ namespace Visual_Inventory_System.Services
                         <p>Please log into the Visual Inventory System to review.</p>
                     </div>";
 
-                // 4. Send
                 SendEmail(route.SupervisorEmail, ccString, subject, body);
             }
         }
 
-        /// <summary>
-        /// Sends a confirmation email when a user submits an order.
-        /// </summary>
+        /// <summary>Emails the supervisors and managers of every team with an item on the order.</summary>
         public void SendOrderSubmittedEmail(Order order, List<InventoryItem> items)
         {
-            // For Orders, we might just alert everyone involved in the items ordered.
             var involvedTeams = items.Select(i => i.Team).Distinct().ToList();
 
             var routes = _db.EmailRoutings.Where(r => involvedTeams.Contains(r.Team)).ToList();
@@ -91,9 +82,6 @@ namespace Visual_Inventory_System.Services
             SendEmail(primaryTo, ccString, subject, body);
         }
 
-        // ==========================================
-        // PRIVATE SMTP SENDER
-        // ==========================================
         private void SendEmail(string to, string cc, string subject, string body)
         {
             try
@@ -102,8 +90,7 @@ namespace Visual_Inventory_System.Services
                 int port = _config.GetValue<int>("EmailSettings:SmtpPort", 25);
                 string from = _config["EmailSettings:FromAddress"] ?? "noreply@localhost";
 
-                // If no real server is configured (blank or a dummy placeholder),
-                // print to the console instead of attempting a live send.
+                // No real SMTP server configured: print to the console instead of sending.
                 if (string.IsNullOrWhiteSpace(server) ||
                     server.Contains("dummy", StringComparison.OrdinalIgnoreCase) ||
                     server.Contains("example", StringComparison.OrdinalIgnoreCase))

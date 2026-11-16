@@ -2,11 +2,7 @@ using System.Collections.Generic;
 
 namespace Visual_Inventory_System.Models.ViewModels
 {
-    /// <summary>
-    /// Everything the Item Card modal (Pass 40) shows about one item, gathered
-    /// server-side in one place so the card never re-derives a number the rest
-    /// of the app already has a definition for.
-    /// </summary>
+    /// <summary>Everything the Item Card shows about one item, gathered server-side in one place.</summary>
     public class ItemCardViewModel
     {
         public InventoryItem Item { get; set; } = null!;
@@ -14,7 +10,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         /// <summary>Branch derived from the item's Line, or "" when unassigned.</summary>
         public string Branch { get; set; } = "";
 
-        /// <summary>Same IsOwnLine rule the search row uses -- decides order vs. request-transfer.</summary>
+        /// <summary>Same IsOwnLine rule as the search row. Decides order vs. request-transfer.</summary>
         public bool IsOwnLine { get; set; }
 
         public int OnHand { get; set; }
@@ -22,7 +18,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         /// <summary>What this viewer could order right now (team-scoped, pending orders subtracted).</summary>
         public int AvailableToViewer { get; set; }
 
-        /// <summary>Units on lines of still-Pending orders -- already promised, not yet pulled.</summary>
+        /// <summary>Units on Pending order lines: promised, not yet pulled.</summary>
         public int CommittedToPending { get; set; }
 
         /// <summary>Picked up on a loanable line and not yet returned or scrapped.</summary>
@@ -41,7 +37,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         /// <summary>Last few log rows for the item, through ApplyLogVisibility.</summary>
         public List<TransactionLog> RecentLogs { get; set; } = new();
 
-        /// <summary>Live holds on this item, oldest first, lines included (2026-11-08).</summary>
+        /// <summary>Live holds on this item, oldest first, lines included.</summary>
         public List<Reservation> Reservations { get; set; } = new();
 
         /// <summary>The Reserve button: Standard and up, own Line, at least one stack.</summary>
@@ -50,7 +46,7 @@ namespace Visual_Inventory_System.Models.ViewModels
         /// <summary>Holds this viewer may edit or release (theirs, or Engineer+ on the Line, or Admin).</summary>
         public HashSet<int> ManageableReservationIds { get; set; } = new();
 
-        /// <summary>Holds this viewer made -- the "You" tag.</summary>
+        /// <summary>Holds this viewer made: the "You" tag.</summary>
         public HashSet<int> MyReservationIds { get; set; } = new();
     }
 }

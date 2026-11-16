@@ -10,56 +10,19 @@ namespace Visual_Inventory_System.Models
         public string ItemId { get; set; } = "";
         public int Quantity { get; set; }
 
-        /// <summary>
-        /// "Pending" | "Completed" | "Cancelled" | "Corrected" | "Split". Line-level
-        /// state so one short line on a multi-item order can be pulled aside for a
-        /// stock correction while its sibling lines pick up normally. A line
-        /// that comes up short at pickup is set to "Cancelled" here (its real
-        /// fulfillment happens on a freshly issued order against the corrected
-        /// count) rather than letting the order close short. OrderService.
-        /// ReportShortPull immediately flips a "Cancelled" line to "Corrected"
-        /// once it starts acting on it, so a double-submit can't apply the same
-        /// stock correction (and reissue a duplicate order) twice. "Split" is a
-        /// different situation, deliberately kept separate from "Corrected": the
-        /// shelf had enough (or at least the picker never found out otherwise) --
-        /// the picker chose to grab what was at hand and defer the rest, which
-        /// spins off as a real Pending order (Order.SplitFromOrderId) instead of
-        /// leaving the remainder unaccounted for.
-        /// </summary>
+        /// <summary>"Pending" | "Completed" | "Cancelled" | "Corrected" | "Split". Per line, not per order.</summary>
         public string Status { get; set; } = "Pending";
 
-        /// <summary>
-        /// How many units on THIS order line are requested thermocoupled.
-        /// 0 for non-motor lines or when none requested. Capped at TC-available
-        /// at add-to-cart time. Rides the order so pickup pulls exactly this
-        /// many TC from the source stack.
-        /// </summary>
+        /// <summary>Units requested thermocoupled. 0 for non-motors.</summary>
         public int ThermocoupledCount { get; set; } = 0;
 
-        /// <summary>
-        /// Returnable units still out on loan for this line (TC motors and
-        /// Controls only). 0 = none out, fully returned/scrapped, or a
-        /// non-loanable line. Set at pickup; drawn down by Return/Scrap on the
-        /// My Orders tab. The line's loan bench disappears when this hits 0.
-        /// </summary>
+        /// <summary>Units still out on loan (TC motors, Controls). 0 = none.</summary>
         public int LoanOutstanding { get; set; } = 0;
 
-        // Which physical variant the ENGINEER asked this to be pulled from.
-        // Null = "Either location" (the pickup person chooses) or a
-        // single-location item where the question never arises. References
-        // ItemVariant.Id (the DB PK, stable across renumbering); variants are
-        // retired rather than deleted, so old orders always resolve.
+        /// <summary>Requested stack (ItemVariant.Id). Null = either location.</summary>
         public int? RequestedVariantId { get; set; }
 
-        /// <summary>
-        /// The team this line is ordering against (scoped 2026-08-26, "per-team
-        /// quantity ownership") -- resolved at Submit() time, not chosen freely:
-        /// defaults to the requester's own team, or asked for only when genuinely
-        /// ambiguous (requester belongs to &gt;1 team AND the item's variants span
-        /// &gt;1 team). "" when the item has no team split or the requester has no
-        /// team -- fails open, same convention Line already uses. Gates
-        /// FulfillOrderItem's pull loop to this team's own variants.
-        /// </summary>
+        /// <summary>Team ordered against, set at Submit. "" = no split, fails open.</summary>
         public string Team { get; set; } = "";
 
         public virtual Order Order { get; set; } = null!;

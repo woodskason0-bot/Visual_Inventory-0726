@@ -3,13 +3,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Visual_Inventory_System.Models
 {
-    /// <summary>
-    /// Generic key/value store for app-wide toggles and config that used to
-    /// mean opening the SQLite file directly (see AccessLevels.cs: "editing
-    /// a person's tier is a one-number change in the Users table"). Add a new
-    /// setting by adding a row from the Settings page -- it never needs a new
-    /// migration just to add one more switch.
-    /// </summary>
+    /// <summary>Key/value store for app-wide switches. A new setting is a new row, not a migration.</summary>
     public class AppSetting
     {
         public int Id { get; set; }

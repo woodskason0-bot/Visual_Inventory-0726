@@ -3,18 +3,8 @@
 
 // Write your JavaScript code.
 
-// App shell: sidebar collapse (desktop) + off-canvas drawer (mobile).
-// Collapse state is client-side only (localStorage), not a User field --
-// a UI preference, not worth a schema change yet.
-//
-// Deferred to DOMContentLoaded: this script tag loads at the top of <body>
-// (Pass 27, so the helper functions below are available to page-inline
-// scripts that run later), but #appSidebar itself renders further down the
-// page and doesn't exist yet at that point -- querying for it immediately
-// silently no-ops the whole block (getElementById returns null, the guard
-// bails). Waiting for DOMContentLoaded doesn't reopen the problem that load
-// order fixed, since it only delays *running* this IIFE, not the parsing
-// that defines the functions further down this file.
+// App shell: sidebar collapse (desktop) and off-canvas drawer (mobile). Collapse state lives in localStorage.
+// Waits for DOMContentLoaded: #appSidebar renders after this script loads.
 document.addEventListener('DOMContentLoaded', function () {
     var sidebar = document.getElementById('appSidebar');
     if (!sidebar) return;
@@ -30,15 +20,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (collapseLabel) collapseLabel.textContent = collapsed ? 'Expand' : 'Collapse';
     }
 
-    // Desktop-only: the dashboard's .overlay-grid/.selection-grid are
-    // position:fixed (see Index.cshtml's own <style> block), so they don't
-    // participate in .app-shell's normal flex layout and never noticed the
-    // sidebar's width at all -- collapsed or not, they sat under it rather
-    // than beside it. This CSS var is their hook back in, read only above
-    // the 992px breakpoint where the sidebar is the persistent rail (below
-    // it the sidebar is an off-canvas drawer and takes no layout space).
-    // Same "measure once, expose as a custom property" pattern
-    // syncHeaderOffset() already uses for --vis-header-bottom.
+    // Fixed-position dashboard grids ignore the flex layout, so they read the sidebar width from this variable.
     function applySidebarWidthVar(collapsed) {
         document.documentElement.style.setProperty('--vis-sidebar-width', collapsed ? '68px' : '240px');
     }
@@ -75,18 +57,8 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Pass 28 (2a): generic dashboard-modal utilities promoted here from
-// Views/Home/Index.cshtml's inline script, so the Modify Stock / New Item
-// Registry / Alert Rules partials (and, later, Command Center + Search
-// Center) can all call them without each page re-declaring its own copy.
-// Every function here operates on page-level data consts (itemsList,
-// orgStructure, teamLines, rackRowMap, locDecodeMap, locMap) that each
-// calling page must still declare itself -- these are resolved by name at
-// CALL time, not at parse time, so it's safe for this file to load before
-// those consts exist (same cross-script global-scope rule Pass 27's
-// load-order fix already established for site.js as a whole).
-// ---------------------------------------------------------------------------
+// Shared modal helpers. They read page-level data (itemsList, orgStructure, teamLines, rackRowMap,
+// locDecodeMap, locMap) by name at call time, so each calling page must declare those.
     function racksRowsFor(pCode, mCode, sCode) {
         const key = (pCode || '') + '|' + (mCode || '') + '|' + (sCode || '');
         return rackRowMap[key] || { racks: [], rows: [] };
@@ -101,23 +73,13 @@ document.addEventListener('DOMContentLoaded', function () {
             f.submit();
         }
     }
-    // For the few places that still have to assemble an HTML string around a
-    // name from the database. Prefer createElement + textContent where the
-    // markup is small enough; this is for the big template literals.
+    // For the big template literals that wrap a database name in HTML. Prefer createElement + textContent.
     function escapeHtml(value) {
         return String(value == null ? '' : value)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    // ---- Shared Branch -> Line cascade ---------------------------------
-    // One vocabulary (orgStructure), reused everywhere a Branch select drives
-    // a paired Line select, instead of each caller hand-rolling its own copy.
-    // That's the exact failure shape the location vocabulary hit eight times
-    // over (the same small piece of org data re-typed in multiple places,
-    // silently drifting) -- same risk here at smaller scale. Three callers as
-    // of this pass: the Ownership pane (edit-line-branch/edit-line), New Item
-    // Registry (reg-line-branch/reg-line), and the compressor filter
-    // (compFilterBranch/compFilterLine).
+    // Branch -> Line cascade, from one vocabulary (orgStructure), for every paired Branch and Line select.
     function branchForLine(line) {
         for (var branch in orgStructure) {
             if (orgStructure[branch].indexOf(line) !== -1) return branch;
@@ -146,13 +108,8 @@ document.addEventListener('DOMContentLoaded', function () {
             lineSelect.appendChild(opt);
         });
     }
-    // Wires a Branch select + its paired Line select into a live cascade:
-    // populates both immediately, and on Branch change repopulates Line's
-    // options to just that branch's lines. Call once per pair, at setup time.
-    // `onChange`, if given, fires after EITHER select changes (after the
-    // cascade has already updated) -- e.g. to refresh a live ID preview or
-    // re-apply a filter. `branchPlaceholder`/`linePlaceholder` let each
-    // caller use its own wording ("Unassigned" vs "All Lines").
+    // Wires a Branch select to its Line select. Call once per pair.
+    // onChange fires after either select changes. The placeholders set each caller's wording.
     function wireLineCascade(branchSelect, lineSelect, onChange, branchPlaceholder, linePlaceholder) {
         if (!branchSelect || !lineSelect) return;
         populateBranchSelect(branchSelect, branchPlaceholder);
@@ -163,10 +120,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         if (onChange) lineSelect.addEventListener('change', onChange);
     }
-    // Seeds both selects to reflect a KNOWN current Line (e.g. the item's
-    // existing Line when the Ownership pane opens, or a Team's assigned
-    // Line when auto-filling). Silent -- does not fire onChange; callers
-    // that need a reaction call it themselves afterward if they want one.
+    // Sets both selects to a known Line. Silent: does not fire onChange.
     function setLineCascade(branchSelect, lineSelect, currentLine, branchPlaceholder, linePlaceholder) {
         if (!branchSelect || !lineSelect) return;
         populateBranchSelect(branchSelect, branchPlaceholder);
@@ -177,19 +131,8 @@ document.addEventListener('DOMContentLoaded', function () {
     function locDecode(code) {
         return (code != null && locDecodeMap && locDecodeMap[code]) ? locDecodeMap[code] : code;
     }
-    // selectable = false is the New Item Registry case: matches show as a
-    // heads-up ("something similar may already exist"), but there's no
-    // idOutputId to populate and clicking one never gates or blocks typing a
-    // brand new name -- registering something NEW is the whole point of that
-    // form, unlike Modify Stock/Alerts where picking an existing item is
-    // required for the rest of the pane to function.
-    //
-    // jumpToStock = true is the same New Item Registry case taken one step
-    // further: clicking a match means "this already exists, take me there" --
-    // closes the New Item modal and opens Modify Stock preloaded with it,
-    // discarding whatever was typed. Only meaningful alongside
-    // selectable = false (there's nothing for the registry form itself to do
-    // with the pick).
+    // selectable = false: matches are a heads-up only (New Item Registry).
+    // jumpToStock = true: clicking a match closes New Item and opens Modify Stock on it.
     function bindAutocomplete(inputId, listId, idOutputId, isAlertModal, selectable = true, jumpToStock = false) {
         const searchInput = document.getElementById(inputId);
         const autoList = document.getElementById(listId);
@@ -212,9 +155,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         let btn = document.createElement('button');
                         btn.type = 'button';
                         btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item';
-                        // Built from nodes, not an HTML string: name and Rheem PN are
-                        // typed by Standard-level users (Registry, Intake) and rendered
-                        // in every other user's session.
+                        // Built from nodes, not an HTML string: names and part numbers are user-typed.
                         const idEl = document.createElement('strong');
                         idEl.className = 'text-primary';
                         idEl.textContent = m.id;
@@ -274,28 +215,8 @@ document.addEventListener('DOMContentLoaded', function () {
             });
         }
     }
-    // Generic single-value autocomplete (Type fields): a plain list of
-    // strings, no id/qty metadata like bindAutocomplete's item matches carry.
-    // Same list-group visual pattern as bindAutocomplete, so every dropdown
-    // in the app looks the same. Picking a suggestion sets the input's value
-    // and fires a real 'input' event so whatever's already listening (the ID
-    // preview, unit-capture toggle) still runs -- suppressed once so that
-    // synthetic event doesn't reopen this same list.
-    // valuesOrGetter: a plain array (static, e.g. known Types) OR a function
-    // returning the current array (dynamic, e.g. Rack/Row suggestions that
-    // depend on whatever Parent/Major/Sub is picked right now) -- evaluated
-    // fresh on every keystroke either way, so a dynamic source never goes stale.
-    //
-    // opts (optional, both off by default so existing callers are unchanged):
-    //   floating: true -- pin the list to the viewport (position:fixed) under
-    //     the input instead of absolutely inside its parent. Needed wherever
-    //     the input sits in a clipping ancestor: Bulk Intake's rows live in a
-    //     .table-responsive, whose overflow-x:auto also clips vertically, so
-    //     an absolute list got cut off at the table's bottom edge. Opens
-    //     upward when there isn't room below.
-    //   extraItem(typedValue, matches) -> { label, onPick } | null -- one
-    //     extra, visually distinct row after the matches (e.g. "Add as a new
-    //     type"). Shown even when nothing matches.
+    // Autocomplete over a plain list of strings, or a function returning one (re-read on every keystroke).
+    // opts.floating pins the list to the viewport; opts.extraItem adds one row after the matches.
     function bindValueAutocomplete(inputEl, listEl, valuesOrGetter, opts) {
         if (!inputEl || !listEl) return;
         opts = opts || {};
@@ -351,19 +272,8 @@ document.addEventListener('DOMContentLoaded', function () {
             if (e.target !== inputEl) listEl.style.display = 'none';
         });
     }
-    // Client-side half of the location code rule: 1st, 3rd, 5th and LAST
-    // letter/digit of the cleaned name. Must stay in lockstep with
-    // Services/LocationCodec.Encode().
-    //
-    // NOTE: duplicated in Views/Home/Intake.cshtml. Moving it to wwwroot/js/site.js
-    // was tried and reverted -- _Layout loads site.js after the body renders, so a
-    // view's inline script runs before it would exist. Fixing the duplication means
-    // moving that script reference higher in the layout, which touches every page.
-    //
-    // And do NOT write the layout's body-render call by name in here with a leading
-    // at-sign: inside a .cshtml file that is a Razor transition even within a JS
-    // comment, and it will be invoked for real. That is exactly how this comment
-    // took the dashboard down once already.
+    // Client half of the location code rule: 1st, 3rd, 5th and last letter or digit.
+    // Keep in step with Services/LocationCodec.Encode().
     function encodeLoc(name) {
         if (!name) return "";
         const clean = String(name).toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -380,9 +290,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const rwIn = document.getElementById(rwId);
             const fdaOut = document.getElementById(fdaId);
 
-            // Rack/Row suggestions, re-evaluated on every keystroke against
-            // whatever Parent/Major/Sub is picked right now (bindValueAutocomplete
-            // takes a getter, not a fixed list, for exactly this).
+            // Rack/Row suggestions, re-read on every keystroke for the current Parent/Major/Sub.
             if (rkIn && rkListId) {
                 bindValueAutocomplete(rkIn, document.getElementById(rkListId), function () {
                     return racksRowsFor(encodeLoc(pSel ? pSel.value : ''), encodeLoc(mSel ? mSel.value : ''), encodeLoc(sSel ? sSel.value : '')).racks;

@@ -1,10 +1,5 @@
 @model Visual_Inventory_System.Services.ReserveFormModel
-@*
-    Reservations (2026-11-08) -- the Reserve dialog. Fetched from
-    /Reservations/Form into Search Center's #reserveModal .modal-content, so it
-    carries no script of its own (innerHTML never runs one): every handler is a
-    delegated listener in SearchCenter.cshtml keyed on #rv-form.
-*@
+@* The Reserve dialog. Loaded into Search Center's #reserveModal by fetch, so it has no script: handlers live in SearchCenter.cshtml. *@
 @{
     var it = Model.Item;
     bool editing = Model.Existing != null;

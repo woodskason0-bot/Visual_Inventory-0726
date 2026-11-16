@@ -1,6 +1,4 @@
-/* =========================================================
-   VISUAL INVENTORY SYSTEM - DARK TACTICAL MASTER THEME
-========================================================= */
+/* Visual Inventory System: master theme */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
@@ -122,9 +120,7 @@ html, body {
         color: white;
     }
 
-/* Bootstrap's success green (#198754) is 4.0:1 as text on this app's dark
-   surfaces -- short of 4.5 for 13px button labels. Brighter on dark, and a
-   darker green on white (light theme, below). */
+/* Bootstrap's success green is too dim for 13px labels on dark surfaces. Brighter on dark, darker on white. */
 .btn-outline-success {
     color: #2EBD72;
     border-color: #2EBD72;
@@ -361,56 +357,25 @@ html, body {
     filter: invert(1);
 }
 
-/* Every modal's <label> (Modify Stock, New Item Registry, Alert Rules, Export
-   Wizard, Add to Cart, ...) used to hardcode this color page-locally --
-   Index.cshtml and (after Pass 28 2b copied it forward) SearchCenter.cshtml
-   each carried their own copy, and Command Center (2c) simply never got one,
-   so its New Item Registry/Modify Stock labels rendered pure white (inherited
-   from .modal-content below) with nothing to override it. Globalized since
-   these are shared partials now, included on multiple pages -- one copy, not
-   three. #E2E8F0 has ~1.17:1 contrast against a light-theme white modal
-   (found live testing 2d.1, Kason: check light/dark legibility everywhere) --
-   the light-theme override below is what actually fixes it; see that section. */
+/* Label colour for every modal, in one place: the modals are shared partials. Light theme overrides it below. */
 .modal-content label {
     color: #E2E8F0;
     font-weight: 600;
 }
 
-/* .text-light-gray never had a real base color anywhere in the app -- it
-   inherited from whatever ancestor happened to set `color` (usually
-   .modal-content's hardcoded white below), which read as "white," not
-   "light gray," and went fully invisible wherever an ancestor's background
-   flips to white in light theme (Advanced Filters card, any modal body).
-   Three narrow compound overrides already existed for this
-   (.vis-feed-panel/.holo-actions/.holo-row .text-light-gray, see the light
-   theme section) -- each was a band-aid for one container rather than a
-   real base rule. This is the real one: low specificity on purpose, so the
-   comp-row/motor-row override directly below (and those three older ones)
-   still win where the background is pinned dark regardless of theme. */
+/* The base colour for .text-light-gray. Low specificity on purpose, so the pinned-dark rows below still win. */
 .text-light-gray {
     color: var(--vis-text-muted);
 }
 
-/* Compressor/Motor Registry rows AND their filter bar (Search Center) keep an
-   always-dark background regardless of theme (#14151A, inline on
-   .comp-row/.motor-row/.filter-bar-dark -- deliberate: this content stays
-   dark-themed until Phase 4's visual pass, see SearchCenter.cshtml). The rule
-   above would otherwise flip .text-light-gray to a dark gray in light mode
-   here too, unreadable against a background that never changes -- pin it
-   back to a light, dark-bg-only gray. The containers also get an explicit
-   light color, as a safety net for any plain/unclassed descendant text that
-   would otherwise keep climbing to .modal-content (below) for its color. */
+/* Registry rows and their filter bar stay dark in both themes, so their light-gray text is pinned for a dark background. */
 .comp-row, .motor-row, .filter-bar-dark {
     color: #E2E8F0;
 }
 .comp-row .text-light-gray, .motor-row .text-light-gray, .filter-bar-dark .text-light-gray {
     color: #94A3B8 !important;
 }
-/* ...but the unit tables inside those rows didn't inherit the dark surface:
-   Bootstrap's .table paints every cell var(--bs-table-bg), which resolves to
-   the white body background, so the light-gray location/date text sat on
-   white (2.6:1) and the yellow "(missing)" serial flag was 1.6:1 -- in BOTH
-   themes. Let the row's own dark background show through instead. */
+/* Tables inside those rows let the row's dark background show through, not Bootstrap's white cell fill. */
 .comp-row .table, .motor-row .table {
     --bs-table-bg: transparent;
     --bs-table-color: #E2E8F0;
@@ -419,16 +384,9 @@ html, body {
     --bs-table-border-color: #3D4351;
 }
 
-/* ---- Contrast sweep (2026-09-24) -------------------------------------------
-   Measured, not eyeballed: every visible text node on every page, both themes,
-   every modal, against WCAG AA (4.5:1 body, 3:1 large). Root causes first. */
+/* Contrast fixes. Measured against WCAG AA in both themes. */
 
-/* Bootstrap's .table paints every cell --bs-table-bg, which resolves to #fff.
-   Nothing in this app ever overrode it, so in DARK theme the Logs / All Items /
-   Pickup Queue / Settings tables were white slabs with Bootstrap's dark body
-   text, and each page's #94A3B8 .text-dim cells sat on white at 2.6:1. Tables
-   now take their card's surface and the app's text colour in both themes;
-   .table-dark theads keep their own. */
+/* Tables take their card's surface and the app's text colour, not Bootstrap's white cells. */
 .table {
     --bs-table-bg: transparent;
     --bs-table-color: var(--vis-text);
@@ -439,37 +397,26 @@ html, body {
     --bs-table-hover-color: var(--vis-text);
 }
 
-/* .text-dim is declared page-locally (Logs, All Items, Deliveries, Log
-   Delivery, Pickup Queue) as #94A3B8 !important -- fine on dark, 2.4-2.6:1 on
-   light surfaces. One light-theme override outranks all five. */
+/* .text-dim is set page-locally for dark. One light-theme override outranks them all. */
 :root[data-theme="light"] .text-dim { color: #5A6470 !important; }
 
-/* Page headings carry .text-white from the dark-only days (Bulk Intake, All
-   Items, the sign-in and Settings-unlock cards): white on the light page
-   background, 1.0-1.1:1. Tinted modal headers are excluded -- they stay dark. */
+/* Headings carrying .text-white go dark in light theme. Tinted modal headers and registry rows stay as they are. */
 :root[data-theme="light"] :is(h1, h2, h3, h4).text-white:not(.modal-header *):not(.comp-row *):not(.motor-row *) { color: #1A1D23 !important; }
 
-/* Bootstrap's .text-muted is rgba(33,37,41,.75) -- tuned for a white page, so
-   "Cart is empty." was 1.15:1 on the dark holo viewer. Theme-following now. */
+/* Bootstrap's .text-muted is tuned for a white page. This one follows the theme. */
 .text-muted { color: var(--vis-text-muted) !important; }
 
-/* Bootstrap success green (#198754) as TEXT is 3.7:1 on the dark card
-   ("Available: N" on every search result, Registry's Initial Qty). */
+/* Bootstrap's success green is too dim as text on the dark card. */
 .text-success { color: #2EBD72 !important; }
 :root[data-theme="light"] .text-success { color: #146C43 !important; }
 
-/* --vis-teal as button text is 4.0:1 on the dark card (Handle Stock, Intake's
-   Preview, delivery photo link). Brighter teal for text on dark only; the
-   light theme already overrides it to #087990 below. */
+/* Brighter teal for button text on dark. Light theme overrides it below. */
 .btn-outline-info { color: #22B5B5; border-color: #22B5B5; }
 
-/* .btn-info is white on --vis-blue (#1DA1F2): 2.8:1 in both themes (the
-   "View" buttons on My Activity / Orders). Dark label instead: 7.4:1. */
+/* White on --vis-blue is 2.8:1. A dark label is 7.4:1. */
 .btn-info, .btn-info:hover, .btn-info:focus { color: #06121C !important; }
 
-/* Inset read-out boxes (Generated / New FDA String, Current location) were
-   pinned #14151A inline, so in light theme the teal label on them was 3.6:1.
-   They follow the theme now. */
+/* Inset read-out boxes follow the theme. */
 .vis-inset-box {
     background-color: #14151A;
     border-color: #3D4351 !important;
@@ -481,12 +428,7 @@ html, body {
     color: #5A6470;
 }
 
-/* Autocomplete suggestion rows (Modify Stock / New Item Registry item search,
-   Type and Rack/Row suggestions, sign-in name picker). Each builder used to
-   paint the row #1C1E24 inline with a .text-white label -- and in light
-   theme `.modal-content .text-white` flips that label dark, so the item name
-   went dark-on-dark and only the blue ID stayed readable. One theme-following
-   class instead of inline hex; hover is CSS, not JS mouseover handlers. */
+/* Autocomplete suggestion rows: one theme-following class, hover in CSS. */
 .vis-suggest-item {
     background-color: var(--vis-card) !important;
     color: var(--vis-text) !important;
@@ -499,8 +441,7 @@ html, body {
     .vis-suggest-item .text-light-gray {
         color: var(--vis-text-muted) !important;
     }
-/* Bootstrap's text-primary (#0D6EFD) is 3.7:1 on the dark card; the app's own
-   blue reads 6:1 there. Light theme keeps a darker blue for white. */
+/* The app's blue reads better than Bootstrap's on the dark card. Light theme keeps a darker blue. */
 .vis-suggest-item .text-primary { color: var(--vis-blue) !important; }
 :root[data-theme="light"] .vis-suggest-item .text-primary { color: #0B5ED7 !important; }
 :root[data-theme="light"] .vis-suggest-item .text-info { color: #087990 !important; }
@@ -613,19 +554,11 @@ body {
     background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1.5px, transparent 1.5px);
     background-size: 25px 25px;
     background-attachment: fixed;
-    /* Fill the viewport so the fixed dot grid isn't clipped to a short body
-       (percentage min-height on the shared html,body rule collapses because
-       html has no definite height). 100vh always resolves. */
+    /* 100vh, so the fixed dot grid is not clipped to a short body. */
     min-height: 100vh;
 }
 
-/* background-attachment: fixed is unreliable on mobile Safari/Chrome --
-   well-documented to desync foreground scroll from the fixed background
-   layer (reported: dashboard wouldn't scroll on phone, dot grid moved on
-   its own). Desktop's parallax dot grid is cosmetic only; dropping to the
-   default `scroll` below the same 1100px cutover Index.cshtml's own
-   responsive pass (Pass 24) already uses for its grid reflow removes the
-   fixed-attachment compositing path entirely on the affected devices. */
+/* Fixed backgrounds break scrolling on mobile browsers, so the dot grid scrolls below 1100px. */
 @media (max-width: 1100px) {
     body {
         background-attachment: scroll;
@@ -643,15 +576,7 @@ body {
     }
 
 
-/* =========================================================
-   LIGHT THEME  (toggled via <html data-theme="light">)
-   Covers global chrome: page background, surfaces, inputs,
-   scrollbars. Sidebar and top bar switch to a light surface
-   (var(--vis-card)) along with everything else as of Pass 27's
-   sidebar shell -- unlike the old always-dark top navbar this
-   replaced, so any hardcoded .text-white inside them needs its
-   own light-mode override below (see the App Shell section).
-========================================================= */
+/* Light theme (<html data-theme="light">). Sidebar and top bar switch surface too. */
 
 :root[data-theme="light"] {
     --vis-bg: #F4F6F8;
@@ -687,59 +612,28 @@ body {
     background: #C2C9D2;
 }
 
-/* =========================================================
-   LIGHT THEME - VIEW-LEVEL LEGIBILITY PASS
-   Targeted fixes for elements that hardcode white text or
-   dark backgrounds and so ignore the variable swap.
-========================================================= */
+/* Light theme: fixes for elements that hard-code white text or dark backgrounds. */
 
 /* Widget card headers (Advanced Filters / Omni Search / Export Wizard / Modify Stock) + activity titles */
 :root[data-theme="light"] .grid-card .text-bright-white { color: #1A1D23 !important; }
 
-/* Every modal label (Modify Stock / New Item Registry / Alert Rules / Export
-   Wizard / Add to Cart) -- see the base .modal-content label rule above for
-   why this was invisible in light mode (~1.17:1 contrast, #E2E8F0 on a white
-   modal). */
+/* Modal labels. */
 :root[data-theme="light"] .modal-content label { color: #1A1D23 !important; }
 
-/* .filter-bar-dark's own "Unclaimed only" checkbox label sits inside
-   .modal-content too, so the rule directly above would otherwise flip it
-   dark-on-dark (its background is pinned #14151A regardless of theme, same
-   as .comp-row/.motor-row -- see that comment). Four class-level selectors
-   here on purpose, to unambiguously outrank the three-selector rule above
-   regardless of source order, not just tie and hope. */
+/* ...except the always-dark filter bar's label. Four selectors on purpose, to outrank the rule above. */
 :root[data-theme="light"] .modal-content .filter-bar-dark label { color: #E2E8F0 !important; }
 
-/* Bootstrap's text-info/text-warning (used throughout Modify Stock/New Item
-   Registry/Alert Rules/Export Wizard for section headers and field labels --
-   "Location Filter", "Generated FDA String", "Alert Threshold", etc.) are
-   tuned for dark surfaces; on a white modal/card they read as ~1.6-2.0:1,
-   washed out rather than fully invisible but still a real legibility miss.
-   Found live testing 2d.1 alongside the label bug above. */
+/* Bootstrap's text-info and text-warning are tuned for dark surfaces. Darker on white. */
 :root[data-theme="light"] .modal-content .text-info,
 :root[data-theme="light"] .grid-card .text-info { color: #087990 !important; }
 :root[data-theme="light"] .modal-content .text-warning,
 :root[data-theme="light"] .grid-card .text-warning { color: #8A6100 !important; }
 
-/* Plain modal-body text -- "Are you sure you want to submit this order?"
-   (Confirm Final Order), Start Order, Delete Item, the bulk-threshold
-   confirm, and every other modal that just has a sentence of body copy.
-   Two gaps, not one: the base .modal-content rule above never got a
-   light-theme override for its own `color: white`, AND most of these bodies
-   also carry the literal `text-white` class, which is a Bootstrap utility
-   (`!important`) that would keep beating a plain color override even after
-   fixing the first gap. On a white light-theme modal this reads as
-   completely invisible, not just washed out -- worse than the label/
-   text-info gaps above, which were merely low-contrast. Found live testing
-   2026-08-26 (Kason, Request Transfer pass -- Confirm Final Order's body
-   was a blank white box). */
+/* Plain modal body text, including text carrying Bootstrap's !important .text-white. */
 :root[data-theme="light"] .modal-content { color: #1A1D23; }
 :root[data-theme="light"] .modal-content .text-white { color: #1A1D23 !important; }
 
-/* ...except on tinted headers, which DON'T follow the theme (bg-primary /
-   bg-dark / bg-danger / bg-success, and .modal-header-tinted for a header
-   coloured inline). The rule above turned the Export Wizard's title dark on
-   its bg-dark header (1.1:1). bg-warning is excluded -- it carries .text-dark. */
+/* ...except tinted headers, which do not follow the theme. bg-warning carries .text-dark and is left out. */
 :root[data-theme="light"] .modal-content .modal-header.bg-primary,
 :root[data-theme="light"] .modal-content .modal-header.bg-dark,
 :root[data-theme="light"] .modal-content .modal-header.bg-danger,
@@ -751,10 +645,7 @@ body {
 :root[data-theme="light"] .modal-content .modal-header.bg-success .text-white,
 :root[data-theme="light"] .modal-content .modal-header.modal-header-tinted .text-white { color: #FFFFFF !important; }
 
-/* One of those (a compressor's blank-serial flag, in its History table) sits
-   inside .comp-row, whose background stays dark regardless of theme --
-   same exclusion shape as the label rule above, same reason: four
-   class-level selectors to unambiguously outrank the three above it. */
+/* ...and inside the always-dark rows, where info and warning text keep their dark-surface colours. */
 :root[data-theme="light"] .comp-row .text-info,
 :root[data-theme="light"] .motor-row .text-info,
 :root[data-theme="light"] .filter-bar-dark .text-info { color: #0DCAF0 !important; }
@@ -768,14 +659,7 @@ body {
 /* VIEW ORDERS (outline-info button carries a text-white class) */
 :root[data-theme="light"] .btn-outline-info.text-white { color: var(--vis-teal) !important; }
 
-/* Bootstrap's outline-danger/warning/info are tuned for dark surfaces --
-   ~2:1 contrast on white (found live testing 2d.1: Alert Rules' "Apply to
-   all" button). Sitewide, not scoped to Command/Search Center: these three
-   variants show up across My Activity, PickupQueue, Intake, and AllItems too,
-   all with the same problem, none of it new. None of the app's always-dark
-   containers (.comp-row/.motor-row/.filter-bar-dark) use these outline
-   variants, so no exclusion needed the way the label/text-warning fixes
-   above required one. */
+/* Bootstrap's outline-danger, -warning and -info are tuned for dark surfaces. Sitewide. */
 :root[data-theme="light"] .btn-outline-danger { color: #A61E2B !important; border-color: #A61E2B !important; }
 :root[data-theme="light"] .btn-outline-warning { color: #8A6100 !important; border-color: #8A6100 !important; }
 :root[data-theme="light"] .btn-outline-info { color: #087990 !important; border-color: #087990 !important; }
@@ -832,12 +716,7 @@ body {
 :root[data-theme="light"] .logs-wrap .nav-tabs .nav-link.active { color: #1A1D23 !important; }
 :root[data-theme="light"] .logs-wrap .nav-tabs .nav-link:hover { color: #1A1D23 !important; }
 
-/* Start-Order modal: its header/body sit on var(--vis-card) (white in light mode),
-   but the title + body carry .text-white, so they vanished in light mode.
-   Compressor/Motor Registry modals share the identical white-card structure and
-   had the same bug (title + close button invisible in light mode) -- same fix,
-   same selector list. Scoped to these three IDs so colored-header modals
-   (blue/green/dark) are untouched. */
+/* Start Order and the two registry modals sit on a white card in light theme but carry .text-white. */
 :root[data-theme="light"] #startOrderModal .modal-title,
 :root[data-theme="light"] #startOrderModal .modal-body,
 :root[data-theme="light"] #startOrderModal .modal-body .text-white,
@@ -849,60 +728,23 @@ body {
 :root[data-theme="light"] #compressorRegistryModal .btn-close-white,
 :root[data-theme="light"] #motorRegistryModal .btn-close-white { filter: invert(1) grayscale(100%) brightness(40%); }
 
-/* The × was invisible in light mode on every modal and on the search overlay.
-   `.btn-close { filter: invert(1) }` above is unconditional -- it flips
-   Bootstrap's dark icon white, which is right on this app's dark cards and
-   exactly wrong once --vis-card resolves to #FFFFFF. Ten bare .btn-close
-   elements across five views were affected; only the three -white ones above
-   had ever been fixed, and those individually, by id.
-   Fixed at the rule that causes it -- but scoped by SURFACE, not blanket. A
-   plain `[data-theme=light] .btn-close { filter:none }` also repaints the ×
-   on the tinted headers, and those don't change with the theme, so a
-   theme-relative override is exactly wrong for them (it put a dark × on the
-   bg-primary blue at ~3.6:1). Same trap as .comp-row/.filter-bar-dark. */
+/* The close button: the base invert(1) is right on dark cards and invisible on white. Fixed by surface. */
 
-/* Surfaces that are light in BOTH themes: amber headers carry .text-dark, and
-   Bootstrap alerts are light-tinted always -- so their × must be dark in both.
-   This also fixes a bug nobody had reported: white-on-amber was ~1.9:1 in dark
-   mode too, the × just happened to sit where no one looked for it. */
+/* Light in both themes: amber headers and alerts. Their close button is dark in both. */
 .modal-header.bg-warning .btn-close,
 .alert .btn-close { filter: none; }
 
-/* Surfaces that FOLLOW the theme: an untinted .modal-header and .holo-header
-   both paint from --vis-card (#1C1E24 dark, #FFFFFF light), so the base
-   invert(1) is right on one and invisible on the other. bg-primary and bg-dark
-   headers are deliberately excluded -- they stay dark in both themes and keep
-   the white ×. The three id-scoped rules above still win on specificity.
-   .modal-header-tinted is the hook for a header coloured by CSS rather than a
-   Bootstrap bg- class (New Item Registry paints itself --vis-green inline, so
-   the class test alone would wrongly treat it as theme-following). Mark any
-   future hand-tinted header with it rather than adding another id here -- a
-   by-name list is what let this bug sit unnoticed in the first place. */
+/* Follows the theme: untinted modal headers and the holo header. Tinted headers keep the white one.
+   Mark a hand-tinted header with .modal-header-tinted instead of adding an id here. */
 :root[data-theme="light"] .modal-header:not([class*="bg-"]):not(.modal-header-tinted) .btn-close,
 :root[data-theme="light"] .holo-header .btn-close { filter: none; }
 
-/* Sidebar brand text ("Visual Inventory System") and the top bar's signed-in
-   user name both carry Bootstrap's .text-white, inherited from when the
-   sidebar/top bar were always dark (pre-Pass-27). Both now sit on
-   var(--vis-card), white in light mode, so only the inline-red V/I/S letters
-   stayed visible -- the rest of "isual nventory ystem" and the whole user
-   name were white-on-white. */
+/* Sidebar brand text and the user name carry .text-white from when the bars were always dark. */
 :root[data-theme="light"] .sidebar-brand-text { color: #1A1D23 !important; }
 :root[data-theme="light"] .user-name { color: #1A1D23 !important; }
 
-/* =========================================================
-   APP SHELL -- left sidebar nav, replacing the old top navbar
-   (Pass 27 phase 1). Touches every page since _Layout.cshtml
-   wraps all of them. Desktop: persistent rail, collapsible to
-   icon-only (state kept in localStorage -- a UI preference, not
-   worth a User table field yet). Mobile (<992px, matching the
-   navbar's old lg breakpoint): off-canvas drawer over a backdrop,
-   position:fixed so it can't be affected by the page's own scroll
-   position, deliberately NOT locking body scroll while open (Pass
-   26 already found one real mobile-scroll bug from an unrelated
-   fixed-position/background interaction -- staying conservative
-   here rather than risk a second one for a cosmetic nicety).
-   ========================================================= */
+/* App shell: left sidebar. Desktop: a rail that collapses to icons. Mobile (<992px): an off-canvas
+   drawer over a backdrop. Body scroll is deliberately not locked while it is open. */
 .app-shell {
     display: flex;
     min-height: 100vh;
@@ -1090,13 +932,7 @@ body {
 }
 
 
-/* ============================================================
-   SHARED CARD LANGUAGE (Pass 27 sidebar redesign, Pass 28 2c)
-   Lived in CommandCenter.cshtml's own <style> until Search Center's
-   Actions row needed the same look. One definition, two pages -- the
-   alternative is the drift this project keeps finding in copied
-   vocabulary (locations x9, close buttons x10).
-   ============================================================ */
+/* Shared card styles, used by Command Center and Search Center. */
 .cc-section-title {
     font-size: 12px;
     font-weight: 700;
@@ -1141,26 +977,13 @@ body {
     }
 
 
-/* Bootstrap's .btn-outline-light is built for DARK backgrounds -- its border is
-   #f8f9fa, and when a btn-check selects it, it fills #f8f9fa too. On this app's
-   dark cards that reads at 15.8:1; the moment --vis-card resolves to #FFFFFF it
-   is 1.05:1 in BOTH the checked and unchecked state, so the button has no shape
-   at all and a toggle pair gives no clue which half is selected. The label text
-   stays readable (16:1), which is why it never looked obviously broken.
-   Ten call sites use it -- the Rheem PN "Has a Part #" toggles, LogDelivery's
-   four "Have it" toggles, AllItems' back link, and three in Settings -- so this
-   is fixed once here rather than by editing each one, the same by-name list
-   that let the .btn-close bug sit unnoticed.
-   Unchecked: real grey edge on white. Checked/hover: dark fill, white text --
-   unmistakably "this one", and distinct from .btn-outline-secondary's grey fill
-   so the two halves of a pair never look alike. */
+/* outline-light has no edge on white. */
 :root[data-theme="light"] .btn-outline-light {
     color: #1A1D23 !important;
     border-color: #8B9198 !important;
 }
 
-/* ...except inside the always-dark Compressor/Motor registry rows (Pass 40's
-   "Open" buttons), which need the dark-surface version in both themes. */
+/* ...except inside the always-dark registry rows. */
 :root[data-theme="light"] .comp-row .btn-outline-light,
 :root[data-theme="light"] .motor-row .btn-outline-light {
     color: #E2E8F0 !important;
@@ -1175,11 +998,7 @@ body {
     color: #FFFFFF !important;
 }
 
-/* =========================================================
-   ITEM CARD (Pass 40) -- Views/Home/_ItemCardPartial.cshtml
-   Everything here follows the theme through --vis-* vars, so
-   there's no light-theme block to keep in sync.
-========================================================= */
+/* Item Card. Everything follows the theme through --vis-* vars, so there is no light-theme block. */
 .ic-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -1250,18 +1069,14 @@ body {
     .ic-details dd { margin-bottom: 6px; }
 }
 
-/* Result rows open their Item Card on click (Pass 40). */
+/* Result rows open their Item Card on click. */
 .holo-viewer:not([data-mode="Ledger"]) .holo-row { cursor: pointer; }
 
 /* TC amber: #F59E0B is 2.0:1 on the light theme's tile, so it darkens there. */
 .ic-stat-val.ic-tc { color: #F59E0B; }
 :root[data-theme="light"] .ic-stat-val.ic-tc { color: #92400E; }
 
-/* =========================================================
-   RESERVATIONS (2026-11-08) -- docs/Unit_Reservations_Spec.md
-   Violet is "held": no other VIS state uses it. Light values
-   are darker so text on white stays above 4.5:1.
-========================================================= */
+/* Reservations. Violet means "held": no other VIS state uses it. Light values are darker to stay above 4.5:1. */
 :root {
     --vis-held: #B39DFF;
     --vis-held-tint: rgba(179, 157, 255, .10);

@@ -4,10 +4,7 @@
     ViewData["Title"] = "Order Details";
     var inventoryLookup = ViewBag.InventoryLookup as System.Collections.Generic.Dictionary<string, Visual_Inventory_System.Models.InventoryItem>;
 
-    // Build a compact friendly breadcrumb of all five location levels. Parent/
-    // Major/Sub are stored as codes; LocationCodec.Decode turns them back into
-    // names (unknown codes pass through unchanged). "0"/blank levels are dropped.
-    // Rack/Row are free-form numbers the team assigns, shown as-is.
+    // Friendly breadcrumb of the location levels. "0" and blank levels are dropped; Rack and Row are shown as stored.
     bool Real(string? s) => !string.IsNullOrWhiteSpace(s) && s.Trim() != "0";
     string Friendly(string? code) => Visual_Inventory_System.Services.LocationCodec.Decode(code);
     string FmtLocation(Visual_Inventory_System.Models.InventoryItem? inv)
@@ -76,11 +73,7 @@
     @foreach (var it in Model.Items)
     {
         var inv = (inventoryLookup != null && inventoryLookup.ContainsKey(it.ItemId)) ? inventoryLookup[it.ItemId] : null;
-        @* "Corrected" is what ReportShortPull flips a short line to once it acts on
-           it, so keying only on "Cancelled" dropped the badge at exactly the moment
-           its own tooltip became true -- a corrected order rendered as a Cancelled
-           header over an unannotated line, with nothing pointing at the reissue. The
-           two states get their own wording since one still needs a picker to act. *@
+        @* "Corrected" is a short line already acted on. The two short states get their own badge wording. *@
         var wasShort = it.Status == "Cancelled" || it.Status == "Corrected";
         var shortCorrected = it.Status == "Corrected";
         var isCompressor = Visual_Inventory_System.Services.InventoryService.IsCompressorType(inv?.Type);

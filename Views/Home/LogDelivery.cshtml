@@ -84,10 +84,7 @@
 
             <div class="mb-3">
                 <label class="form-label small fw-bold text-light-gray">Send To <span class="text-danger">*</span></label>
-                @* Grouped by tier rather than one flat list of 44 names, engineers
-                   first -- they're both the most common pick and the people who
-                   actually work a delivery. Each name's Line rides along in the
-                   label so the person logging can see who else it will reach. *@
+                @* Grouped by tier, engineers first. Each name shows its Line so the logger sees who else it reaches. *@
                 <select name="recipientUserName" class="form-select" required>
                     <option value="" selected disabled>Choose a person, or Unknown Delivery...</option>
                     <option value="__UNKNOWN__">Unknown Delivery — notify every engineer</option>
@@ -124,9 +121,7 @@
 </div>
 
 <script>
-    // Same "Has it / N/A" toggle used by Rheem PN on New Item Registry -- N/A
-    // sets the box readOnly with the literal value "N/A" (still posts something
-    // real); switching back clears it for typing.
+    @* "Have it / N/A" toggle: N/A sets the box read-only with the value "N/A"; switching back clears it. *@
     function bindNaToggle(realId, naId, inputId) {
         const real = document.getElementById(realId);
         const na = document.getElementById(naId);

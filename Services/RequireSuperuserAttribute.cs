@@ -9,11 +9,8 @@ namespace Visual_Inventory_System.Services
     public class AllowWithoutSuperuserAttribute : Attribute { }
 
     /// <summary>
-    /// Put on SettingsController (class-level). Blocks anyone whose session
-    /// name isn't the configured Superuser:UserName, AND anyone who hasn't
-    /// entered the passcode this session -- two independent checks, neither
-    /// derived from AccessLevel, so this can't be opened by raising someone's
-    /// tier in the Users table.
+    /// On SettingsController. Two checks, neither tied to AccessLevel: the session name
+    /// is the configured superuser, and the passcode was entered this session.
     /// </summary>
     public class RequireSuperuserAttribute : ActionFilterAttribute
     {

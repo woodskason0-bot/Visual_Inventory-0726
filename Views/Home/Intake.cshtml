@@ -100,10 +100,7 @@
             </div>
         </div>
 
-        @* Pass 24: wrapped for overflow-x -- the row of inputs needs more than a
-           phone's width no matter how the columns are proportioned; without this
-           wrapper the table forced the whole page wider instead of just itself
-           scrolling. *@
+        @* Wrapped so the table scrolls sideways on a phone, not the whole page. *@
         <div class="table-responsive">
             <table class="table table-sm align-middle" style="min-width:640px;">
                 <thead><tr>
@@ -124,14 +121,8 @@
         </div>
     </form>
 
-    @* Pass 21/22: a row whose typed name exact-matches an existing item is
-       pulled out of the grid above and lands here instead, as its own live
-       Modify Stock section -- not a separate summary list behind a button.
-       A second row for the SAME item grows that section (bumps quantity,
-       extends serial/TC inputs) rather than opening a second one, so
-       whatever's already been typed into it survives. Excluded from Import;
-       applied through Apply All below via a separate form/endpoint (a form
-       can't nest inside the Import form above). *@
+    @* A row whose name matches an existing item moves here as a live stock-update section. A second row for
+       the same item grows that section. Applied through its own form: a form cannot nest inside Import. *@
     <div id="already-registered-wrap" class="intake-card p-3 mt-3" style="display:none;">
         <h6 class="text-white fw-bold mb-1">Already registered</h6>
         <p class="text-light-gray small mb-2">
@@ -155,23 +146,18 @@
     const orgStructure = @Html.Raw(ViewBag.OrgStructureJson ?? "{}");
     const locTree      = @Html.Raw(ViewBag.LocationTreeJson ?? "{}");
     const knownItems   = @Html.Raw(ViewBag.KnownItemsJson ?? "[]");
-    // Team -> home Line (metadata, suggestion only -- same map Registration
-    // already uses) and the signed-in user's own assignment, for autofilling
-    // Branch/Line on page load and on Team change.
+    @* Team -> home Line (a suggestion only), and the user's own assignment, for autofill. *@
     const teamLines    = @Html.Raw(ViewBag.TeamLinesJson ?? "{}");
     const myLine       = @Html.Raw(ViewBag.MyLineJson ?? "\"\"");
     const myBranch     = @Html.Raw(ViewBag.MyBranchJson ?? "\"\"");
-    // Rack/Row suggestions (Pass 23), keyed "ParentCode|MajorCode|SubCode" --
-    // data-derived from real stock, not a managed vocabulary. Never a gate;
-    // typing a brand new value always works.
+    @* Rack/Row suggestions, keyed "ParentCode|MajorCode|SubCode". From real stock, never a gate. *@
     const rackRowMap   = @Html.Raw(ViewBag.RackRowJson ?? "{}");
     function racksRowsFor(pCode, mCode, sCode) {
         const key = (pCode || '') + '|' + (mCode || '') + '|' + (sCode || '');
         return rackRowMap[key] || { racks: [], rows: [] };
     }
 
-    // Same 1/3/5/last rule as Services/LocationCodec.Encode(). Duplicated from
-    // Index.cshtml -- see the note there for why it isn't in site.js.
+    @* Same 1/3/5/last rule as Services/LocationCodec.Encode(). Also defined in site.js. *@
     function encodeLoc(name) {
         if (!name) return "";
         const clean = String(name).toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -181,11 +167,8 @@
         return pos.map(p => clean[p - 1]).join("");
     }
 
-    // Branch -> Line cascade, plus autofill: seeded from the signed-in user on
-    // page load, and overwritten whenever a Team with a home Line is picked
-    // (a deliberate act, so it wins over whatever was there -- still editable
-    // after). Neither ever touches server-side validation; Line stays
-    // required and checked exactly as before on submit.
+    @* Branch -> Line cascade with autofill: seeded from the signed-in user, overwritten when a Team *@
+    @* with a home Line is picked. Line is still required and checked on the server. *@
     (function () {
         const bSel = document.getElementById('in-branch'), lSel = document.getElementById('in-line');
         const tSel = document.getElementById('in-team');
@@ -212,9 +195,7 @@
 
         bSel.addEventListener('change', function () { fillLines(bSel.value, null); });
 
-        // Team change: a team with a recognized home Line overwrites Branch/Line
-        // to match. A team with no home Line (or clearing back to N/A) touches
-        // nothing -- there's no suggestion to make.
+        @* A Team with a home Line sets Branch and Line. A Team without one changes nothing. *@
         tSel.addEventListener('change', function () {
             const line = teamLines[tSel.value];
             if (!line) return;
@@ -224,9 +205,7 @@
             fillLines(branch, line);
         });
 
-        // Page-load seed from the signed-in user's own assignment: a specific
-        // Line wins (Branch derived from it); else a whole-Branch assignment
-        // (Branch preset, Line left for them to pick); else neither.
+        @* Page-load seed: the user's Line wins, else their Branch with the Line left to pick, else nothing. *@
         if (myLine) {
             const branch = branchForLine(myLine);
             if (branch) { bSel.value = branch; fillLines(branch, myLine); }
@@ -236,7 +215,7 @@
         }
     })();
 
-    // Parent -> Major -> Sub, driven by the same table the rest of the app uses.
+    @* Parent -> Major -> Sub, driven by the same table the rest of the app uses. *@
     (function () {
         const p = document.getElementById('in-parent'), m = document.getElementById('in-major'),
               s = document.getElementById('in-sub'), req = document.getElementById('req-loc-row'),
@@ -268,8 +247,7 @@
             fill(s, mName ? (majors[mName] || []) : []);
         });
 
-        // Rack/Row suggestions -- p/m/s values are already codes here (unlike
-        // Registry/Export's name-valued selects), so no encodeLoc() needed.
+        @* Rack/Row suggestions. The select values here are already codes, so no encodeLoc(). *@
         const rackIn = document.getElementById('in-rack'), rowIn = document.getElementById('in-row');
         if (typeof bindValueAutocomplete === 'function') {
             bindValueAutocomplete(rackIn, document.getElementById('in-rack-list'), function () {
@@ -281,12 +259,9 @@
         }
     })();
 
-    // bindValueAutocomplete lives in site.js (loaded at the top of <body> since
-    // Pass 27, so it exists before this script runs). This page used to carry
-    // its own copy, which silently shadowed the shared one.
 
-    // Model autocomplete: suggest what already exists, and prefill the rest of the
-    // row from it so adding stock to a known item doesn't mean retyping its brand.
+    @* Model autocomplete: suggest what already exists, and prefill the rest of the *@
+    @* row from it so adding stock to a known item doesn't mean retyping its brand. *@
     (function () {
         const dl = document.getElementById('known-items');
         knownItems.forEach(function (i) {
@@ -298,18 +273,13 @@
 
         const body = document.getElementById('intake-rows');
 
-        // Keep in lockstep with InventoryService.IsCompressorType/IsMotorType --
-        // same exact-match / suffix rules the server enforces.
+        @* Keep in lockstep with InventoryService.IsCompressorType/IsMotorType -- *@
+        @* same exact-match / suffix rules the server enforces. *@
         function isCompressorTypeLocal(t) { return !!t && String(t).trim().toLowerCase() === 'compressor'; }
         function isMotorTypeLocal(t) { return !!t && String(t).trim().toLowerCase().endsWith('motor'); }
 
-        // ---- Type gate ----------------------------------------------------
-        // A Type is accepted only as an existing type (picked, or typed out in
-        // full -- case doesn't matter, the stored spelling wins) or as a new
-        // type someone explicitly chose "Add as a new type" for. A free-typed
-        // miss like "Contro" used to register as its own type and mint its own
-        // ID prefix (CCO- instead of CCL-). The server re-checks all of this;
-        // the typeNew flag is what tells it a new type was deliberate.
+        @* Type gate: an existing type (the stored spelling wins) or one explicitly added as new. *@
+        @* The server re-checks; the typeNew flag tells it a new type was deliberate. *@
         function canonicalType(v) {
             const l = String(v || '').trim().toLowerCase();
             if (!l) return null;
@@ -344,14 +314,8 @@
             return false;
         }
 
-        // Rebuild a row's Serial(s)/TC cell based on its current Type. Neither
-        // is required -- this only surfaces the opportunity. Every row keeps
-        // EXACTLY ONE name="serial" input at all times, compressor or not --
-        // the server binds serial[] positionally against itemName[], so a row
-        // that skips rendering one would desync every row after it. Non-
-        // compressor rows get it hidden and empty instead of removed. Extra
-        // slots and the TC box get a per-row index stamped on just before
-        // submit, once row order is final.
+        @* Rebuilds a row's Serial(s)/TC cell for its Type. Every row always keeps exactly one *@
+        @* name="serial" input: the server binds serial[] by position against itemName[]. *@
         function syncUnitCapture(tr) {
             const type = tr.querySelector('[name=type]').value;
             const qty = Math.max(1, parseInt(tr.querySelector('[name=qty]').value, 10) || 1);
@@ -400,22 +364,15 @@
             }
         }
 
-        // ---- Already registered (Pass 21/22) -----------------------------
-        // A name match creates a LIVE inline Modify Stock section immediately
-        // -- no separate list, no button to open a modal. A second row for
-        // the SAME item grows that section in place (bumps quantity, extends
-        // serial/TC inputs) instead of opening a duplicate, so anything
-        // already typed into it survives. sections: itemId -> live state.
+        @* Already registered: a name match creates a live stock-update section. A second row for *@
+        @* the same item grows it in place. sections: itemId -> live state. *@
         const sections = {};
 
         function refreshApplyEnabled() {
             document.getElementById('stock-review-apply').disabled = Object.keys(sections).length === 0;
         }
 
-        // Compressor serial boxes track quantity 1:1 -- grow/shrink the box
-        // count to match, preserving whatever's already typed. New boxes
-        // opened up by a merge (not just a manual qty edit) drain from
-        // entry.pendingSerials so the newly-typed serials land in them.
+        @* Serial boxes track quantity 1:1 and keep what is typed. New boxes fill from entry.pendingSerials. *@
         function resizeSerialBoxes(entry) {
             const qty = Math.max(0, parseInt(entry.qtyIn.value, 10) || 0);
             const extra = entry.el.querySelector('.sr-extra');
@@ -450,8 +407,7 @@
             sec.dataset.itemId = hit.id;
             sec.innerHTML =
                 '<div class="d-flex justify-content-between align-items-start mb-2">' +
-                  // Name and id are filled in below through textContent -- the name is
-                  // whatever a Standard-level user typed at registration.
+                  @* Name and id are set below through textContent: the name is user-typed. *@
                   '<div><strong class="sr-name" style="color:var(--vis-text);"></strong> ' +
                   '<span class="text-light-gray small sr-meta"></span></div>' +
                   '<button type="button" class="btn btn-sm btn-outline-secondary sr-remove">&times;</button>' +
@@ -527,8 +483,7 @@
         }
 
         document.getElementById('stock-review-form').addEventListener('submit', function () {
-            // Fresh copy of the CURRENT main-form location, in case it changed
-            // after rows were moved into "Already registered."
+            @* Copies the main form's current location, in case it changed after rows moved here. *@
             document.getElementById('sr-parentCode').value = document.getElementById('in-parent').value;
             document.getElementById('sr-majorCode').value = document.getElementById('in-major').value;
             document.getElementById('sr-subCode').value = document.getElementById('in-sub').value;
@@ -557,8 +512,7 @@
             tr.innerHTML =
                 '<td><input name="itemName" list="known-items" class="form-control form-control-sm" autocomplete="off" /></td>' +
                 '<td><input name="type" class="form-control form-control-sm intake-type-input" autocomplete="off" />' +
-                  // Exactly one typeNew per row, always -- binds positionally
-                  // against type[], same rule as serial[] above.
+                  @* Exactly one typeNew per row: it binds by position against type[]. *@
                   '<input type="hidden" name="typeNew" value="0" class="intake-type-new" />' +
                   '<small class="intake-type-note mt-1" style="font-size:10px; display:none;"></small>' +
                   '<div class="list-group shadow intake-type-list" style="z-index:2000; display:none; max-height:180px; overflow-y:auto; width:220px;"></div></td>' +
@@ -569,10 +523,7 @@
                 '<td><button type="button" class="btn btn-sm btn-outline-danger">&times;</button></td>';
             tr.querySelector('button').onclick = function () { tr.remove(); };
             const nameIn = tr.querySelector('[name=itemName]');
-            // An EXACT name match means this already exists -- pull the whole
-            // row out of Import and into its own live "Already registered"
-            // section instead of just prefilling it, carrying over whatever
-            // was typed (qty/serials/TC) so none of it has to be retyped.
+            @* An exact name match pulls the row into "Already registered", carrying over what was typed. *@
             nameIn.addEventListener('change', function () {
                 const hit = byName[nameIn.value.trim().toLowerCase()];
                 if (!hit) return;
@@ -598,9 +549,7 @@
                 checkType(tr, typeIn.classList.contains('is-invalid'));
                 syncUnitCapture(tr);
             });
-            // Leaving the box: a case-only miss ("control") snaps to the stored
-            // spelling instead of becoming its own type; anything else unknown
-            // is flagged until it's picked or explicitly added as new.
+            @* On leaving the box, a case-only miss snaps to the stored spelling. Anything else unknown is flagged. *@
             typeIn.addEventListener('change', function () {
                 const canon = canonicalType(typeIn.value);
                 if (canon && canon !== typeIn.value) { typeIn.value = canon; syncUnitCapture(tr); }
@@ -613,14 +562,10 @@
         document.getElementById('add-row').addEventListener('click', addRow);
         for (let i = 0; i < 5; i++) addRow();
 
-        // Extra serial slots and TC-qty boxes have no name until now -- row
-        // order can change (rows added/removed) right up to submit, so the
-        // index has to be computed from final DOM order, not creation order,
-        // matching how itemName[]/type[]/etc. already bind by document order.
+        @* Extra serial and TC boxes are named at submit, from final row order. *@
         const form = document.querySelector('form[action*="SubmitIntake"]');
         if (form) form.addEventListener('submit', function (e) {
-            // Gate first: every named row needs a valid Type before anything
-            // (Preview included) goes to the server.
+            @* Every named row needs a valid Type before anything, Preview included, is sent. *@
             let firstBad = null;
             Array.from(body.children).forEach(function (tr) {
                 const name = tr.querySelector('[name=itemName]').value.trim();

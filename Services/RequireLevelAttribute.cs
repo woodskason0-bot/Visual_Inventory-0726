@@ -4,11 +4,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace Visual_Inventory_System.Services
 {
-    /// <summary>
-    /// Put [RequireLevel(AccessLevels.Engineer)] on an action to block anyone
-    /// below that tier. Blocked users get a friendly banner via TempData and are
-    /// sent back to the dashboard (or a 403 for AJAX calls).
-    /// </summary>
+    /// <summary>[RequireLevel(n)] blocks anyone below tier n: a banner and a redirect home, or a 403 for AJAX.</summary>
     public class RequireLevelAttribute : ActionFilterAttribute
     {
         private readonly int _min;
