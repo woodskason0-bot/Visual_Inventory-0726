@@ -71,8 +71,8 @@ rather than assuming one exists.
 
 ### Still to do
 
-- **Server-readiness review, from 2026-11-11: two new docs and the comment move, none of
-  it committed.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
+- **Server-readiness review, from 2026-11-11: two new docs and the comment move,
+  committed as `80faae7` (2026-11-16), not pushed, in no release.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
   real server (identity, HTTPS, the passcode, tests, the open bugs, the handoff split),
   each with a size and what it needs from me; nothing on it is approved to build.
   `docs/Code_Notes.md` is where the long code comments went. I picked the comment voice
@@ -84,9 +84,9 @@ rather than assuming one exists.
   through on a scratch copy of the dev db on 2026-11-12, and the build is 0 errors, 14
   warnings. Since 2026-11-15 every comment in a view is a Razor `@* *@`, so none reach
   the browser; `site.css` and `site.js` still ship theirs. `Code_Notes.md` is sorted by
-  folder. Still to do: the commit, when I say. The pick-up notes are in
-  `docs/Handoff_2026-11-11.md`, and the scripts that applied and checked the edits are in
-  `docs/comment_move/` (not for commit).
+  folder. No behavior change, so it can ride in any release. The pick-up notes
+  (`docs/Handoff_2026-11-11.md`) and the scripts in `docs/comment_move/` were never
+  committed and can be deleted.
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
   (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every

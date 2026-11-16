@@ -79,8 +79,7 @@ repeat across all of them.
   leftover `console.log`. Refusals say what happened and why. Light and dark both
   work. The responsive pass is done.
 
-**Not right.** The 2026-11-16 column is after the comment move (B1), which isn't
-committed yet.
+**Not right.** The 2026-11-16 column is after the comment move (B1, `80faae7`).
 
 | What | 2026-11-11 | 2026-11-16 |
 |---|---|---|
@@ -123,7 +122,7 @@ the three old copies under `.claude/worktrees/` (D4); the repo by itself was 101
 
 | # | What | Why | Size | Needs from me |
 |---|---|---|---|---|
-| B1 | **Long comments out of the code and into `docs/Code_Notes.md`.** | The numbers above. In the views it was worse than a look: HTML, script and CSS comments were sent to the browser, so anyone could read the reasoning with View Source. Since 2026-11-15 every view comment is a Razor `@* *@`, which the server strips. Only `site.css` (73 comment lines) and `site.js` (24) still ship theirs, because they're served as plain files. | L | **Say commit.** Done, not committed. I picked the voice on 2026-11-11 (terse, label style) and said go the same day. All 74 files are done: 52 C#, `site.js`, `site.css` and 20 views. A script confirms every file is the same code once comments are stripped, the C# compiles to a byte-identical DLL, the views were clicked through on a scratch copy of the dev db on 2026-11-12, and the build is clean. `Code_Notes.md` is sorted by folder. |
+| B1 | **Long comments out of the code and into `docs/Code_Notes.md`.** | The numbers above. In the views it was worse than a look: HTML, script and CSS comments were sent to the browser, so anyone could read the reasoning with View Source. Since 2026-11-15 every view comment is a Razor `@* *@`, which the server strips. Only `site.css` (73 comment lines) and `site.js` (24) still ship theirs, because they're served as plain files. | L | **Nothing.** Done and committed as `80faae7` on 2026-11-16, not pushed. I picked the voice on 2026-11-11 (terse, label style) and said go the same day. All 74 files are done: 52 C#, `site.js`, `site.css` and 20 views. A script confirms every file is the same code once comments are stripped, the C# compiles to a byte-identical DLL, the views were clicked through on a scratch copy of the dev db on 2026-11-12, and the build is clean. `Code_Notes.md` is sorted by folder. |
 | B2 | **Template leftovers.** `Privacy.cshtml` ("Use this page to detail your site's privacy policy"), the default error page (A10), the `http` launch profile that actually runs HTTPS, `smtp.dummyrheem.com`, real names and emails seeded in `Program.cs`. | Each one is the "Vite + React" tab title of an ASP.NET app. | S | Delete Privacy? Keep the seed names? |
 | B3 | **Styles into the stylesheet.** 310 inline `style` attributes, 12 `<style>` blocks and 122 hard-coded colours in the views. | Every hard-coded colour is a light-theme bug waiting, and it's what blocks a CSP. | M to L | Go-ahead. Screen by screen, checked in both themes. |
 | B4 | **Split the four big files.** `HomeController` by area (search, orders, pickup, intake, deliveries, sign-in), the two big services by job, the Search Center script into its own file. Addresses stay the same. | 2,000-line files are the "monolith" tell, and they're the slowest thing for a person or an agent to work in. | L | Go-ahead, and not before there are tests (B5). |
@@ -163,7 +162,7 @@ the three old copies under `.claude/worktrees/` (D4); the repo by itself was 101
 ## The order I'd do it in
 
 1. **B1**, because it's started and it touches every file. Doing it first means every
-   later change lands in clean files.
+   later change lands in clean files. Done, `80faae7`.
 2. **A3, A4 (first three headers), A5, A7, A10, A12, B2, B6, C3, D1, D2, E2, E3.** All
    small, none change how the app behaves for a user. One pass.
 3. **B5**, the test project, before anything that moves code.

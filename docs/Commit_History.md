@@ -9,6 +9,31 @@ landed, when."
 
 ---
 
+## 2026-11-16
+
+### docs — log the comment move (`80faae7`)
+Docs only. Handoff: the server-readiness bullet in Still to do says the move is
+committed, not pushed and in no release. `Front_Load.md`: row B1, the note over the
+table and the order list say so too.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Front_Load.md`, `docs/Commit_History.md`
+
+### `80faae7` — Change: comment move, long code comments out to `docs/Code_Notes.md`, every view comment a Razor `@* *@`
+Comments only: no code change, no migration. 74 files: 52 C#, `site.js`, `site.css` and
+20 views. Long comments are cut to short labels (a constraint, an invariant or a trap)
+and their reasoning moves to the new `docs/Code_Notes.md`, by file, in folder order;
+pass numbers, dates, bug ids and banner lines are gone from the code. Comment lines
+went from 4,607 to 1,537. Every view comment is now a Razor `@* *@`, inside `<script>`
+and `<style>` too, so no view comment reaches the browser; `site.css` and `site.js`
+still ship theirs. Also adds `docs/Front_Load.md`, the list of what VIS needs before a
+real server, nothing on it approved to build. Checked: every file is the same code once
+comments are stripped, BOM and line endings unchanged; the C# compiles to a
+byte-identical DLL; the views were clicked through on a scratch copy of the dev db, and
+the `@* *@` switch was tried on a copy first (15 pages' HTML went from 676 comment lines
+to 0, otherwise identical). Build at the 14-warning baseline.
+*Files:* 52 `.cs` files (`Program.cs`, Controllers, Data, Models, Services), 20 views
+under `Views/`, `wwwroot/js/site.js`, `wwwroot/css/site.css`, `docs/Code_Notes.md`,
+`docs/Front_Load.md`, `docs/VIS_Handoff_State.md`
+
 ## 2026-11-09
 
 ### docs — log Reservations (3c08bd6)
