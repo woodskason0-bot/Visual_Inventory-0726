@@ -26,6 +26,8 @@ Visual Inventory System — repository audit
 
 **Update 2026-11-18:** BC-11, BC-12 and BC-13's formula-leading values are fixed in `fe9f8e6`, in no release. BC-11 brings migration 45, a unique index on `ItemId`. Each was reproduced on the current build and checked on the fixed one in the running app, against copies of the 11/11 host db; see `docs/VIS_Debugging_Log.md`, 2026-11-18. Open: BC-09 (ruled).
 
+**Update 2026-11-18 (release):** every fix in this file, BC-10 through `fe9f8e6`, is in `VIS_Release_20261118`, staged on `MASTER128`, not installed.
+
 ## Result
 
 There are **13 actionable findings: 5 P1 and 8 P2**. Twelve were reproduced with isolated service/database checks; one HTML-injection path was established by source tracing and an executed JavaScript sink check. None is represented as a completed browser test.

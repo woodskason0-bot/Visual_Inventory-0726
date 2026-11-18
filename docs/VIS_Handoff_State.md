@@ -59,6 +59,7 @@ proven.
 
 | File | md5 | Notes |
 |---|---|---|
+| `E:\Inventory_Bus\VIS_Release_20261118\VIS_Inventory\inventory.db` (SD `MASTER128`) | `4826669e…` (SHA-256) | **For the host, staged with the 11/18 release:** the 11/11 copy below run through the release build once (no requests): 45 migrations, `Reservations` and `ReservationLines` new and empty, the other 26 tables identical row for row, `integrity_check ok`, journal mode `delete`. Only for a host that hasn't been used since 11/11. |
 | `E:\Inventory_Bus\VIS_Inventory\inventory.db` (SD `MASTER128`) | `de1a47e2…` (SHA-256) | **Newest copy of the host**, brought over 2026-11-11 (file time 11/11 2:28 PM, newest log 11/11). 537 items / 566 variants / 55 users / 853 logs / 44 tracked units, 42 migrations, journal mode `delete`, `integrity_check ok`. Checked on copies only, 2026-11-18: 43, 44 and 45 apply cleanly and the pages load. For the next release (my pick: ship it pre-migrated, valid only if VIS hasn't been used on the host since 11/11). |
 | `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | The 10/19 pull, **superseded by the 11/11 copy above**, pulled with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. The old 9/2 raw pull (`Releases\VIS_Inventory`, its `inventory.db` md5 `3b500df5…`) is copied to OneDrive `Superseded Releases\VIS_Inventory_hostpull_20260902`, hash-checked; it is still on the USB until I delete it by hand. |
 | `D:\Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) | `1b74d796…` | **For the host, optional:** a byte copy of the re-seeded dev db below = the 10/19 host pull + migrations 40 to 42 + the 44 sheet units. Every other table is row-for-row identical to the pull; checked on the staged file itself. Safe to copy over the host's `inventory.db` only if that is still `ff07ddcc…` (nothing written since the pull) and after a backup. |
@@ -72,8 +73,17 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **`VIS_Release_20261118` is staged (2026-11-18), not installed.** On the SD card
+  `MASTER128`: `Inventory_Bus\VIS_Release_20261118\` holds `VIS_application_11.18.26\`
+  (self-contained win-x64, 544 files, 131 MB, built from a clean clone of master at
+  `ade3271`; also in `C:\VIS_Host\november18threlease` on this laptop),
+  `VIS_Inventory\inventory.db` (the 11/11 host copy already moved from 42 to 45, my pick)
+  and `README_FIRST.txt`. **Copy that db over the host's only if VIS hasn't been used on
+  the host since 11/11;** otherwise the app moves the host's own db from 42 to 45 on
+  start. Everything from `282ad8e` to `fe9f8e6` is in it. See the Pass log entry "Release
+  VIS_Release_20261118 staged" at the end.
 - **Bug fixes and a quick search, 2026-11-18: built and checked, committed as
-  `fe9f8e6`, in no release.** BC-11 (two registrations at once getting the same ItemId) is fixed with a
+  `fe9f8e6`, in `VIS_Release_20261118` (staged, not installed).** BC-11 (two registrations at once getting the same ItemId) is fixed with a
   unique index on `ItemId`, **migration 45**, and the next number on a clash. BC-12 (two
   stock changes at once, the second saving over the first) is fixed by Modify Stock and
   Quick Add taking the write lock before they read. BC-13's formula-leading values get a
@@ -84,7 +94,7 @@ rather than assuming one exists.
   ruled. Record: `docs/VIS_Debugging_Log.md`, 2026-11-18, and the Pass log entry at the
   end of this file.
 - **Server-readiness review, from 2026-11-11: two new docs and the comment move,
-  committed as `80faae7` and pushed (2026-11-16), in no release.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
+  committed as `80faae7` and pushed (2026-11-16), in `VIS_Release_20261118` (staged, not installed).** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
   real server (identity, HTTPS, the passcode, tests, the open bugs, the handoff split),
   each with a size and what it needs from me; nothing on it is approved to build.
   `docs/Code_Notes.md` is where the long code comments went. I picked the comment voice
@@ -100,7 +110,7 @@ rather than assuming one exists.
   (`docs/Handoff_2026-11-11.md`) and the scripts in `docs/comment_move/` were never
   committed and went to the Recycle Bin on 2026-11-16.
 - **Bug fixes from `docs/Bug_Checks.md`, 2026-11-16: committed as `0f949b3` with BC-04
-  and the sidebar link below, pushed, in no release.**
+  and the sidebar link below, pushed, in `VIS_Release_20261118` (staged, not installed).**
   BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed where the TC is
   on the shelves, and BC-15 (one new serial typed on two stacks in the Reserve dialog)
   is new and fixed. Four code files, no migration; each was reproduced on the committed
@@ -132,7 +142,7 @@ rather than assuming one exists.
   dev db. A refused save still loses what was typed (Front_Load C2). Record:
   `docs/VIS_Debugging_Log.md`, 2026-11-16, "BC-04".
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
-  (2026-11-09), pushed 2026-11-16, in no release.** Migration 43 (`AddReservations`) comes with
+  (2026-11-09), pushed 2026-11-16, in `VIS_Release_20261118` (staged, not installed).** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43 (45 since 2026-11-18): back up the host's `inventory.db` before installing it, same as every
   migration release. BC-01 and BC-07 are fixed in the same commit. Spec:
   `docs/Unit_Reservations_Spec.md`; what was checked: the "Reservations" entry at the
@@ -237,7 +247,7 @@ rather than assuming one exists.
   production; check the host. Leaving them is harmless (their ItemName snapshot reads
   "just a test model"); re-keying them is a hand SQL edit on the host after a backup.
 - **BC-10 (2026-10-26): the toast rendered its message as HTML — fixed in `282ad8e`
-  (committed, pushed 2026-11-16), in no release.** `_Layout` now serializes TempData into the
+  (committed, pushed 2026-11-16), in `VIS_Release_20261118` (staged, not installed).** `_Layout` now serializes TempData into the
   toast as a JSON string and `showToast` sets the message as text, so a stored item
   name can't become markup in the registration success toast or someone else's
   duplicate-PN error. No migration. Verified live on a copy of the dev db: the audit's
@@ -4057,3 +4067,30 @@ that works like New Item's name box. Both were scoped back and I said build as s
 
 **Changes the OPEN state at the top of this file:** a new first Still to do bullet, the
 11/11 host copy in the database table, and the migration count (42 to 45) in two bullets.
+
+**Release VIS_Release_20261118 staged (2026-11-18) — Reservations, the audit fixes and
+Reserve an item, built and checked, not installed.** Everything from `282ad8e` to
+`fe9f8e6`. I said "Commit and release" after the fixes.
+
+- **What and where.** `Inventory_Bus\VIS_Release_20261118\` on the SD card `MASTER128`,
+  beside the 11/11 host copy, my pick: `VIS_application_11.18.26\` (544 files, 131 MB,
+  self-contained win-x64, product version `1.0.0+ade3271…`), `VIS_Inventory\inventory.db`
+  and a short `README_FIRST.txt` (what's new, six deploy steps, no rollback). Published
+  from a clean clone of master into `C:\VIS_Host\november18threlease`, so nothing
+  uncommitted is in it; all 544 files, the db and the README matched by SHA-256 after
+  the copy to the card.
+- **The db, pre-migrated (my pick).** A fresh copy of the 11/11 host db was started once
+  with the release build and no requests: 43, 44 and 45 applied and nothing else was
+  written. Against the 11/11 copy, 26 tables are identical row for row, the migration
+  history has 3 more rows, and `Reservations` and `ReservationLines` are new and empty.
+  SHA-256 `4826669e…`. It's only right for a host nobody has used since 11/11; the
+  README says so in step 4, and otherwise the app migrates the host's own db.
+- **Checked.** The published exe in Production on a separate copy of that db: 14 pages
+  200 signed in, the six static files 200 (the scoped CSS bundle too), the Reserve an item
+  box and its search answering, no server errors. The 11/11 original and local
+  `inventory.db` unchanged.
+- **Not done.** Not installed on the host. `C:\VIS_Host\october19threlease` is still on this
+  laptop beside the new one; the old `VIS_Release_20261019` folder is still on `LESLISGIFT`.
+
+**Changes the OPEN state at the top of this file:** a new first Still to do bullet, a row
+for the staged db, and the five bullets for those commits now say they're in this release.

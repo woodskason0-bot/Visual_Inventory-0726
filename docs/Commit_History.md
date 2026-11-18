@@ -11,6 +11,17 @@ landed, when."
 
 ## 2026-11-18
 
+### docs — release VIS_Release_20261118 staged
+Docs only. A release built from `ade3271` (the code is `fe9f8e6`): self-contained win-x64,
+544 files, published from a clean clone into `C:\VIS_Host\november18threlease`, staged on
+the SD card `MASTER128` at `Inventory_Bus\VIS_Release_20261118\` with the 11/11 host db
+already moved from 42 to 45 and a short `README_FIRST.txt`; everything SHA-256 matched
+after the copy. Handoff: a new first Still to do bullet, a row for the staged db, the five
+bullets for `282ad8e` to `fe9f8e6` now in this release, and a Pass log entry. One update
+line each in `VIS_Debugging_Log.md` and `Bug_Checks.md`. Not installed.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/VIS_Debugging_Log.md`, `docs/Bug_Checks.md`,
+`docs/Commit_History.md`
+
 ### docs — log BC-11, BC-12, BC-13's formula part and Reserve an item (`fe9f8e6`)
 Docs only. `Bug_Checks.md`: BC-11 and BC-12 marked fixed in `fe9f8e6` with status
 paragraphs (before and after), BC-13's formula part fixed; only BC-09 is open, as ruled.

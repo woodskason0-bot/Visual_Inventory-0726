@@ -16,6 +16,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-11-18:** BC-11 and BC-12 are fixed, and BC-13's formula-leading values at Kason's yes. Each was reproduced on the current build and checked on the fixed one in the running app, against copies of the 11/11 host db; committed as `fe9f8e6`. BC-11 brings migration 45. See the 2026-11-18 entry below. Open: BC-09, as ruled.
 
+**Update 2026-11-18 (release):** everything above from `282ad8e` to `fe9f8e6` is in `VIS_Release_20261118`, built from `ade3271` and staged on `MASTER128`, not installed. The Deployment status lines in the entries below predate it.
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
