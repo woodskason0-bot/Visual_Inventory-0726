@@ -55,11 +55,12 @@ actions are logged as `DeCory.Thomas`, a spelling the pre-fix code could never
 produce (it flattened every name to `Decory.Thomas`). Treat it as deployed, not
 proven.
 
-### Which database file is which, as of 2026-10-19
+### Which database file is which, as of 2026-11-18
 
 | File | md5 | Notes |
 |---|---|---|
-| `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | **Newest copy of the host**, pulled 2026-10-19 with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. The old 9/2 raw pull (`Releases\VIS_Inventory`, its `inventory.db` md5 `3b500df5…`) is copied to OneDrive `Superseded Releases\VIS_Inventory_hostpull_20260902`, hash-checked; it is still on the USB until I delete it by hand. |
+| `E:\Inventory_Bus\VIS_Inventory\inventory.db` (SD `MASTER128`) | `de1a47e2…` (SHA-256) | **Newest copy of the host**, brought over 2026-11-11 (file time 11/11 2:28 PM, newest log 11/11). 537 items / 566 variants / 55 users / 853 logs / 44 tracked units, 42 migrations, journal mode `delete`, `integrity_check ok`. Checked on copies only, 2026-11-18: 43, 44 and 45 apply cleanly and the pages load. For the next release (my pick: ship it pre-migrated, valid only if VIS hasn't been used on the host since 11/11). |
+| `D:\Inventory_Bus\inventory.db` (USB `LESLISGIFT`) | `ff07ddcc…` | The 10/19 pull, **superseded by the 11/11 copy above**, pulled with the host app stopped; last written on the host 10/15 3:36 PM. 512 items / 539 variants / 54 users / 727 logs / 10 orders / 6 deliveries, 39 migrations, journal mode `delete` (no sidecars), `integrity_check ok`. The same folder holds older files of mine (`inventory.dev.db` from 8/28, the 8/19 and 8/6 backups, an `.sqbpro`) and `inventory.dev.db.reseeded-20261019`, a copy of the dev db below. The old 9/2 raw pull (`Releases\VIS_Inventory`, its `inventory.db` md5 `3b500df5…`) is copied to OneDrive `Superseded Releases\VIS_Inventory_hostpull_20260902`, hash-checked; it is still on the USB until I delete it by hand. |
 | `D:\Releases\VIS_Release_20261019\VIS_Inventory\inventory.db` (USB `LESLISGIFT`) | `1b74d796…` | **For the host, optional:** a byte copy of the re-seeded dev db below = the 10/19 host pull + migrations 40 to 42 + the 44 sheet units. Every other table is row-for-row identical to the pull; checked on the staged file itself. Safe to copy over the host's `inventory.db` only if that is still `ff07ddcc…` (nothing written since the pull) and after a backup. |
 | `C:\VIS_Inventory\inventory.dev.db` | `15d21a55…` (SHA-256) | Dev sandbox, re-seeded 2026-10-19 = that host pull + migrations 40 to 42 + 44 units from the Samurai sheet (see that Pass log entry). **Current — the right file to test against.** Its previous state (the 9/23 host copy + the same 44 units) is `inventory.dev.db.pre-reseed-backup-20261019-140216`, now in OneDrive (see the 2026-10-19 cleanup entry). |
 | `E:\MasterBackup\Copy of inventorydb and image folder\VIS_Inventory\inventory.db` (SD `MASTER128`) | `6b128aae…` | The 9/23 copy of the host, **superseded by the 10/19 pull above.** 505 items / 532 variants / 55 users / 701 logs, 39 migrations, journal mode `delete` (no sidecars). Newest log 9/21. |
@@ -71,6 +72,17 @@ rather than assuming one exists.
 
 ### Still to do
 
+- **Bug fixes and a quick search, 2026-11-18: built and checked, committed as
+  `fe9f8e6`, in no release.** BC-11 (two registrations at once getting the same ItemId) is fixed with a
+  unique index on `ItemId`, **migration 45**, and the next number on a clash. BC-12 (two
+  stock changes at once, the second saving over the first) is fixed by Modify Stock and
+  Quick Add taking the write lock before they read. BC-13's formula-leading values get a
+  leading `'`. Reserved Items has a new "Reserve an item" search for Standard and up.
+  Everything was reproduced and checked in the running app on copies of the 11/11 host
+  db (table above), which took 43, 44 and 45 cleanly. **The next build from master moves
+  a db from 42 to 45:** back up the host's `inventory.db` first. Still open: BC-09, as
+  ruled. Record: `docs/VIS_Debugging_Log.md`, 2026-11-18, and the Pass log entry at the
+  end of this file.
 - **Server-readiness review, from 2026-11-11: two new docs and the comment move,
   committed as `80faae7` and pushed (2026-11-16), in no release.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
   real server (identity, HTTPS, the passcode, tests, the open bugs, the handoff split),
@@ -98,8 +110,8 @@ rather than assuming one exists.
   order?" (Yes resubmits it as a new order, rechecked against every other order; No
   cancels the line; the orderer or an Engineer and up on the Line can answer). **That
   brings migration 44 (`AddOrderItemNote`, one nullable `Note` column on
-  `OrderItems`)**, so the next build from master moves a db from 42 to 44:
-  back up the host's `inventory.db` first. Still open, each needing a call from me:
+  `OrderItems`)**, so the next build from master moves a db from 42 to 44 (45 since
+  2026-11-18): back up the host's `inventory.db` first. Still open, each needing a call from me:
   BC-11 and BC-12 (Front_Load A9), and whether the CSV guards formula-leading values.
   Nothing ever stopped an orderer picking up their own order; there was just no link to
   the page, so the sidebar now has a "Pickup Queue" link for everyone signed in (my
@@ -121,7 +133,7 @@ rather than assuming one exists.
   `docs/VIS_Debugging_Log.md`, 2026-11-16, "BC-04".
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
   (2026-11-09), pushed 2026-11-16, in no release.** Migration 43 (`AddReservations`) comes with
-  it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every
+  it, so the next build from master moves whichever db it starts against from 42 to 43 (45 since 2026-11-18): back up the host's `inventory.db` before installing it, same as every
   migration release. BC-01 and BC-07 are fixed in the same commit. Spec:
   `docs/Unit_Reservations_Spec.md`; what was checked: the "Reservations" entry at the
   end of Current state.
@@ -4010,3 +4022,38 @@ migration, 43 (`AddReservations`): two new tables, `Reservations` and
 
 **Changes the OPEN state at the top of this file:** the first Still to do bullet (the
 10/19 release is on the host) and a new bullet for this work.
+
+**Reserve an item, BC-11, BC-12 and BC-13's formula part (2026-11-18, `fe9f8e6`, in no
+release) — the last audit fixes before a release, and a quick search on Reserved Items.**
+I asked for the fixes before building the release, and for a search on the reserve side
+that works like New Item's name box. Both were scoped back and I said build as scoped.
+
+- **BC-11.** Migration 45 (`UniqueItemId`): a unique index on `InventoryItems.ItemId`. A
+  registration or Intake row whose number got taken in between takes the next one and
+  saves again, up to 5 tries; the toast and the log show the final id. An Intake preview
+  numbers a batch's new items one after another. Deleted ids still aren't reused.
+- **BC-12.** Modify Stock and Quick Add take SQLite's write lock before they read the
+  stack, so two changes at once run one after the other. No migration, nothing new on
+  screen. Pickup, short-pull, returns and the Intake stock batch already did.
+- **BC-13's formula part.** In the CSV export, a text value starting with `=`, `+`, `-`
+  or `@` gets a leading `'`.
+- **Reserve an item.** A search box at the top of Reserved Items, for Standard and up.
+  As I type it lists up to 10 items (id, name or Rheem part number) that I can reserve
+  and that have something free right now, with how many (and TC for motors), the same
+  number the Reserve dialog works from. Clicking one, or Enter for the top one, opens its
+  Item Card, where Reserve is. Nothing free: "Nothing free to reserve matches that."
+  Viewers don't see it. Files: `ReservationsController.Find`,
+  `Views/Reservations/Index.cshtml`.
+- **Checked** in the running app on copies of the 11/11 host db, eight sessions posting
+  at the same instant. Before: eight registrations all got CVE-0009, and every mixed
+  stock race lost changes (8 scraps of 1 moved the stack by 1). After: 32 distinct ids,
+  and every count matched its logs, including a pickup landing during adjustments. The
+  search was checked as Admin, a Standard user on Commercial Packaged/Splits, one on
+  International (none of the other Line's items) and a Viewer (no box, 403), in the
+  browser too: the list, a click and Enter opening the card, a hold lowering the count.
+  Build 0 errors, 14 warnings. The MASTER128 original, the dev db and local `inventory.db`
+  unchanged.
+- **Not checked:** recorded-unit changes racing a stock change, a real phone.
+
+**Changes the OPEN state at the top of this file:** a new first Still to do bullet, the
+11/11 host copy in the database table, and the migration count (42 to 45) in two bullets.

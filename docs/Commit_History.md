@@ -9,6 +9,35 @@ landed, when."
 
 ---
 
+## 2026-11-18
+
+### docs — log BC-11, BC-12, BC-13's formula part and Reserve an item (`fe9f8e6`)
+Docs only. `Bug_Checks.md`: BC-11 and BC-12 marked fixed in `fe9f8e6` with status
+paragraphs (before and after), BC-13's formula part fixed; only BC-09 is open, as ruled.
+`VIS_Debugging_Log.md`: the 2026-11-18 entry and register rows. `Code_Notes.md`:
+`AppDbContext`, `InventoryService` (two registrations at once, stock changes lock before
+they read, the CSV guard), `ReservationsController.Find` and the Reserved Items search.
+`Front_Load.md`: A9 needs nothing now. Handoff: a new first Still to do bullet, the 11/11
+host copy on MASTER128 in the database table, 42 to 45 in two bullets, and a Pass log
+entry. `Handoff_2026-11-17.md`: a note that these are done.
+*Files:* `docs/Bug_Checks.md`, `docs/VIS_Debugging_Log.md`, `docs/Code_Notes.md`,
+`docs/Front_Load.md`, `docs/VIS_Handoff_State.md`, `docs/Handoff_2026-11-17.md`,
+`docs/Commit_History.md`
+
+### `fe9f8e6` — Fix: BC-11 (unique ItemId, migration 45), BC-12 (stock writes lock before reading), BC-13 formula guard; Reserve an item search
+Migration 45 (`UniqueItemId`): a unique index on `InventoryItems.ItemId`. BC-11: a new
+item whose number was taken between generating and saving takes the next one and saves
+again (`SaveNewItem`, Registry and Intake), and an Intake preview numbers a batch's new
+items one after another. BC-12: `ModifyStock` and `AddStock` open the transaction before
+reading the stack (`BeginStockWrite`); the old `ModifyStock` body is `ModifyStockLocked`.
+BC-13: `Csv()` puts a `'` before a value starting with `=`, `+`, `-` or `@`. New: the
+"Reserve an item" search on Reserved Items, `ReservationsController.Find` and its box and
+script in `Views/Reservations/Index.cshtml`.
+*Files:* `Data/AppDbContext.cs`, `Migrations/20261118205859_UniqueItemId.cs`,
+`Migrations/20261118205859_UniqueItemId.Designer.cs`,
+`Migrations/AppDbContextModelSnapshot.cs`, `Services/InventoryService.cs`,
+`Controllers/ReservationsController.cs`, `Views/Reservations/Index.cshtml`
+
 ## 2026-11-17
 
 ### docs — handoff for chat before the 11/18 release

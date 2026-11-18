@@ -14,6 +14,8 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-11-16:** BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed for the case where the TC is on the shelves, and BC-15 is new and fixed. All verified before and after in the running app, none committed yet; see the 2026-11-16 entry below. Open: BC-04, BC-09, BC-11, BC-12, BC-02 when the TC isn't there, and BC-13's formula-leading values. Each of those needs a decision, not just code. Later the same day Kason ruled on BC-02's shortage case and it was built: see "the Non-TC Motor question" below. Then BC-04 was ruled and built: see "BC-04, two people editing one unit" below. All of it is committed as `0f949b3`, in no release. Pushed the same night: every commit named in these update lines is on GitHub.
 
+**Update 2026-11-18:** BC-11 and BC-12 are fixed, and BC-13's formula-leading values at Kason's yes. Each was reproduced on the current build and checked on the fixed one in the running app, against copies of the 11/11 host db; committed as `fe9f8e6`. BC-11 brings migration 45. See the 2026-11-18 entry below. Open: BC-09, as ruled.
+
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
 ## Issue register
@@ -44,7 +46,9 @@ The rows below preserve the latest recorded per-issue status. Historical finding
 | BC-05 | P2 | Roster logging (and serials on Add) records more units than the stack holds | Fixed 2026-11-16 in 0f949b3; not in a release |
 | BC-06 | P2 | The same serial twice in one roster save throws and saves nothing | Fixed 2026-11-16 in 0f949b3; not in a release |
 | BC-08 | P2 | A short-pull correction changes another team's stack | Fixed 2026-11-16 in 0f949b3; not in a release |
-| BC-13 | P2 | CSV export shifts columns on a comma in Location, Type or Project Code | Fixed 2026-11-16 in 0f949b3; not in a release; formula-leading values are a decision |
+| BC-11 | P1 | Two registrations at the same moment get the same ItemId (no unique index) | Fixed 2026-11-18 in fe9f8e6; not in a release: unique index (migration 45), the next number on a clash |
+| BC-12 | P1 | Two stock changes at the same moment: the second saves over the first | Fixed 2026-11-18 in fe9f8e6; not in a release: Modify Stock and Quick Add lock before they read |
+| BC-13 | P2 | CSV export shifts columns on a comma in Location, Type or Project Code | Fixed 2026-11-16 in 0f949b3; not in a release. Formula-leading values fixed 2026-11-18 in fe9f8e6 |
 | BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions | Fixed 2026-11-16 in 0f949b3; not in a release |
 | BC-15 | P2 | Reserve dialog: one new serial typed on two stacks hits the unique index, shows a raw SQLite error and loses the form | New and fixed 2026-11-16 in 0f949b3; not in a release |
 
@@ -513,6 +517,30 @@ Verification and observed results:
 Remaining issues: BC-11, BC-12, BC-13's formula-leading values (decisions); BC-09 as ruled.
 Deployment status: committed and pushed as `0f949b3`, with the fixes above, in no release. No migration of its own.
 Links to saved artifacts: none kept; the scripts and results were in the session scratchpad.
+
+
+## 2026-11-18 — BC-11, BC-12, and BC-13's formula part
+
+Date: 2026-11-18
+Purpose: the last open audit findings before a release. BC-11, two registrations at once getting the same ItemId; BC-12, two stock changes at once, the second saving over the first; BC-13's formula-leading values. Kason confirmed the scope as written back: BC-11 with a unique index and the next number on a clash; BC-12 by locking before the read (no migration, no refusal), over a version column that would refuse the second change; BC-13 with a leading `'`.
+Source revision: `8b081c6` (code `0f949b3`) plus these changes, committed as `fe9f8e6`. Migration 45 (`UniqueItemId`).
+Changes made:
+- `Data/AppDbContext.cs`: a unique index on `InventoryItems.ItemId`; migration `20261118205859_UniqueItemId` creates `IX_InventoryItems_ItemId`. No duplicate ItemId in the 11/11 host copy (MASTER128 `Inventory_Bus`), `inventory.dev.db` or local `inventory.db`, checked on copies.
+- `InventoryService.SaveNewItem`: saves a new item, and when the index refuses its ItemId (SQLite error 19 on `InventoryItems.ItemId`), generates the next one, updates the item and its New Registry log, and saves again, up to 5 tries. After 5 the item is taken back out: Registry says "Couldn't assign an Item ID. Nothing was registered. Try again."; an Intake row gets that as its error and the rest of the batch goes on. Used by `CreateItem` and `CommitIntake`.
+- `GenerateItemId` takes the ids an Intake preview has already handed out, so a batch's new items preview one after another. The never-reuse rule (VIS-15) is unchanged.
+- `ModifyStock` now opens the transaction, SQLite's `BEGIN IMMEDIATE`, before it reads the item, and reloads anything the request already had loaded; the old body is `ModifyStockLocked`. Inside a caller's transaction (the Intake stock batch) it runs as before. `AddStock` (Quick Add) does the same. Pickup, short-pull, returns and the batch already opened theirs first.
+- `Csv()`: a value starting with `=`, `+`, `-` or `@` gets a leading `'`. Only text fields go through it; quantities don't.
+Verification and observed results:
+- Through the real endpoints, 8 signed-in sessions posting at the same instant, each build on its own copy of the 11/11 host db (the fixed build migrated its copy 44 to 45 on start):
+  - Registrations, 4 rounds of 8 Commercial valves. Before: round one all 8 got CVE-0009; 21 duplicate ids in 4 rounds, each toast naming the duplicate. After: CVE-0009 to CVE-0040, 32 distinct, every New Registry log's ItemId matching its item.
+  - Stock on CCL-0030 V283, compared with the sum of its new log rows. Before: 8 scraps of 1 moved the stack by 1 (logs said 8); 4 adds of 2 against 4 scraps of 1, +2 (logs +4); 4 Quick Adds of 1 against 4 adjustments of -1, -2 (logs 0); a pickup of 3 during 4 adjustments of -1, -2 (logs -7). After: -8, +4, 0 and -7, each matching.
+- After, one at a time on the fixed build: an Intake commit of 3 new valves and 4 registrations at the same instant got 7 distinct ids. An Intake preview of 3 new valves showed CVE-0043, 0044, 0045 (before: CVE-0022 three times). CVE-0041 registered at quantity 0 and deleted; the next registration got CVE-0042. A Location Transfer split, an Intake stock-batch Add, and a refused Scrap on a stack that's gone (nothing changed, and the next change saved, so no lock was left held) all behaved as before.
+- CSV: an item named `=1+1 formula valve`, part number `-5-X`, brand `@home` exported as `'=1+1 formula valve`, `'-5-X`, `'@home`; `+plus valve` as `'+plus valve`. 51 rows, 14 fields on every one.
+- Build 0 errors, 14 warnings. The MASTER128 original, `inventory.dev.db` and `inventory.db` hashes unchanged.
+- Not checked: recorded-unit changes racing a stock change; the task and delivery "first claim wins" races; a real phone.
+Remaining issues: BC-09, as ruled. BC-12's fix leans on SQLite's one-writer lock; a move off SQLite needs another look.
+Deployment status: committed as `fe9f8e6`, in no release. Migration 45 rides with 43 and 44: the next release moves a database from 42 to 45 on first start.
+Links to saved artifacts: none kept; the race scripts and results were in the session scratchpad.
 
 
 ## Continuing a debugging session

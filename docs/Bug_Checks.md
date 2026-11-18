@@ -24,6 +24,8 @@ Visual Inventory System — repository audit
 
 **Update 2026-11-16 (night):** every 2026-11-16 fix above, with migration 44 and a Pickup Queue sidebar link, is committed as `0f949b3` on master, in no release. Pushed the same night, so every fix in this file is on GitHub.
 
+**Update 2026-11-18:** BC-11, BC-12 and BC-13's formula-leading values are fixed in `fe9f8e6`, in no release. BC-11 brings migration 45, a unique index on `ItemId`. Each was reproduced on the current build and checked on the fixed one in the running app, against copies of the 11/11 host db; see `docs/VIS_Debugging_Log.md`, 2026-11-18. Open: BC-09 (ruled).
+
 ## Result
 
 There are **13 actionable findings: 5 P1 and 8 P2**. Twelve were reproduced with isolated service/database checks; one HTML-injection path was established by source tracing and an executed JavaScript sink check. None is represented as a completed browser test.
@@ -44,9 +46,9 @@ P1 means prioritize in the next repair cycle because the issue can corrupt inven
 | BC-08 | P2 | Short-pull correction accepts another team's stack — **fixed 2026-11-16 (`0f949b3`)** | Service reproduction | Known minor, reconfirmed |
 | BC-09 | P1 | Empty database cannot complete the migration chain | Migration reproduction | Separate from accepted startup error handling |
 | BC-10 | P1 | Toast message can become active HTML through JavaScript escapes — **fixed in `282ad8e` (2026-10-26)** | Source + JavaScript sink reproduction | Different sink from fixed VIS-7 |
-| BC-11 | P1 | Overlapping registrations can persist duplicate ItemIds | Two-context reproduction | Different race from fixed VIS-15 |
-| BC-12 | P1 | Overlapping stock changes lose an update | Controlled stale-context reproduction | Known concurrency minor, reconfirmed |
-| BC-13 | P2 | CSV export shifts columns when location contains a comma — **fixed 2026-11-16 (`0f949b3`); formula-leading values open** | Export reproduction | Known minor, reconfirmed |
+| BC-11 | P1 | Overlapping registrations can persist duplicate ItemIds — **fixed 2026-11-18 (`fe9f8e6`, migration 45)** | Two-context reproduction | Different race from fixed VIS-15 |
+| BC-12 | P1 | Overlapping stock changes lose an update — **fixed 2026-11-18 (`fe9f8e6`)** | Controlled stale-context reproduction | Known concurrency minor, reconfirmed |
+| BC-13 | P2 | CSV export shifts columns when location contains a comma — **fixed 2026-11-16 (`0f949b3`); formula-leading values fixed 2026-11-18 (`fe9f8e6`)** | Export reproduction | Known minor, reconfirmed |
 | BC-14 | P2 | Modify Stock's new-stack Team picker stays on screen after switching actions — **fixed 2026-11-16 (`0f949b3`)** | Source + seen in the running app | Added 2026-11-16, after the audit |
 | BC-15 | P2 | Reserve dialog: one new serial typed on two stacks hits the unique index and loses the form — **fixed 2026-11-16 (`0f949b3`)** | Reproduced in the running app | Added 2026-11-16, after the audit |
 
@@ -249,6 +251,8 @@ A permitted registrant can store an item name containing encoded markup. Another
 
 **P1 · Reproduced with two contexts · Identity/history corruption**
 
+**Status 2026-11-18: fixed in `fe9f8e6`.** Migration 45 (`UniqueItemId`) puts a unique index on `InventoryItems.ItemId`; none of the 11/11 host copy, the dev db or local production holds a duplicate, so it applies cleanly. A registration or Intake row whose number was taken between generating it and saving takes the next one and saves again, up to 5 tries; the toast and the New Registry log carry the final id. An Intake preview also numbers a batch's new items one after another. Before, in the running app, 8 registrations at the same instant all got CVE-0009, 21 duplicates in 4 rounds, and an Intake preview of three new valves showed CVE-0022 three times. After: 32 distinct ids in 4 rounds with every log matching its item, an Intake and 4 registrations at once got 7 distinct ids, the preview showed three, and a deleted id still wasn't reused.
+
 **Location:** `Services/InventoryService.cs:268–303,324–389`; `Controllers/HomeController.cs:668–702`; `Data/AppDbContext.cs:43–51`; `Models/InventoryItem.cs:26–27`.
 
 ID generation reads the current maximum and checks for an existing candidate before insertion. Two registrations can both pass before either saves. `Id` is the database primary key; `ItemId` has no unique constraint. The existing development-copy schema confirmed that absence.
@@ -264,6 +268,8 @@ ID generation reads the current maximum and checks for an existing candidate bef
 ### BC-12 — Overlapping stock writes can overwrite each other
 
 **P1 · Controlled interleaving reproduced · Previously documented concurrency minor**
+
+**Status 2026-11-18: fixed in `fe9f8e6`.** Modify Stock and Quick Add take the database's write lock before they read the stack, so a change made at the same moment waits and applies on top; anything the request already loaded is read again under the lock. Pickup, short-pull, returns and the Intake stock batch already locked first. No migration, nothing new on screen. Before, in the running app: 8 scraps of 1 at the same instant moved the stack by 1 or 2 while logging 8; 4 adds of 2 against 4 scraps, 4 Quick Adds against 4 adjustments of -1, and a pickup of 3 during 4 adjustments of -1 all lost changes. After: every count matched its logs. It relies on SQLite letting one writer in at a time; a move off SQLite needs another look. Recorded-unit changes racing a stock change weren't run separately.
 
 **Location:** `Services/InventoryService.cs:1827,1928–1956,2235–2243`; `Models/ItemVariant.cs`; `Data/AppDbContext.cs:53–65`.
 
@@ -281,7 +287,7 @@ Stock changes use a tracked entity's read-modify-write quantity without a concur
 
 **P2 · Reproduced · Previously documented minor**
 
-**Status 2026-11-16: fixed in `0f949b3`, except the formula policy.** Every text field is quoted when it holds a comma, a quote or a line break; the existing comma-to-semicolon swaps stay. Before: rows of 14 and 15 fields. After: 14 on every row. Whether a value starting with `=`, `+`, `-` or `@` gets a leading quote is still a decision.
+**Status 2026-11-16: fixed in `0f949b3`, except the formula policy.** Every text field is quoted when it holds a comma, a quote or a line break; the existing comma-to-semicolon swaps stay. Before: rows of 14 and 15 fields. After: 14 on every row. **2026-11-18:** the formula part, at Kason's yes: a text value starting with `=`, `+`, `-` or `@` gets a leading `'` (`fe9f8e6`). An item named `=1+1 formula valve` with part number `-5-X` and brand `@home` exported as `'=1+1 formula valve`, `'-5-X`, `'@home`, with 14 fields on every row.
 
 **Location:** `Services/InventoryService.cs:629–649`.
 

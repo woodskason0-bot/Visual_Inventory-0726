@@ -267,6 +267,13 @@ were written.
 - **After a save or release** the user goes back to the page they came from, always
   as a local path. From Search Center the Item Card reopens on the item just changed,
   so the result is right there.
+- **`Find` answers "Reserve an item".** Up to 10 items whose id, name or Rheem part
+  number contains the text, that this person may reserve (`CanReserve`: Standard and
+  up on their own Line, Admin anywhere) and that have something free to hold now.
+  The free count goes stack by stack with each new hold counted against the next, so
+  it's what one person could really hold in total, not each stack's maximum added up.
+  Only items with stock on the shelf get worked out, 50 at most, so a one-letter
+  search stays quick. Viewers get a 403.
 
 ## Controllers/SettingsController.cs
 
@@ -378,6 +385,10 @@ were written.
   at all. That silently blocked three passes in a row. `CompressorUnit.ItemId`,
   `MotorUnit.ItemId`, `TrackedUnit.Line` and the Reservation indexes are all here for
   that reason as much as for speed.
+- **ItemId is unique** (migration 45). The generator used to be the only thing
+  keeping ids apart, and two registrations at the same moment both got past it. The
+  index makes the second save fail, and `InventoryService.SaveNewItem` retries with
+  the next number.
 - **Rheem part number** is a business identifier like `ItemId`, so no two items may
   share one. The index is partial so blanks and the shared "N/A" value can both
   repeat. Older blank rows were folded into "N/A".
@@ -1054,7 +1065,25 @@ were written.
   like the index (BC-06).
 - **CSV quoting.** Every text field is quoted when it holds a comma, a quote or a line
   break. The older comma-to-semicolon swaps stay, so those columns read the way they
-  always have (BC-13).
+  always have (BC-13). A value starting with `=`, `+`, `-` or `@` also gets a `'` in
+  front, so Excel shows it as text instead of running it as a formula; my call,
+  2026-11-18. Quantities don't go through `Csv()`.
+- **Two registrations at the same moment.** The id is generated, then saved, and two
+  registrations in between used to keep the same number: eight at once all got
+  CVE-0009 (BC-11). The unique index on `ItemId` now refuses the second save, and
+  `SaveNewItem` takes the next number and saves again, up to 5 tries, putting the
+  final id on the New Registry log too. Registry and Intake both save new items
+  through it. An Intake preview saves nothing, so the ids it has already handed out go
+  to `GenerateItemId`, and a batch's new rows preview one after another instead of all
+  showing the same id.
+- **Stock changes lock before they read.** `ModifyStock` and `AddStock` open the
+  transaction, SQLite's `BEGIN IMMEDIATE`, before they read the stack, and read again
+  anything the request had already loaded. Two changes at the same moment then run
+  one after the other; before, both started from the same count and the second saved
+  over the first, so the count and its logs disagreed (BC-12). Inside the Intake stock
+  batch, the batch's own transaction already holds the lock. Pickup, short-pull and
+  returns open theirs first already. It leans on SQLite letting one writer in at a
+  time: on another database this code alone wouldn't stop it.
 
 ## Services/LocationCodec.cs
 
@@ -1902,6 +1931,12 @@ were written.
   grouped by reason, then your Line, the rest of your Branch, and the other branches
   greyed. A row opens its Item Card on Search Center, and Edit opens the Reserve
   dialog there. The filters run in the browser because the whole list is one page.
+- **Reserve an item.** Standard and up get a search box above the filters (I asked for
+  it 2026-11-18, like New Item's name box). It asks `/Reservations/Find` a quarter
+  second after typing stops, so the free counts are current, and draws the list the
+  way New Item's does, from nodes because names and part numbers are user-typed. A
+  pick, or Enter for the top one, opens the item's Item Card, where Reserve is. It
+  doesn't reserve from the list itself.
 
 ## Views/Settings/Index.cshtml
 
