@@ -11,6 +11,15 @@ landed, when."
 
 ## 2026-11-17
 
+### docs — handoff for chat before the 11/18 release
+Docs only. New `docs/Handoff_2026-11-17.md`, for a chat session to read and add the next
+fixes before I build the release: what's on master since `VIS_Release_20261019` and the
+42 to 44 db move, what's still open and what each item needs from me (BC-11, BC-12,
+BC-13's formula part, the VIS-15 release-status lines, the Pickup Queue heading,
+Front_Load C2 and C3, BC-09 as ruled), the traps for BC-11 and BC-12, how to work in the
+repo, and the release steps.
+*Files:* `docs/Handoff_2026-11-17.md`, `docs/Commit_History.md`
+
 ### docs — master is pushed; the "not pushed" lines say so
 Docs only. Master went to GitHub on the night of 2026-11-16 (`e1b1a2e..9cd0c15`, the
 nine commits from `282ad8e` on). Now saying pushed: the handoff's OPEN bullets for the
