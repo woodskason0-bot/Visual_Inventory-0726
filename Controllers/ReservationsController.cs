@@ -180,7 +180,51 @@ namespace Visual_Inventory_System.Controllers
             ViewBag.TotalHeld = rowsAll.Sum(x => x.HeldQty);
             ViewBag.EndingThisWeek = rowsAll.Count(x => x.DaysLeft.HasValue && x.DaysLeft.Value <= 7);
             ViewBag.UntilNotice = rowsAll.Count(x => !x.R.EndDate.HasValue);
+            ViewBag.CanReserve = _currentUser.Level >= AccessLevels.Standard;
             return View();
+        }
+
+        /// <summary>
+        /// "Reserve an item": up to 10 items matching q (ItemId, name or Rheem PN) that this person
+        /// may reserve and that have something free to hold now. free = what one person could hold in total.
+        /// </summary>
+        [HttpGet]
+        public IActionResult Find(string? q)
+        {
+            if (_currentUser.Level < AccessLevels.Standard)
+                return StatusCode(403, "Reserving needs Standard access or higher.");
+            string t = (q ?? "").Trim().ToLower();
+            if (t.Length == 0) return Json(Array.Empty<object>());
+
+            var candidates = _db.InventoryItems.AsNoTracking().Include(i => i.Variants)
+                .Where(i => i.ItemId.ToLower().Contains(t) || i.ItemName.ToLower().Contains(t) || i.RheemPartNumber.ToLower().Contains(t))
+                .OrderBy(i => i.ItemId)
+                .ToList()
+                .Where(i => i.ActiveVariants.Sum(v => v.Quantity) > 0 && _reservations.CanReserve(i))
+                .Take(50);
+
+            string by = _currentUser.Name;
+            var found = new List<object>();
+            foreach (var item in candidates)
+            {
+                // Stack by stack, each new hold counted against the next, so the total can really be held.
+                var claims = StockClaims.Load(_db, item.ItemId);
+                var holds = claims.Holds.ToList();
+                int free = 0, freeTc = 0;
+                foreach (var s in claims.Stacks.OrderBy(s => s.Number))
+                {
+                    var (fq, ft) = new StockClaims(item.ItemId, claims.Stacks, holds, claims.Lines).Holdable(by, s.Id, null);
+                    if (fq <= 0) continue;
+                    free += fq;
+                    freeTc += ft;
+                    holds.Add(StockClaims.NewHold(by, s.Id, fq, ft));
+                }
+                if (free <= 0) continue;
+                bool motor = InventoryService.IsMotorType(item.Type);
+                found.Add(new { id = item.ItemId, rpn = item.RheemPartNumber, name = item.ItemName, free, tc = motor ? freeTc : 0, motor });
+                if (found.Count == 10) break;
+            }
+            return Json(found);
         }
 
         /// <summary>The Reserve dialog's body, fetched into Search Center's #reserveModal.</summary>

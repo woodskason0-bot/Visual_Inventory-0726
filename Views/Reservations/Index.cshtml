@@ -6,6 +6,7 @@
     int held = ViewBag.TotalHeld;
     int week = ViewBag.EndingThisWeek;
     int open = ViewBag.UntilNotice;
+    bool canReserve = ViewBag.CanReserve;
 }
 @* Reserved Items. Order: yours by reason, your Line, the rest of your Branch, other branches greyed. Filters are client-side. *@
 <div class="container-fluid py-4 px-3 px-md-4" style="max-width:1400px;">
@@ -16,6 +17,18 @@
         <strong>@week</strong> end@(week == 1 ? "s" : "") this week &middot;
         <strong>@open</strong> until notice
     </p>
+
+    @if (canReserve)
+    {
+        @* Reserve an item: matches you could hold now. A pick opens its Item Card, where Reserve is. *@
+        <div class="row g-3 mb-3">
+            <div class="col-md-6 position-relative">
+                <label for="res-find" class="form-label mb-1">Reserve an item</label>
+                <input type="search" id="res-find" class="form-control" autocomplete="off" placeholder="Type an item ID, name or part number" />
+                <div id="res-find-list" class="list-group position-absolute shadow" style="z-index: 2000; display: none; left: calc(var(--bs-gutter-x) * .5); right: calc(var(--bs-gutter-x) * .5); max-height: 320px; overflow-y: auto;"></div>
+            </div>
+        </div>
+    }
 
     <form class="res-filters row g-3 align-items-end" id="res-filter" role="search" onsubmit="return false;">
         <div class="col-md-6">
@@ -148,5 +161,69 @@
             window.location.href = tr.dataset.href;
         });
     });
+
+    @* Reserve an item. Asked of the server after a short pause, so the free counts are current. *@
+    var find = document.getElementById('res-find');
+    var findList = document.getElementById('res-find-list');
+    if (find && findList) {
+        var timer = null, seq = 0, top = null;
+        var openCard = function (id) { window.location.href = '/Home/SearchCenter?openCard=' + encodeURIComponent(id); };
+        var hide = function () { findList.style.display = 'none'; };
+        var render = function (rows) {
+            findList.innerHTML = '';
+            top = rows.length ? rows[0].id : null;
+            if (!rows.length) {
+                var none = document.createElement('div');
+                none.className = 'list-group-item py-2 px-3 small text-light-gray';
+                none.textContent = 'Nothing free to reserve matches that.';
+                findList.appendChild(none);
+            }
+            rows.forEach(function (m) {
+                @* Built from nodes, not an HTML string: names and part numbers are user-typed. *@
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'list-group-item list-group-item-action py-2 px-3 small border-bottom vis-suggest-item';
+                var idEl = document.createElement('strong');
+                idEl.className = 'text-primary';
+                idEl.textContent = m.id;
+                btn.appendChild(idEl);
+                if (m.rpn) {
+                    var rpnEl = document.createElement('span');
+                    rpnEl.className = 'text-info';
+                    rpnEl.textContent = '[' + m.rpn + ']';
+                    btn.appendChild(document.createTextNode(' '));
+                    btn.appendChild(rpnEl);
+                }
+                btn.appendChild(document.createTextNode(' - ' + m.name + ' '));
+                var freeEl = document.createElement('span');
+                freeEl.className = 'text-light-gray float-end';
+                freeEl.textContent = m.free + ' free' + (m.motor ? ', ' + m.tc + ' TC' : '');
+                btn.appendChild(freeEl);
+                btn.addEventListener('click', function () { openCard(m.id); });
+                findList.appendChild(btn);
+            });
+            findList.style.display = 'block';
+        };
+        find.addEventListener('input', function () {
+            clearTimeout(timer);
+            var term = find.value.trim();
+            top = null;
+            if (!term) { hide(); return; }
+            timer = setTimeout(function () {
+                var mine = ++seq;
+                fetch('/Reservations/Find?q=' + encodeURIComponent(term), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                    .then(function (r) { return r.ok ? r.json() : []; })
+                    .then(function (rows) { if (mine === seq && find.value.trim()) render(rows); })
+                    .catch(function () { });
+            }, 250);
+        });
+        find.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); if (top) openCard(top); }
+            else if (e.key === 'Escape') hide();
+        });
+        document.addEventListener('click', function (e) {
+            if (e.target !== find && !findList.contains(e.target)) hide();
+        });
+    }
 })();
 </script>

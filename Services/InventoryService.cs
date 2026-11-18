@@ -179,7 +179,8 @@ namespace Visual_Inventory_System.Services
         // Item id: <GroupInitial><Type first+last>-NNNN, e.g. Commercial + Valve -> "CVE-0001".
         // Numbered per prefix from the highest ever used, not the highest on a live item:
         // a deleted item's id still owns its logs, orders and unit rows.
-        public string GenerateItemId(string? group, string? type)
+        // alsoTaken: ids handed out but not saved (an Intake preview).
+        public string GenerateItemId(string? group, string? type, ICollection<string>? alsoTaken = null)
         {
             string prefix = BuildPrefix(group, type);   // includes trailing '-'
 
@@ -209,7 +210,7 @@ namespace Visual_Inventory_System.Services
             int next = max + 1;
             string candidate = prefix + next.ToString("D4");
             // Collision guard: never hand back an ID that already exists.
-            while (_db.InventoryItems.Any(i => i.ItemId == candidate))
+            while (_db.InventoryItems.Any(i => i.ItemId == candidate) || (alsoTaken?.Contains(candidate) ?? false))
             {
                 next++;
                 candidate = prefix + next.ToString("D4");
@@ -228,6 +229,37 @@ namespace Visual_Inventory_System.Services
             char tLast = char.ToUpperInvariant(t[t.Length - 1]);
             return $"{gi}{tFirst}{tLast}-";
         }
+
+        // Saves a new item. If the unique index refuses its ItemId (taken since it was generated),
+        // takes the next one and saves again. False after 5 tries, with the item taken back out.
+        private bool SaveNewItem(InventoryItem item, TransactionLog log)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    _db.SaveChanges();
+                    return true;
+                }
+                catch (DbUpdateException ex) when (IsItemIdTaken(ex))
+                {
+                    if (attempt >= 5)
+                    {
+                        foreach (var v in item.Variants) _db.Entry(v).State = EntityState.Detached;
+                        _db.Entry(item).State = EntityState.Detached;
+                        _db.Entry(log).State = EntityState.Detached;
+                        return false;
+                    }
+                    item.ItemId = GenerateItemId(item.Group, item.Type);
+                    log.ItemId = item.ItemId;
+                }
+            }
+        }
+
+        private static bool IsItemIdTaken(DbUpdateException ex) =>
+            ex.InnerException is Microsoft.Data.Sqlite.SqliteException se
+            && se.SqliteErrorCode == 19
+            && se.Message.Contains("InventoryItems.ItemId");
 
         // serials: compressors only, one CompressorUnit each.
         // thermocoupledQty: motors only, clamped to Quantity, one blank MotorUnit each.
@@ -273,7 +305,7 @@ namespace Visual_Inventory_System.Services
 
             _db.InventoryItems.Add(newItem);
 
-            _db.TransactionLogs.Add(new TransactionLog
+            var log = new TransactionLog
             {
                 Timestamp = System.DateTime.UtcNow,
                 ActionType = "New Registry",
@@ -282,9 +314,12 @@ namespace Visual_Inventory_System.Services
                 QuantityChange = qty,
                 Details = $"Registered to {newItem.Group}/{newItem.Team} (Line: {(string.IsNullOrEmpty(newItem.Line) ? "unassigned" : newItem.Line)})",
                 User = newItem.UpdatedBy
-            });
+            };
+            _db.TransactionLogs.Add(log);
 
-            _db.SaveChanges();   // need variantOne.Id before unit rows can reference it
+            // Saved before the unit rows: they need variantOne.Id.
+            if (!SaveNewItem(newItem, log))
+                throw new System.InvalidOperationException("Couldn't assign an Item ID. Nothing was registered. Try again.");
 
             var cleanSerials = (serials ?? new List<string>())
                 .Select(s => (s ?? "").Trim()).Where(s => s.Length > 0)
@@ -472,9 +507,11 @@ namespace Visual_Inventory_System.Services
         }
 
         // One CSV field: quoted when it holds a comma, a quote or a line break.
+        // A leading =, +, - or @ gets a ' so a spreadsheet shows it as text, not a formula.
         private static string Csv(string? s)
         {
             s ??= "";
+            if (s.Length > 0 && "=+-@".IndexOf(s[0]) >= 0) s = "'" + s;
             return s.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
         }
 
@@ -1141,6 +1178,8 @@ namespace Visual_Inventory_System.Services
             string grp = OrgStructure.GroupFor(line);
             var now = System.DateTime.UtcNow;
             string ts = now.ToString("yyyy-MM-dd HH:mm:ss");
+            // A preview saves nothing, so its new ids are counted here.
+            var previewIds = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
 
             foreach (var l in lines)
             {
@@ -1215,11 +1254,12 @@ namespace Visual_Inventory_System.Services
                 }
                 else
                 {
-                    string itemId = GenerateItemId(grp, type);
-                    res.NewItems.Add($"{itemId} {name} x{qty}");
-                    res.UnitsIn += qty;
+                    string itemId = GenerateItemId(grp, type, previewIds);
                     if (preview)
                     {
+                        previewIds.Add(itemId);
+                        res.NewItems.Add($"{itemId} {name} x{qty}");
+                        res.UnitsIn += qty;
                         res.SerialsLogged += serials.Count;
                         res.TcUnitsLogged += tcQty;
                         continue;
@@ -1241,18 +1281,25 @@ namespace Visual_Inventory_System.Services
                         FdaString = fda, RegisteredAt = now, IsRetired = false
                     });
                     _db.InventoryItems.Add(item);
-                    _db.TransactionLogs.Add(new TransactionLog
+                    var log = new TransactionLog
                     {
                         Timestamp = now, ActionType = "New Registry", ItemId = itemId,
                         ItemName = item.ItemName,
                         QuantityChange = qty,
                         Details = $"Registered to {grp}/{(team.Length == 0 ? "no team" : team)} (Line: {(line.Length == 0 ? "unassigned" : line)}) via Intake.",
                         User = submittedBy
-                    });
-                    _db.SaveChanges();
+                    };
+                    _db.TransactionLogs.Add(log);
+                    if (!SaveNewItem(item, log))
+                    {
+                        res.Errors.Add($"{name}: couldn't assign an Item ID, so it wasn't registered. Try again.");
+                        continue;
+                    }
+                    res.NewItems.Add($"{item.ItemId} {name} x{qty}");
+                    res.UnitsIn += qty;
                     var newVariant = item.Variants.First();
-                    if (serials.Count > 0) LogIntakeSerials(itemId, newVariant.Id, serials, submittedBy, now, res);
-                    if (tcQty > 0) LogIntakeThermocoupled(itemId, newVariant.Id, tcQty, submittedBy, now, res);
+                    if (serials.Count > 0) LogIntakeSerials(item.ItemId, newVariant.Id, serials, submittedBy, now, res);
+                    if (tcQty > 0) LogIntakeThermocoupled(item.ItemId, newVariant.Id, tcQty, submittedBy, now, res);
                 }
             }
             return res;
@@ -1511,6 +1558,37 @@ namespace Visual_Inventory_System.Services
             string? newLine = null, List<string>? serials = null, string? variantTeam = null,
             IReadOnlyCollection<int>? movingCompressorIds = null, IReadOnlyCollection<int>? movingMotorIds = null,
             IReadOnlyCollection<int>? leavingCompressorIds = null, IReadOnlyCollection<int>? leavingMotorIds = null)
+        {
+            (InventoryItem item, int oldQty, int newQty)? Run() => ModifyStockLocked(itemId, actionType, quantity, newGroup, newTeam,
+                newParent, newMajor, newSub, newRack, newRow, targetVariant, transferQty, thermocoupledQty,
+                newLine, serials, variantTeam, movingCompressorIds, movingMotorIds, leavingCompressorIds, leavingMotorIds);
+
+            // A caller's transaction already holds the lock (the Intake stock batch).
+            if (_db.Database.CurrentTransaction != null) return Run();
+            using var tx = BeginStockWrite();
+            var result = Run();
+            tx.Commit();
+            return result;
+        }
+
+        // The write lock before the stack is read, so two changes at once apply one after the other.
+        // SQLite's BEGIN IMMEDIATE. Anything already loaded is read again under the lock.
+        private Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction BeginStockWrite()
+        {
+            var tx = _db.Database.BeginTransaction();
+            foreach (var e in _db.ChangeTracker.Entries()
+                         .Where(e => e.State == EntityState.Unchanged && (e.Entity is ItemVariant || e.Entity is InventoryItem))
+                         .ToList())
+                e.Reload();
+            return tx;
+        }
+
+        private (InventoryItem item, int oldQty, int newQty)? ModifyStockLocked(string itemId, string actionType, int quantity, string? newGroup, string? newTeam,
+            string? newParent, string? newMajor, string? newSub, string? newRack, string? newRow,
+            string? targetVariant, int? transferQty, int thermocoupledQty,
+            string? newLine, List<string>? serials, string? variantTeam,
+            IReadOnlyCollection<int>? movingCompressorIds, IReadOnlyCollection<int>? movingMotorIds,
+            IReadOnlyCollection<int>? leavingCompressorIds, IReadOnlyCollection<int>? leavingMotorIds)
         {
             var item = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (item == null) return null;
@@ -1886,6 +1964,7 @@ namespace Visual_Inventory_System.Services
         public void AddStock(string itemId, int qty)
         {
             if (string.IsNullOrWhiteSpace(itemId) || qty <= 0) return;
+            using var tx = BeginStockWrite();
             var inv = _db.InventoryItems.Include(i => i.Variants).FirstOrDefault(i => i.ItemId == itemId);
             if (inv != null)
             {
@@ -1913,6 +1992,7 @@ namespace Visual_Inventory_System.Services
 
                 _db.SaveChanges();
             }
+            tx.Commit();
         }
     }
 }

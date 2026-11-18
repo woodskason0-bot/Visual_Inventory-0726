@@ -418,6 +418,9 @@ namespace Visual_Inventory_System.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ItemId")
+                        .IsUnique();
+
                     b.HasIndex("RheemPartNumber")
                         .IsUnique()
                         .HasFilter("\"RheemPartNumber\" <> '' AND \"RheemPartNumber\" <> 'N/A'");

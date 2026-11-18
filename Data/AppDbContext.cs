@@ -48,6 +48,9 @@ namespace Visual_Inventory_System.Data
                 b.HasIndex(i => i.RheemPartNumber)
                  .IsUnique()
                  .HasFilter("\"RheemPartNumber\" <> '' AND \"RheemPartNumber\" <> 'N/A'");
+
+                // One item per ItemId. Two registrations at once can't both keep a number.
+                b.HasIndex(i => i.ItemId).IsUnique();
             });
 
             modelBuilder.Entity<ItemVariant>(b =>
