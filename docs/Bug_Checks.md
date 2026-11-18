@@ -22,7 +22,7 @@ Visual Inventory System — repository audit
 
 **Update 2026-11-16 (late):** BC-04 is fixed, uncommitted: a stale Unit Tracker Edit save is refused, and the open form shows who else has the unit open (Kason's ruling). No migration. Open: BC-09 (ruled), BC-11, BC-12, BC-13's formula-leading values.
 
-**Update 2026-11-16 (night):** every 2026-11-16 fix above, with migration 44 and a Pickup Queue sidebar link, is committed as `0f949b3` on master, not pushed, in no release.
+**Update 2026-11-16 (night):** every 2026-11-16 fix above, with migration 44 and a Pickup Queue sidebar link, is committed as `0f949b3` on master, in no release. Pushed the same night, so every fix in this file is on GitHub.
 
 ## Result
 

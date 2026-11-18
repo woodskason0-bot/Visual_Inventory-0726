@@ -12,7 +12,7 @@ Filed in this repository on **2026-10-03**, split from the shared OneDrive debug
 
 **Update 2026-11-09:** BC-01 and BC-07 are fixed and verified in the Reservations work, `3c08bd6` (migration 43, committed, not pushed, in no release); see the 2026-11-09 entry below. Ten BC findings are still open.
 
-**Update 2026-11-16:** BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed for the case where the TC is on the shelves, and BC-15 is new and fixed. All verified before and after in the running app, none committed yet; see the 2026-11-16 entry below. Open: BC-04, BC-09, BC-11, BC-12, BC-02 when the TC isn't there, and BC-13's formula-leading values. Each of those needs a decision, not just code. Later the same day Kason ruled on BC-02's shortage case and it was built: see "the Non-TC Motor question" below. Then BC-04 was ruled and built: see "BC-04, two people editing one unit" below. All of it is committed as `0f949b3` (not pushed, in no release).
+**Update 2026-11-16:** BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed for the case where the TC is on the shelves, and BC-15 is new and fixed. All verified before and after in the running app, none committed yet; see the 2026-11-16 entry below. Open: BC-04, BC-09, BC-11, BC-12, BC-02 when the TC isn't there, and BC-13's formula-leading values. Each of those needs a decision, not just code. Later the same day Kason ruled on BC-02's shortage case and it was built: see "the Non-TC Motor question" below. Then BC-04 was ruled and built: see "BC-04, two people editing one unit" below. All of it is committed as `0f949b3`, in no release. Pushed the same night: every commit named in these update lines is on GitHub.
 
 This filing reorganizes existing evidence; it does not rerun the tests, apply fixes, or confirm today's production state. Test results and live-data observations below retain their original session dates. Source links open the current repository files; cited line numbers refer to the revision audited in that session.
 
@@ -371,7 +371,7 @@ Verification and observed results:
 - After the fix: the same registration minted **CCO-0002**, whose card shows only its own registration; CCO-0001 still 404s. Deleting CCO-0002 through Delete Item and registering again minted **CCO-0003**. Intake (the other caller) minted **CCO-0004**. A normal prefix is unchanged (`CCL-0046`, live max 0045), and a never-used one starts at 1 (`CGO-0001`).
 - Both copies `integrity_check ok` afterward; `inventory.dev.db` md5 unchanged. Build: 0 errors, 14 warnings.
 Remaining issues: the two CCR-0255 log rows from the deleted test item (684, 690) still sit under the real item's ID. The code no longer creates new cases; whether to re-key or annotate those two rows on the host is a data decision.
-Deployment status: committed as `1ca6651` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
+Deployment status: committed as `1ca6651` on master and pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
 Links to saved artifacts: [2026-10-14_VIS-15_ItemIdReuse](</C:/Users/woods/OneDrive/Documents/VIS and Sourcing Debug Sessions/Sessions/2026-10-14_VIS-15_ItemIdReuse>): `results.md`, `verify_in_page.js` (what was run in the browser console), and the two copies after the runs (`before.db`, `after.db`).
 
 
@@ -395,7 +395,7 @@ Verification and observed results:
 - Zero console errors on Command Center, Search Center and Unit Tracker; zero server error lines. Build: 0 errors, 14 warnings, the same as a build taken just before the change. The dev db's SHA-256 was unchanged afterward.
 - Not checked: how the toast looks. The in-app browser doesn't paint toasts (the Pass 26 limit), so the checks above read the DOM. Search Center's AJAX "Added to cart!" toast was not triggered; it calls the same function with fixed text.
 Remaining issues: BC-01 to BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
-Deployment status: committed as `282ad8e` on master, not pushed. Not in any release. No migration, so a build with it runs on the host's current database as-is.
+Deployment status: committed as `282ad8e` on master, pushed 2026-11-16. Not in any release. No migration, so a build with it runs on the host's current database as-is.
 Links to saved artifacts: none kept; the scratch copy of the dev db was session-only.
 
 
@@ -416,7 +416,7 @@ Verification and observed results (real app on a scratch copy of `inventory.dev.
 - Build 0 errors, 14 warnings, same as before. The dev db's SHA-256 was unchanged afterward.
 - Not checked: BC-02 (a pickup can still fill a TC request with a non-TC motor when the order didn't ask for a stack); out of scope here.
 Remaining issues: BC-02 to BC-06, BC-08, BC-09 and BC-11 to BC-13 in `docs/Bug_Checks.md`.
-Deployment status: committed as `3c08bd6` on master, not pushed, not in any release. Ships with migration 43.
+Deployment status: committed as `3c08bd6` on master, pushed 2026-11-16, not in any release. Ships with migration 43.
 Links to saved artifacts: none kept; the scratch db was session-only.
 
 
@@ -454,7 +454,7 @@ Remaining issues, each a decision rather than a code fix:
 - BC-11 and BC-12 (Front_Load A9): a unique index on ItemId (a migration, after checking the data for duplicates) and a concurrency check on stock writes.
 - BC-13: whether a value starting with `=`, `+`, `-` or `@` gets a leading quote in the CSV so a spreadsheet can't run it.
 - BC-09 stays as ruled.
-Deployment status: committed as `0f949b3` on master (2026-11-16, with the two entries below), not pushed, not in any release. These fixes alone need no migration, but the commit carries migration 44 (next entry).
+Deployment status: committed as `0f949b3` on master (2026-11-16, with the two entries below) and pushed the same night, not in any release. These fixes alone need no migration, but the commit carries migration 44 (next entry).
 Links to saved artifacts: none kept; the fixtures, the HTTP script and both result files were in the session scratchpad.
 
 
@@ -482,7 +482,7 @@ Verification and observed results (fixed build on a scratch copy of `inventory.d
 - In the browser: Order Details, Pickup Queue and My Activity rendered as above; no console errors; no server errors. Build 0 errors, 14 warnings. `inventory.dev.db` and `inventory.db` hashes unchanged (the migration was generated with a scratch connection string).
 - Not checked: a real phone; the bell's look for the new category.
 Remaining issues: BC-04, BC-11, BC-12, BC-13's formula-leading values (decisions); BC-09 as ruled.
-Deployment status: committed as `0f949b3`, with the other fixes, not pushed, in no release. Migration 44 rides with 43: the next release moves a database from 42 to 44 on first start. Back up first.
+Deployment status: committed and pushed as `0f949b3`, with the other fixes, in no release. Migration 44 rides with 43: the next release moves a database from 42 to 44 on first start. Back up first.
 Links to saved artifacts: none kept; fixtures, script, results and screenshots were in the session scratchpad.
 
 
@@ -511,7 +511,7 @@ Verification and observed results:
 - Build 0 errors, 14 warnings. `inventory.dev.db` and `inventory.db` hashes unchanged.
 - Not checked: a real phone; two real browsers on two machines (the second user was a script on the same endpoints); the 30-minute stop.
 Remaining issues: BC-11, BC-12, BC-13's formula-leading values (decisions); BC-09 as ruled.
-Deployment status: committed as `0f949b3`, with the fixes above, not pushed, in no release. No migration of its own.
+Deployment status: committed and pushed as `0f949b3`, with the fixes above, in no release. No migration of its own.
 Links to saved artifacts: none kept; the scripts and results were in the session scratchpad.
 
 

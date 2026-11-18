@@ -72,7 +72,7 @@ rather than assuming one exists.
 ### Still to do
 
 - **Server-readiness review, from 2026-11-11: two new docs and the comment move,
-  committed as `80faae7` (2026-11-16), not pushed, in no release.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
+  committed as `80faae7` and pushed (2026-11-16), in no release.** `docs/Front_Load.md` is the list of what's needed before VIS goes on a
   real server (identity, HTTPS, the passcode, tests, the open bugs, the handoff split),
   each with a size and what it needs from me; nothing on it is approved to build.
   `docs/Code_Notes.md` is where the long code comments went. I picked the comment voice
@@ -88,7 +88,7 @@ rather than assuming one exists.
   (`docs/Handoff_2026-11-11.md`) and the scripts in `docs/comment_move/` were never
   committed and went to the Recycle Bin on 2026-11-16.
 - **Bug fixes from `docs/Bug_Checks.md`, 2026-11-16: committed as `0f949b3` with BC-04
-  and the sidebar link below, not pushed, in no release.**
+  and the sidebar link below, pushed, in no release.**
   BC-03, BC-05, BC-06, BC-08, BC-13 and BC-14 are fixed, BC-02 is fixed where the TC is
   on the shelves, and BC-15 (one new serial typed on two stacks in the Reserve dialog)
   is new and fixed. Four code files, no migration; each was reproduced on the committed
@@ -106,7 +106,7 @@ rather than assuming one exists.
   call, 2026-11-16, `_Layout.cshtml`). Record: `docs/VIS_Debugging_Log.md`,
   2026-11-16 (all three entries).
 - **BC-04 (two people editing one unit), ruled, built and verified 2026-11-16,
-  committed as `0f949b3`, not pushed.** My pick: the Unit Tracker Edit form refuses a save if the unit changed
+  committed as `0f949b3` and pushed.** My pick: the Unit Tracker Edit form refuses a save if the unit changed
   since the form opened ("Your edit wasn't saved. Open the unit again to see the
   change, then make yours."), plus a heads-up in the form when someone else has the same
   unit open, checked every 45 seconds in the background (no page reload; stops after 30
@@ -120,7 +120,7 @@ rather than assuming one exists.
   dev db. A refused save still loses what was typed (Front_Load C2). Record:
   `docs/VIS_Debugging_Log.md`, 2026-11-16, "BC-04".
 - **Reservations are built, verified on a scratch copy and committed as `3c08bd6`
-  (2026-11-09), not pushed, in no release.** Migration 43 (`AddReservations`) comes with
+  (2026-11-09), pushed 2026-11-16, in no release.** Migration 43 (`AddReservations`) comes with
   it, so the next build from master moves whichever db it starts against from 42 to 43: back up the host's `inventory.db` before installing it, same as every
   migration release. BC-01 and BC-07 are fixed in the same commit. Spec:
   `docs/Unit_Reservations_Spec.md`; what was checked: the "Reservations" entry at the
@@ -225,7 +225,7 @@ rather than assuming one exists.
   production; check the host. Leaving them is harmless (their ItemName snapshot reads
   "just a test model"); re-keying them is a hand SQL edit on the host after a backup.
 - **BC-10 (2026-10-26): the toast rendered its message as HTML — fixed in `282ad8e`
-  (committed, not pushed; still not pushed as of 2026-11-09), in no release.** `_Layout` now serializes TempData into the
+  (committed, pushed 2026-11-16), in no release.** `_Layout` now serializes TempData into the
   toast as a JSON string and `showToast` sets the message as text, so a stored item
   name can't become markup in the registration success toast or someone else's
   duplicate-PN error. No migration. Verified live on a copy of the dev db: the audit's
@@ -3960,7 +3960,7 @@ this release made redundant into OneDrive
   there is still waiting to be deleted (it is already in OneDrive as
   `VIS_Inventory_hostpull_20260902`).
 
-**Reservations (2026-11-09, `3c08bd6`, not pushed, in no release) — a hard hold on stock,
+**Reservations (2026-11-09, `3c08bd6`, pushed 2026-11-16, in no release) — a hard hold on stock,
 the Reserved Items page, and the BC-01 / BC-07 fixes.** Scoped with me on 2026-11-08
 from a mockup (https://claude.ai/artifact/2ZzFZwHTYNwpFEajeYqXJb); my rulings and the
 calls made where my words left room (I confirmed all five on 2026-11-09) are in

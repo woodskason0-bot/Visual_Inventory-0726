@@ -9,6 +9,20 @@ landed, when."
 
 ---
 
+## 2026-11-17
+
+### docs — master is pushed; the "not pushed" lines say so
+Docs only. Master went to GitHub on the night of 2026-11-16 (`e1b1a2e..9cd0c15`, the
+nine commits from `282ad8e` on). Now saying pushed: the handoff's OPEN bullets for the
+comment move, the bug fixes, BC-04, Reservations and BC-10, and the Reservations Pass
+log heading; every "Deployment status" line in `VIS_Debugging_Log.md` that said not
+pushed, and its newest update line; the newest update line in `Bug_Checks.md`; Front_Load
+B1 and C1. The older dated update lines are left as written; the newest one in each file
+says everything is pushed. `1ca6651` (VIS-15) was pushed long before tonight; its
+line was just never updated. The nine commits are still in no release.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/VIS_Debugging_Log.md`, `docs/Bug_Checks.md`,
+`docs/Front_Load.md`, `docs/Commit_History.md`
+
 ## 2026-11-16
 
 ### docs — log the bug fixes (`0f949b3`)
