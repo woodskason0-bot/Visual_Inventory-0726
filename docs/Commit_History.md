@@ -11,6 +11,13 @@ landed, when."
 
 ## 2026-11-18
 
+### docs — the 10/19 release moved to Superseded Releases
+Docs only. The Pass log entry "Release VIS_Release_20261118 staged": `VIS_Release_20261019`
+from `LESLISGIFT` and this laptop's `C:\VIS_Host\october19threlease` moved to `MASTER128`
+`Archive\03_Rheem_Projects\Superseded Releases\`, hash-checked before the originals were
+removed; `C:\VIS_Host` holds only `november18threlease`.
+*Files:* `docs/VIS_Handoff_State.md`, `docs/Commit_History.md`
+
 ### docs — release VIS_Release_20261118 staged
 Docs only. A release built from `ade3271` (the code is `fe9f8e6`): self-contained win-x64,
 544 files, published from a clean clone into `C:\VIS_Host\november18threlease`, staged on

@@ -4089,8 +4089,12 @@ Reserve an item, built and checked, not installed.** Everything from `282ad8e` t
   200 signed in, the six static files 200 (the scoped CSS bundle too), the Reserve an item
   box and its search answering, no server errors. The 11/11 original and local
   `inventory.db` unchanged.
-- **Not done.** Not installed on the host. `C:\VIS_Host\october19threlease` is still on this
-  laptop beside the new one; the old `VIS_Release_20261019` folder is still on `LESLISGIFT`.
+- **Not done.** Not installed on the host.
+- **The 10/19 release moved to Superseded Releases (same day, my word).** `VIS_Release_20261019`
+  from `LESLISGIFT` and this laptop's `C:\VIS_Host\october19threlease` are on `MASTER128` under
+  `Archive\03_Rheem_Projects\Superseded Releases\` (the laptop build inside
+  `VIS_Host_builds_superseded_20261118\`), every file SHA-256 matched before the originals were
+  removed. `C:\VIS_Host` holds only `november18threlease`.
 
 **Changes the OPEN state at the top of this file:** a new first Still to do bullet, a row
 for the staged db, and the five bullets for those commits now say they're in this release.
